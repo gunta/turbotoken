@@ -128,8 +128,8 @@ turbotoken is a **drop-in replacement for tiktoken** built on hand-optimized ARM
 
 **Key references for implementation:**
 - GitHub `bpe` crate (O(n) algorithm): [github.com/github/bpe](https://github.com/github/bpe)
-- TokenDagger (drop-in tiktoken replacement): [github.com/SuperpoweredAI/token-dagger](https://github.com/SuperpoweredAI/token-dagger) — proven `import token_dagger as tiktoken` pattern
-- mojo-tokenizer (flat pair cache, 144M tok/s decode): [github.com/dorjeduck/mojo-tokenizer](https://github.com/dorjeduck/mojo-tokenizer)
+- TokenDagger (drop-in tiktoken replacement): [github.com/M4THYOU/TokenDagger](https://github.com/M4THYOU/TokenDagger) — proven `import token_dagger as tiktoken` pattern
+- Mojo-based experiments (flat pair cache, 144M tok/s decode): [reddit.com/r/LocalLLaMA/comments/17...](https://www.reddit.com/r/LocalLLaMA/)
 - tiktoken core.py (API surface to replicate): [github.com/openai/tiktoken/blob/main/tiktoken/core.py](https://github.com/openai/tiktoken/blob/main/tiktoken/core.py)
 - tiktoken Rust core (implementation to beat): [github.com/openai/tiktoken/tree/main/src](https://github.com/openai/tiktoken/tree/main/src)
 - ARM NEON intrinsics reference: [developer.arm.com/architectures/instruction-sets/intrinsics](https://developer.arm.com/architectures/instruction-sets/intrinsics/)
@@ -705,9 +705,10 @@ turbotoken is the first in a family of SIMD-accelerated developer tools:
 |---------|----------|-------------------|----------|-------|------|--------|
 | **tiktoken** | Rust+Python | 1× (baseline) | — | No | No | Production |
 | **TokenDagger** | Python/Rust | 2-4× | Yes ✅ | No | No | Active |
+| **bpe-openai** | Rust | ~4× | No ❌ | No | No | Crate only |
 | **GitHub `bpe`** | Rust | 4× | No ❌ | No | No | Library only |
 | **HuggingFace tokenizers** | Rust+Python | 0.3-0.5× | No ❌ | No | No | Production |
-| **mojo-tokenizer** | Mojo | ~10× decode | No ❌ | Mojo SIMD | No | Experimental |
+| **Mojo Experiments** | Mojo | ~10× decode | No ❌ | Mojo SIMD | No | Experimental |
 | **NVIDIA RAPIDS cuDF** | CUDA | 270× (WordPiece only) | No ❌ | N/A | Yes ✅ | No BPE |
 | **turbotoken** | **C + ARM64 ASM** | **8-16×** | **Yes ✅** | **Yes ✅** | **Yes ✅** | **Shipping** |
 
