@@ -1,0 +1,3 @@
+[submodule "upstream/tiktoken"]
+	path = upstream/tiktoken
+	url = https://github.com/openai/tiktoken.git
