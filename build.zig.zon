@@ -1,0 +1,16 @@
+.{
+    .name = .turbotoken,
+    .fingerprint = 0x34f7eb864fb02b53,
+    .version = "0.1.0-dev",
+    .minimum_zig_version = "0.15.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "asm",
+        "python",
+        "js",
+        "scripts",
+    },
+}

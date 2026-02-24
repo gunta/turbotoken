@@ -1,0 +1,28 @@
+# OS / editor
+.DS_Store
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Node / Bun
+node_modules/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.wasm
+
+# Bench outputs
+bench/results/*.json
+bench/results/*.md
+bench/charts/*.png
+bench/charts/*.svg

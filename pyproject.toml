@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "turbotoken"
+version = "0.1.0.dev0"
+description = "High-performance tiktoken-compatible tokenizer"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "turbotoken contributors" }]
+dependencies = [
+  "typing-extensions>=4.0; python_version < '3.11'",
+  "cffi>=1.16"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+turbotoken = "turbotoken.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["python/turbotoken"]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]

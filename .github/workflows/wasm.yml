@@ -1,0 +1,11 @@
+name: WASM
+
+on:
+  workflow_dispatch:
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO: add wasm32-freestanding build and tests"

@@ -17,7 +17,7 @@
 **Alternate taglines:**
 - "8x faster than tiktoken. On every architecture."
 - "Stop waiting for token counts. Start shipping."
-- "ARM64 assembly. Metal shaders. WASM. All one `pip install`."
+- "Zig + ARM64 assembly. Metal shaders. WASM. All one `pip install`."
 
 ### Name Registry
 
@@ -29,7 +29,7 @@
 | **GitHub** | `turbo-tools/turbotoken` | Create org + repo |
 | **Domain** | `turbotoken.dev` | Register |
 | **Twitter/X** | `@turbotoken_` | Register |
-| **MoonBit pkg** | `turbotoken` | Register when ecosystem stabilizes |
+| **Zig package** | `turbotoken` | Register on Zig package index |
 | **wapm.io** | `turbotoken` | Register for WASM distribution |
 
 ### Brand Family (future)
@@ -60,17 +60,19 @@ turbotoken is a **drop-in replacement for tiktoken** that is the **most hyper-op
 
 - **ARM64 NEON assembly** on Apple Silicon and AWS Graviton
 - **Apple Metal 4 compute shaders** for GPU batch encoding on M-series
-- **MoonBit-compiled WebAssembly** for browsers and edge runtimes
-- **AVX2/AVX-512 intrinsics** on x86_64 Intel/AMD
+- **Zig-compiled WebAssembly** for browsers and edge runtimes (unified codebase!)
+- **AVX2/AVX-512 via Zig `@Vector`** on x86_64 Intel/AMD
 - **NVIDIA CUDA kernels** (BlockBPE) for datacenter batch encoding
 - **RISC-V Vector Extension (RVV)** for the emerging RISC-V ecosystem
-- **Scalar C11 fallback** for everything else
+- **Scalar Zig fallback** for everything else (still 4x tiktoken via O(n) algorithm)
 
 Every backend produces **byte-perfect identical output** to tiktoken. The API is the same. Only the speed changes.
 
 ### The Philosophy: Optimize for What You Have
 
-We don't build one implementation and cross-compile. We build **N implementations**, each hand-tuned for a specific target ISA, GPU architecture, or runtime. The M4 Max build uses instructions that don't exist on Graviton. The AVX-512 build uses masks that don't exist on NEON. The WASM build uses MoonBit's whole-program optimization that Rust/C can't match in code size.
+We don't build one implementation and cross-compile. We build **N implementations**, each hand-tuned for a specific target ISA, GPU architecture, or runtime. The M4 Max build uses instructions that don't exist on Graviton. The AVX-512 build uses masks that don't exist on NEON. The WASM build comes from the **same Zig codebase** compiled to `wasm32-freestanding` -- one language, every target.
+
+**Zig is the unifying core.** Its `@Vector` portable SIMD, `comptime` table generation, first-class C ABI export, and built-in `wasm32-freestanding` target let us write the tokenizer once and get near-optimal code for every platform. For the absolute hottest inner loops, hand-written `.S` assembly files squeeze the last few percent.
 
 **Every platform gets its own fastest-possible build.**
 
@@ -94,7 +96,7 @@ We don't build one implementation and cross-compile. We build **N implementation
 | rs-bpe achieves 15x on small text, linear scaling vs tiktoken's quadratic | [rs-bpe](https://github.com/gweidart/rs-bpe) | Algorithm alone gives massive gains; SIMD on top is unbeatable |
 | GitHub `bpe` crate achieves 4x with algorithmic improvements | [GitHub Blog](https://github.blog/ai-and-ml/llms/so-many-tokens-so-little-time-introducing-a-faster-more-flexible-byte-pair-tokenizer/) | NEON assembly on top of better algorithm = 8-16x |
 | BlockBPE demonstrates parallel GPU BPE at near-linear time | [arxiv](https://arxiv.org/html/2507.11941v1) | GPU batch tokenization is proven feasible |
-| MoonBit generates smaller WASM than Rust with comparable perf | [thenewstack.io](https://thenewstack.io/moonbit-wasm-optimized-language-creates-less-code-than-rust/) | Best WASM tokenizer path isn't Rust->WASM, it's MoonBit |
+| Zig produces tiny WASM binaries via `wasm32-freestanding` with zero runtime | [ziglang.org](https://ziglang.org/learn/wasm/) | Same Zig codebase compiles to native + WASM -- unified architecture |
 | mojo-tokenizer decodes at 144M tok/s on M3 Ultra | [medium.com](https://medium.com/@atveit/fastest-ai-token-output-readable-text-on-apple-silicon-144m-tokens-sec-on-m3-ultr-263a6f2f85e0) | 128K context window decoded in <1ms is achievable |
 | Metal 4 introduces tensors as first-class shader citizens | [Apple WWDC25](https://developer.apple.com/videos/play/wwdc2025/262/) | GPU tokenization on Apple Silicon gets even faster |
 | No project combines all: SIMD + GPU + WASM + drop-in compat | Our research | Wide open opportunity |
@@ -108,49 +110,49 @@ We don't build one implementation and cross-compile. We build **N implementation
 ```
 turbotoken
 +-- Language Bindings Layer
-|   +-- Python (cffi) -- drop-in tiktoken replacement
+|   +-- Python (cffi via Zig's C ABI export) -- drop-in tiktoken replacement
 |   +-- Node.js/npm (N-API + WASM fallback)
 |   +-- Rust crate (thin FFI wrapper)
-|   +-- Go module (cgo wrapper)
+|   +-- Go module (cgo wrapper via Zig's C ABI export)
 |   +-- CLI binary (turbotoken count/encode/decode/bench)
 |
-+-- libturbotoken (C ABI -- the universal core)
-|   +-- encoder.c    -- O(n) backtracking BPE
-|   +-- decoder.c    -- flat lookup table decode
-|   +-- pair_cache.c -- 4MB cache-aligned merge cache
-|   +-- rank_loader.c -- load .tiktoken merge tables
++-- libturbotoken (Zig core -- exports C ABI for universal FFI)
+|   +-- src/encoder.zig      -- O(n) backtracking BPE
+|   +-- src/decoder.zig      -- flat lookup table decode
+|   +-- src/pair_cache.zig   -- comptime-generated 4MB cache-aligned merge cache
+|   +-- src/rank_loader.zig  -- load .tiktoken merge tables
+|   +-- src/pretokenizer.zig -- Zig @Vector portable SIMD (works on all targets)
 |
-+-- Platform-Specific Backends (compile-time selected)
++-- Platform-Specific Backends (compile-time selected via build.zig)
 |   |
 |   +-- [Phase 1] ARM64 NEON (Apple M1-M4, Graviton, Ampere)
-|   |   +-- neon_pretokenizer.S  -- vtbl/vceq byte classify, 16 bytes/cycle
-|   |   +-- neon_encoder.S       -- SIMD-accelerated merge loop
-|   |   +-- neon_decoder.S       -- ld1/st1 + prfm prefetch memcpy
+|   |   +-- src/arch/aarch64.zig   -- Zig @Vector(16, u8) NEON path
+|   |   +-- asm/arm64/neon_hot.S   -- hand-written assembly for hottest loops
 |   |
 |   +-- [Phase 2] Apple Metal 4 (M1-M4 GPU)
-|   |   +-- batch_encode.metal   -- parallel chunk BPE (BlockBPE-style)
-|   |   +-- batch_count.metal    -- count-only fast path
+|   |   +-- gpu/metal/batch_encode.metal  -- parallel chunk BPE (BlockBPE-style)
+|   |   +-- gpu/metal/batch_count.metal   -- count-only fast path
 |   |
-|   +-- [Phase 3] MoonBit -> WebAssembly
-|   |   +-- tokenizer.mbt        -- MoonBit BPE implementation
-|   |   +-- pretokenizer.mbt     -- byte classification in MoonBit
-|   |   +-- (also: C->Emscripten WASM as comparison build)
+|   +-- [Phase 3] Zig -> WebAssembly (UNIFIED -- same codebase!)
+|   |   +-- build.zig target: wasm32-freestanding
+|   |   +-- src/arch/wasm.zig       -- WASM-specific optimizations
+|   |   +-- js/wasm-loader.ts       -- JS wrapper, ES module
+|   |   +-- (MoonBit & Emscripten as comparison builds only)
 |   |
 |   +-- [Phase 4] x86_64 AVX2/AVX-512
-|   |   +-- avx2_pretokenizer.c  -- AVX2 intrinsics byte classify
-|   |   +-- avx512_pretokenizer.c -- AVX-512BW 64 bytes/cycle
-|   |   +-- avx2_decoder.c       -- 256-bit SIMD decode
+|   |   +-- src/arch/x86_64.zig     -- Zig @Vector(32, u8) AVX2 / @Vector(64, u8) AVX-512
+|   |   +-- asm/x86_64/avx_hot.S   -- hand-written assembly for hottest loops
 |   |
 |   +-- [Phase 5] NVIDIA CUDA (sm_80+: A100/H100/RTX 3090+)
-|   |   +-- batch_encode.cu      -- BlockBPE CUDA kernel
-|   |   +-- batch_count.cu       -- count-only kernel
+|   |   +-- gpu/cuda/batch_encode.cu  -- BlockBPE CUDA kernel
+|   |   +-- gpu/cuda/batch_count.cu   -- count-only kernel
 |   |
 |   +-- [Phase 6] RISC-V Vector Extension (RVV 1.0)
-|   |   +-- rvv_pretokenizer.S   -- vector-length-agnostic classify
-|   |   +-- rvv_decoder.S        -- vector load/store decode
+|   |   +-- src/arch/riscv.zig      -- Zig @Vector VLA-style path
+|   |   +-- asm/riscv/rvv_hot.S    -- hand-written RVV assembly
 |   |
-|   +-- [Fallback] Scalar C11
-|       +-- All ops in plain C, no SIMD -- still 4x tiktoken via O(n) algo
+|   +-- [Fallback] Scalar Zig
+|       +-- src/arch/generic.zig    -- no SIMD, still 4x tiktoken via O(n) algo
 |
 +-- Benchmark Infrastructure
     +-- Hyperfine-based CLI benchmarks
@@ -198,7 +200,7 @@ Merge tables are loaded from tiktoken's published `.tiktoken` rank files (same U
 |----------|-------------|-------------|------|----------|
 | **macOS ARM64 (M1-M4 Max)** | NEON assembly | Metal 4 shaders | -- | **P0** -- dev machine |
 | **Linux ARM64 (Graviton, Ampere)** | NEON assembly | -- | -- | **P0** -- cloud |
-| **Web browsers** | -- | -- | MoonBit WASM | **P1** -- huge reach |
+| **Web browsers** | -- | -- | Zig WASM | **P1** -- huge reach |
 | **Node.js / Bun / Deno** | N-API native | -- | WASM fallback | **P1** -- JS ecosystem |
 | **Linux x86_64** | AVX2/AVX-512 intrinsics | CUDA (sm_80+) | -- | **P1** -- datacenter |
 | **Windows x86_64** | AVX2 intrinsics | CUDA (sm_80+) | -- | P2 |
@@ -232,7 +234,7 @@ Merge tables are loaded from tiktoken's published `.tiktoken` rank files (same U
 | Xeon w/ AVX-512 | <2ms | <0.05ms | 64 bytes/cycle classify |
 | Ryzen 9 (AVX2) | <3ms | <0.07ms | Desktop x86 |
 | WASM (Chrome V8) | <15ms | <0.5ms | 3-5x tiktoken.js |
-| WASM (MoonBit) | <10ms | <0.3ms | Smaller binary than Rust->WASM |
+| WASM (Zig) | <10ms | <0.3ms | Same codebase, smallest binary |
 | RTX 4090 (CUDA batch) | <0.2ms/string | <0.005ms/string | 1K string batch |
 | RISC-V (RVV) | <20ms | <0.5ms | SiFive P670+ |
 
@@ -404,29 +406,30 @@ GPU:       Apple M4 Max (40-core, 128GB unified)
 
 This is the primary dev target: Apple M4 Max. We optimize for what we have in hand.
 
-**Week 1: Core C + ARM64 Assembly**
-- [ ] Scaffold project: `src/`, `include/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`
-- [ ] Implement flat pair-cache array (4MB, cache-aligned) from merge table files
-- [ ] Implement O(n) backtracking BPE encoder in C (reference: GitHub `bpe` crate + rs-bpe)
-- [ ] Write NEON pre-tokenizer in ARM64 assembly: `vtbl`/`vceq` byte classification, 16 bytes/cycle
-- [ ] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch
-- [ ] Scalar C11 fallback (plain C, no SIMD -- still 4x tiktoken via better algorithm)
-- [ ] Set up Hyperfine benchmark scripts (Bun Shell TypeScript)
-- [ ] Clone tiktoken upstream as git submodule for test oracle
+**Week 1: Core Zig + ARM64 Assembly**
+- [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`
+- [ ] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
+- [ ] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
+- [ ] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
+- [ ] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch (`.S` assembly)
+- [ ] Scalar Zig fallback (no SIMD `@Vector` -- still 4x tiktoken via better algorithm)
+- [x] Set up Hyperfine benchmark scripts (Bun Shell TypeScript)
+- [x] Clone tiktoken upstream as git submodule for test oracle
+- [x] `build.zig` with targets: `aarch64-macos`, `aarch64-linux`, `x86_64-linux` (scalar), `wasm32-freestanding`
 
 **Week 2: Python Wrapper + Compatibility**
-- [ ] cffi/ctypes bridge from C to Python
+- [x] cffi bridge from Zig (Zig exports C ABI via `export fn`) to Python
 - [ ] Implement full `Encoding` class matching tiktoken API (Section 4.1)
-- [ ] Load merge tables from tiktoken's `.tiktoken` rank file URLs (cache in `~/.cache/turbotoken/`)
-- [ ] Implement `count()` fast path (no allocation)
+- [x] Load merge tables from tiktoken's `.tiktoken` rank file URLs (cache in `~/.cache/turbotoken/`)
+- [x] Implement `count()` fast path (no allocation)
 - [ ] Sync and adapt tiktoken's own test suite (see Section 6.4)
 - [ ] Byte-perfect comparison against tiktoken on full test corpus
 
 **Week 3: Packaging + Benchmarks + Launch**
-- [ ] Build wheels: `macosx_11_0_arm64`, `manylinux_2_17_aarch64` (NEON), `manylinux_2_17_x86_64` (scalar), `win_amd64` (scalar)
+- [ ] Build wheels via Zig cross-compilation: `macosx_11_0_arm64`, `manylinux_2_17_aarch64` (NEON), `manylinux_2_17_x86_64` (scalar), `win_amd64` (scalar)
 - [ ] Run full Hyperfine benchmark suite, generate charts
 - [ ] Write README, benchmark page, architecture doc
-- [ ] CLI tool (`turbotoken count`, `turbotoken bench`, `turbotoken info`)
+- [x] CLI tool (`turbotoken count`, `turbotoken bench`, `turbotoken info`)
 - [ ] **LAUNCH: PyPI + GitHub + HN + Twitter**
 
 ### Phase 2: Apple Metal GPU Backend (Weeks 4-5)
@@ -439,37 +442,38 @@ Still M4 Max. GPU batch encoding for when you have many strings.
 - [ ] Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken
 - [ ] Blog post: "GPU tokenization on Apple Silicon -- turbotoken goes Metal"
 
-### Phase 3: MoonBit WebAssembly (Weeks 6-7)
+### Phase 3: Zig WebAssembly -- Unified Build (Weeks 6-7)
 
-The browser/edge play. Two WASM builds compared:
+The browser/edge play. **Zig's killer advantage: same codebase compiles to native AND WASM.**
 
-**3a: MoonBit WASM (primary)**
-- [ ] Implement BPE encoder in MoonBit (`.mbt` files)
-- [ ] MoonBit pre-tokenizer with whole-program optimization
-- [ ] Compile to WASM-GC target (smallest possible binary)
-- [ ] Target: <200KB WASM binary (vs Rust->WASM at 500KB+)
+**3a: Zig -> WASM (primary -- unified codebase)**
+- [x] Add `wasm32-freestanding` target to `build.zig`
+- [ ] WASM-specific optimizations in `src/arch/wasm.zig` (no SIMD, scalar BPE)
+- [ ] Explore WASM SIMD (128-bit) via Zig's `@Vector(16, u8)` on wasm32
+- [ ] Target: <150KB WASM binary (Zig's zero-runtime advantage)
+- [ ] JS/TS wrapper: `js/wasm-loader.ts` with ES module export
 - [ ] npm package: `turbotoken` with WASM auto-loaded
 - [ ] Browser benchmark page: turbotoken vs tiktoken.js vs gpt-tokenizer vs wasm-tokenizer
 
-**3b: C->Emscripten WASM (comparison build)**
-- [ ] Compile libturbotoken C core via Emscripten to WASM
-- [ ] Compare binary size and runtime perf vs MoonBit build
-- [ ] Ship whichever is faster+smaller (or both with feature flag)
+**3b: Comparison builds (for documentation only)**
+- [ ] Build MoonBit WASM version for binary size comparison
+- [ ] Build Emscripten WASM from Zig's C ABI export for comparison
+- [ ] Document all binary sizes and perf numbers in WASM-EXPLORATION.md
 
-**3c: Explore other WASM paths**
-- [ ] Evaluate Zig->WASM (known for small binaries)
-- [ ] Evaluate AssemblyScript (native WASM, TS-like syntax)
-- [ ] Keep best performer, document all results
+**3c: WASM SIMD exploration**
+- [ ] Test Zig `@Vector` targeting WASM SIMD proposal (128-bit vectors)
+- [ ] Measure perf gain of WASM SIMD vs scalar WASM
+- [ ] Browser compatibility matrix for WASM SIMD
 
 ### Phase 4: x86_64 AVX2/AVX-512 (Weeks 8-9)
 
 Cover Intel/AMD desktops and cloud instances.
 
-- [ ] AVX2 pre-tokenizer: `vpshufb`/`vpcmpeqb` at 32 bytes/cycle
-- [ ] AVX-512BW pre-tokenizer: `vpermb` at 64 bytes/cycle (where available)
-- [ ] AVX2 decoder: `vmovdqu` + streaming stores
+- [ ] AVX2 pre-tokenizer via Zig `@Vector(32, u8)` + hand-written `.S` for hottest paths
+- [ ] AVX-512BW pre-tokenizer via Zig `@Vector(64, u8)` + hand-written `.S` (where available)
+- [ ] AVX2 decoder: `vmovdqu` + streaming stores (hand-tuned assembly)
 - [ ] Hyperfine benchmarks on Intel Xeon and AMD Ryzen
-- [ ] Runtime CPU feature detection: AVX-512 -> AVX2 -> SSE4.2 -> scalar
+- [ ] Zig `build.zig` CPU feature detection: AVX-512 -> AVX2 -> SSE4.2 -> scalar (compile-time + runtime)
 
 ### Phase 5: NVIDIA CUDA Backend (Weeks 10-11)
 
@@ -491,8 +495,8 @@ Future-proofing for the RISC-V wave.
 
 ### Phase 7+: Language Bindings & More
 
-- [ ] **Rust crate** (`turbotoken`): thin FFI wrapper over C core
-- [ ] **Go module** (`turbotoken-go`): cgo wrapper
+- [ ] **Rust crate** (`turbotoken`): thin FFI wrapper over Zig's C ABI export
+- [ ] **Go module** (`turbotoken-go`): cgo wrapper over Zig's C ABI export
 - [ ] **Swift package**: direct Metal integration for iOS/macOS apps
 - [ ] **C# / .NET**: P/Invoke wrapper for Unity/game dev tokenization
 - [ ] **turbodiff**, **turbogrep** -- next turbo-tools
@@ -550,7 +554,9 @@ Run on every PR against `main`:
 ### 6.3 Fuzz Testing
 
 ```bash
-# Use AFL or libFuzzer on the C core
+# Use Zig's built-in fuzz testing (zig test --fuzz) on the Zig core
+# Also AFL/libFuzzer via Zig's C ABI export
+# Zig's safety checks (bounds, overflow) active in Debug/ReleaseSafe modes
 # Must not crash, leak, or produce different output than tiktoken
 ```
 
@@ -657,7 +663,7 @@ Every benchmark compares **all available implementations** side by side:
 | **gpt-tokenizer** (JS) | TypeScript | `bun run` / `node` |
 | **tiktoken.js** (JS/WASM) | JS+WASM | `bun run` / `node` |
 | **wasm-tokenizer** | C++->WASM | `bun run` / `node` |
-| **turbotoken** (ours) | C+ASM | Native binary + Python + JS/WASM |
+| **turbotoken** (ours) | Zig+ASM | Native binary + Python + JS/WASM |
 
 ### 7.4 Benchmark Dimensions
 
@@ -785,7 +791,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: C",
+    "Programming Language :: Other",  # Zig (no PyPI classifier yet)
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Text Processing",
 ]
@@ -843,36 +849,39 @@ turbotoken-0.1.0-cp39-cp39-win_amd64.whl                 <- Windows (AVX2)
 turbotoken/
 +-- README.md
 +-- LICENSE                         # MIT
-+-- pyproject.toml
++-- build.zig                       # ZIG BUILD SYSTEM (replaces CMake)
++-- build.zig.zon                   # Zig package manifest
++-- pyproject.toml                  # Python package config
++-- package.json                    # npm package config
 +-- Cargo.toml                      # For Rust crate (Phase 7)
-+-- CMakeLists.txt                  # C build system
-+-- package.json                    # npm package
-+-- moon.pkg.json                   # MoonBit package
 |
-+-- include/
-|   +-- turbotoken.h                # Public C API
++-- src/                            # Zig core (platform-agnostic logic)
+|   +-- main.zig                    # Library root, public API
+|   +-- encoder.zig                 # O(n) backtracking BPE
+|   +-- decoder.zig                 # Flat lookup table decode
+|   +-- pretokenizer.zig            # Zig @Vector portable SIMD pre-tokenizer
+|   +-- pair_cache.zig              # comptime-generated 4MB cache-aligned merge cache
+|   +-- rank_loader.zig             # Load .tiktoken merge tables
+|   +-- hash.zig                    # Perfect hash for token lookup
+|   +-- exports.zig                 # C ABI exports (export fn) for Python cffi / Go cgo
+|   |
+|   +-- arch/                       # Architecture-specific Zig SIMD paths
+|       +-- aarch64.zig             # ARM64 NEON via @Vector(16, u8)
+|       +-- x86_64.zig              # AVX2 @Vector(32, u8) / AVX-512 @Vector(64, u8)
+|       +-- riscv.zig               # RISC-V vector path
+|       +-- wasm.zig                # WASM-specific optimizations + WASM SIMD
+|       +-- generic.zig             # Scalar fallback (no SIMD)
 |
-+-- src/                            # Platform-agnostic C core
-|   +-- encoder.c                   # O(n) backtracking BPE
-|   +-- decoder.c                   # Flat lookup table decode
-|   +-- pretokenizer.c              # Scalar fallback pre-tokenizer
-|   +-- pair_cache.c                # 4MB cache-aligned merge cache
-|   +-- rank_loader.c               # Load .tiktoken merge tables
-|   +-- hash.c                      # Perfect hash for token lookup
-|
-+-- asm/                            # Hand-written assembly backends
++-- asm/                            # Hand-written assembly for peak-perf hottest loops
 |   +-- arm64/                      # ARM64 NEON (Phase 1)
-|   |   +-- neon_pretokenizer.S
-|   |   +-- neon_encoder.S
-|   |   +-- neon_decoder.S
-|   |   +-- neon_classify.S
+|   |   +-- neon_pretokenizer.S     # vtbl/vceq byte classify, 16 bytes/cycle
+|   |   +-- neon_decoder.S          # ld1/st1 + prfm prefetch memcpy
 |   +-- x86_64/                     # x86 SIMD (Phase 4)
-|   |   +-- avx2_pretokenizer.c     # AVX2 intrinsics
-|   |   +-- avx512_pretokenizer.c   # AVX-512BW intrinsics
-|   |   +-- avx2_decoder.c
+|   |   +-- avx2_pretokenizer.S     # vpshufb/vpcmpeqb 32 bytes/cycle
+|   |   +-- avx512_pretokenizer.S   # vpermb 64 bytes/cycle
 |   +-- riscv/                      # RISC-V Vector (Phase 6)
-|       +-- rvv_pretokenizer.S
-|       +-- rvv_decoder.S
+|       +-- rvv_pretokenizer.S      # VLA byte classification
+|       +-- rvv_decoder.S           # Scalable vector decode
 |
 +-- gpu/                            # GPU compute backends
 |   +-- metal/                      # Apple Metal 4 (Phase 2)
@@ -882,20 +891,11 @@ turbotoken/
 |       +-- batch_encode.cu
 |       +-- batch_count.cu
 |
-+-- moonbit/                        # MoonBit WASM source (Phase 3)
-|   +-- src/
-|   |   +-- tokenizer.mbt
-|   |   +-- pretokenizer.mbt
-|   |   +-- pair_cache.mbt
-|   |   +-- rank_loader.mbt
-|   +-- moon.pkg.json
-|   +-- moon.mod.json
-|
 +-- python/                         # Python package
 |   +-- turbotoken/
 |   |   +-- __init__.py
 |   |   +-- core.py                 # Encoding class (tiktoken-compatible)
-|   |   +-- _native.py              # cffi/ctypes bridge
+|   |   +-- _native.py              # cffi bridge (loads Zig-compiled .dylib/.so)
 |   |   +-- _registry.py            # Encoding name -> model mapping
 |   |   +-- _gpu.py                 # Optional GPU backend
 |   |   +-- cli.py                  # CLI tool
@@ -910,7 +910,7 @@ turbotoken/
 |   +-- src/
 |   |   +-- index.ts
 |   |   +-- encoding.ts
-|   |   +-- wasm-loader.ts
+|   |   +-- wasm-loader.ts          # Loads Zig-compiled WASM binary
 |   +-- tests/
 |
 +-- upstream/                       # Synced upstream repos (git submodules)
@@ -937,27 +937,34 @@ turbotoken/
 |   +-- generate-charts.ts
 |   +-- generate-fixture.ts
 |   +-- ci-benchmark.ts
-|   +-- build-all.ts
-|   +-- test-all.ts
+|   +-- build-all.ts                # Calls `zig build` for all targets
+|   +-- test-all.ts                 # Calls `zig build test` + Python/JS tests
 |
 +-- bench/                          # Benchmark data
 |   +-- fixtures/                   # Test input files
 |   +-- results/                    # Hyperfine JSON/Markdown output
 |   +-- charts/                     # Generated SVG/PNG charts
 |
-+-- docs/
++-- docs/                          # All project documentation
+|   +-- PRD.md                     # This file -- master product spec
+|   +-- ARCHITECTURE.md            # ADRs, backend selection, data flow
+|   +-- PROGRESS.md                # Phase-by-phase task tracker
+|   +-- RESEARCH.md                # Research log per backend
+|   +-- BENCHMARKS.md              # Benchmark results and comparison tables
+|   +-- COMPETITORS.md             # Deep competitive analysis
+|   +-- CHANGELOG.md               # Keep-a-changelog format
+|   +-- WASM-EXPLORATION.md        # Zig WASM vs MoonBit vs Emscripten comparison
+|   +-- UPSTREAM-SYNC.md           # Upstream sync strategy
 |   +-- blog-post.md
-|   +-- architecture.md
-|   +-- benchmarks.md
-|   +-- moonbit-wasm.md             # MoonBit WASM deep dive
-|   +-- metal-gpu.md                # Metal compute shader deep dive
+|   +-- metal-gpu.md               # Metal compute shader deep dive
+|   +-- zig-wasm.md                # Zig WASM unified build deep dive
 |
 +-- .github/
     +-- workflows/
-        +-- ci.yml                  # Test on every PR
-        +-- wheels.yml              # Build wheels (cibuildwheel)
+        +-- ci.yml                  # `zig build test` on every PR
+        +-- wheels.yml              # Build Python wheels (Zig cross-compile)
         +-- benchmark.yml           # Hyperfine regression check
-        +-- wasm.yml                # Build + test WASM
+        +-- wasm.yml                # `zig build -Dtarget=wasm32-freestanding` + test
 ```
 
 ---
@@ -971,8 +978,8 @@ turbotoken/
 
 **The fastest BPE tokenizer on every platform. Drop-in tiktoken replacement.**
 
-NEON assembly on ARM64. Metal shaders on Apple GPU. MoonBit WASM in browsers.
-AVX-512 on x86. CUDA on NVIDIA. Hand-optimized for each target.
+Written in Zig. NEON assembly on ARM64. Metal shaders on Apple GPU. Same codebase
+compiles to WASM for browsers. AVX-512 on x86. CUDA on NVIDIA. Hand-optimized for each target.
 
 When LLM inference hits 15,000 tok/s, tokenization becomes 21% of your agent's
 wall-clock time. turbotoken eliminates that bottleneck. Everywhere.
@@ -1013,7 +1020,7 @@ All benchmarks measured with Hyperfine. Reproducible via `bun run scripts/bench-
 |----------|---------|--------|
 | macOS ARM64 (M1-M4) | NEON assembly + Metal GPU | Phase 1-2 |
 | Linux ARM64 (Graviton) | NEON assembly | Phase 1 |
-| Browsers / Edge | MoonBit WASM (<200KB) | Phase 3 |
+| Browsers / Edge | Zig WASM (<150KB) | Phase 3 |
 | Linux/Windows x86_64 | AVX2 / AVX-512 | Phase 4 |
 | NVIDIA GPU | CUDA BlockBPE | Phase 5 |
 | RISC-V | RVV 1.0 vector | Phase 6 |
@@ -1025,18 +1032,18 @@ All benchmarks measured with Hyperfine. Reproducible via `bun run scripts/bench-
 
 **Alternatives:**
 - "We Hand-Optimized a Tokenizer for Every Platform. Here's What We Learned."
-- "From ARM64 Assembly to MoonBit WASM: Building the Fastest Tokenizer on Every Architecture"
+- "From ARM64 Assembly to Zig WASM: Building the Fastest Tokenizer on Every Architecture"
 - "Why Your Coding Agent Spends More Time Counting Tokens Than Thinking"
 - "8x Faster Than tiktoken. On M4 Max. On Graviton. In Your Browser. Everywhere."
 
 ### 9.3 HN Submission
 
-**Title:** "Show HN: Turbotoken -- BPE tokenizer hand-optimized for every platform (NEON/Metal/WASM/AVX/CUDA)"
+**Title:** "Show HN: Turbotoken -- BPE tokenizer in Zig, hand-optimized for every platform (NEON/Metal/WASM/AVX/CUDA)"
 
 **Show HN comment:**
-> At 17K tok/s inference (Taalas HC1), tokenization is 21% of your coding agent's wall-clock time. We built turbotoken -- a drop-in tiktoken replacement with a separate hand-optimized backend for every platform: ARM64 NEON assembly, Apple Metal compute shaders, MoonBit WASM for browsers, AVX-512 for x86, CUDA for NVIDIA GPUs.
+> At 17K tok/s inference (Taalas HC1), tokenization is 21% of your coding agent's wall-clock time. We built turbotoken -- a drop-in tiktoken replacement written in Zig with hand-tuned assembly for each platform: ARM64 NEON, Apple Metal compute shaders, AVX-512 for x86, CUDA for NVIDIA GPUs. The same Zig codebase compiles to WASM for browsers.
 >
-> Not one codebase compiled N ways. N implementations, each tuned for its target.
+> Zig's `@Vector` gives us portable SIMD. Hand-written `.S` assembly squeezes the last few percent on each ISA. `comptime` generates perfect hash tables at compile time. One language, every target.
 >
 > `pip install turbotoken`, then `import turbotoken as tiktoken`. MIT licensed.
 >
@@ -1048,8 +1055,8 @@ All benchmarks measured with Hyperfine. Reproducible via `bun run scripts/bench-
 > tiktoken: 368ms to encode 673K tokens.
 > turbotoken: 32ms. On M4 Max.
 >
-> NEON assembly. Metal shaders. MoonBit WASM. AVX-512. CUDA.
-> Hand-optimized for every platform.
+> Written in Zig. NEON assembly. Metal shaders. WASM. AVX-512. CUDA.
+> One codebase, hand-optimized for every platform.
 >
 > pip install turbotoken
 > npm install turbotoken
@@ -1060,7 +1067,7 @@ All benchmarks measured with Hyperfine. Reproducible via `bun run scripts/bench-
 1. The hook (above)
 2. "Coding agents tokenize your code 10-30x per session. At 15K tok/s inference, that's 21% of wall-clock time. The tokenizer IS the bottleneck."
 3. Benchmark chart: turbotoken vs tiktoken vs rs-bpe vs TokenDagger
-4. "We don't cross-compile one codebase. We write N implementations. ARM64 NEON assembly. Metal 4 compute shaders. MoonBit for the smallest WASM binary. AVX-512 for x86."
+4. "One Zig codebase. @Vector portable SIMD. Hand-written assembly for hottest loops. Metal compute shaders. Same code compiles to WASM. AVX-512 for x86."
 5. "Drop-in: `import turbotoken as tiktoken`. Byte-perfect output. MIT."
 6. "All benchmarks via Hyperfine, all scripts in Bun Shell TypeScript. Fully reproducible."
 7. "First turbo-tool. turbodiff and turbogrep are next. Star us."
@@ -1082,15 +1089,17 @@ All benchmarks measured with Hyperfine. Reproducible via `bun run scripts/bench-
 | **tiktoken.js** | JS+WASM | ~0.3x | Partial (JS) | No | No | Yes | Active |
 | **NVIDIA RAPIDS cuDF** | CUDA | 270x (WordPiece only) | No | N/A | Yes | No | No BPE |
 | **BlockBPE** | CUDA | Near-linear GPU BPE | No | N/A | Yes | No | Research (2025) |
-| **turbotoken** | **C+ASM+Metal+MoonBit+CUDA** | **8-16x** | **Yes** | **Yes** | **Yes** | **Yes** | **Building** |
+| **turbotoken** | **Zig+ASM+Metal+WASM+CUDA** | **8-16x** | **Yes** | **Yes** | **Yes** | **Yes** | **Building** |
 
 **Our moat:** The only project combining ALL of:
-1. Hand-optimized assembly for each ISA (not generic SIMD intrinsics)
-2. GPU batch encoding (Metal + CUDA)
-3. Browser WASM (MoonBit for smallest binary)
-4. Drop-in tiktoken API compatibility
-5. O(n) algorithm (not tiktoken's O(n^2) greedy)
-6. Comprehensive Hyperfine benchmarks against every competitor
+1. **Unified Zig codebase** with hand-optimized assembly per ISA
+2. **Zig `@Vector` portable SIMD** + hand-written `.S` for peak paths
+3. **GPU batch encoding** (Metal + CUDA)
+4. **Zig -> WASM** (same codebase, smallest binary, zero runtime)
+5. **Drop-in tiktoken API** compatibility
+6. **O(n) algorithm** (not tiktoken's O(n^2) greedy)
+7. **`comptime` table generation** (merge tables built at compile time)
+8. **Comprehensive Hyperfine benchmarks** against every competitor
 
 No other project has more than 2 of these 6.
 
@@ -1103,8 +1112,10 @@ No other project has more than 2 of these 6.
 | tiktoken changes API in new version | Medium | High | Pin compatibility to tiktoken 0.7-0.12. Track releases via upstream sync. |
 | OpenAI adds new encoding (o300k?) | Medium | Medium | Architecture supports arbitrary merge tables. Add within days. |
 | NEON speedup lower than expected | Low | High | Algorithm improvement alone (O(n) backtrack) gives 4x even without SIMD. rs-bpe proves this. |
-| MoonBit WASM perf disappoints | Medium | Medium | Fall back to C->Emscripten WASM. Also evaluate Zig->WASM. |
-| MoonBit ecosystem too immature | Medium | Low | MoonBit is optional Phase 3. C->Emscripten is always available as backup. |
+| Zig WASM binary larger than expected | Low | Medium | Zig `wasm32-freestanding` has zero runtime. If still large, use `ReleaseSmall` + wasm-opt. |
+| Zig pre-1.0 breaking changes | Medium | Medium | Pin to specific Zig version. Zig's stability is improving rapidly. Worst case: fix on upgrade. |
+| Zig `@Vector` doesn't match hand-tuned assembly perf | Medium | Low | Hot loops use hand-written `.S` assembly anyway. `@Vector` is for "good enough" portable SIMD. |
+| cibuildwheel + Zig cross-compile untested | Medium | Medium | Zig's `zig cc` cross-compiler is proven. May need custom build scripts for wheel building. |
 | GPU batch not useful for interactive agents | Medium | Low | GPU is Phase 2/5 bonus. Core value is CPU SIMD speed. |
 | Someone else ships similar first | Low | High | Move fast. First-mover with comprehensive benchmarks wins. |
 | Correctness bugs | Medium | Critical | Fuzz testing + byte-perfect comparison against tiktoken on every CI run. |
@@ -1118,13 +1129,14 @@ No other project has more than 2 of these 6.
 | Question | Decision | Rationale |
 |----------|----------|-----------|
 | License | **MIT** | tiktoken is MIT, TokenDagger is MIT, minimizes friction |
-| Build system | **CMake** | Best cibuildwheel integration, mature ARM64 cross-compile |
-| Python bridge | **cffi** | No compile dependency for users, lighter than pybind11 |
+| Core language | **Zig + hand-written Assembly** | Unified codebase for native + WASM. `@Vector` portable SIMD. `comptime` tables. C ABI export. Safety without runtime cost. |
+| Build system | **`build.zig`** | Zig's built-in build system. Cross-compilation is first-class. Replaces CMake. |
+| Python bridge | **cffi** | Zig exports C ABI via `export fn`. No compile dependency for users. |
 | Merge table loading | **Download on first use** | Same as tiktoken, with offline fallback. Vendoring bloats wheel. |
 | Org name | **`turbo-tools`** | Brand family for turbotoken, turbodiff, turbogrep |
 | Scripting language | **Bun Shell TypeScript** | Cross-platform, type-safe, maintainable. No raw shell. |
 | Benchmark tool | **Hyperfine** | Statistical rigor, JSON export, industry standard |
-| WASM approach | **MoonBit primary, Emscripten fallback** | MoonBit: smaller binary, comparable perf to Rust->WASM |
+| WASM approach | **Zig unified (same codebase)** | `wasm32-freestanding` target in `build.zig`. Zero runtime. Smallest binary. |
 | Primary dev target | **Apple M4 Max** | Optimize for what we have. Other targets follow. |
 
 ---
@@ -1164,13 +1176,22 @@ No other project has more than 2 of these 6.
 - CUDA programming guide: https://docs.nvidia.com/cuda/cuda-c-programming-guide/
 - NVIDIA cuDF GPU tokenization (483x BERT): https://developer.nvidia.com/blog/run-state-of-the-art-nlp-workloads-at-scale-with-rapids-huggingface-and-dask/
 
-### WebAssembly / MoonBit References
-- MoonBit language: https://www.moonbitlang.com/
+### Zig Language References
+- Zig language: https://ziglang.org/
+- Zig WASM guide: https://ziglang.org/learn/wasm/
+- Zig @Vector SIMD: https://ziglang.org/documentation/master/#Vectors
+- Zig comptime: https://ziglang.org/documentation/master/#comptime
+- Zig build system: https://ziglang.org/documentation/master/#Build-System
+- Zig cross-compilation: https://andrewkelley.me/post/zig-cc-powerful-drop-in-replacement-for-gcc-clang.html
+- Zig SIMD GitHub issue (#7702): https://github.com/ziglang/zig/issues/7702
+
+### WebAssembly References
+- Zig wasm32-freestanding target: https://ziglang.org/learn/wasm/
+- MoonBit language (comparison): https://www.moonbitlang.com/
 - MoonBit vs Rust WASM code size: https://thenewstack.io/moonbit-wasm-optimized-language-creates-less-code-than-rust/
-- MoonBit WASM runtimes: https://www.moonbitlang.com/blog/moonbit-wasm-runtime
-- MoonBit Component Model: https://www.moonbitlang.com/blog/component-model
 - HuggingFace tokenizers WASM porting insights: https://blog.mithrilsecurity.io/porting-tokenizers-to-wasm/
 - State of WebAssembly 2025-2026: https://platform.uno/blog/the-state-of-webassembly-2025-2026/
+- WASM SIMD proposal: https://github.com/WebAssembly/simd
 
 ### RISC-V Vector References
 - RISC-V Vector Extension (RVV) overview: https://riscv.org/blog/risc-v-vector-processing-is-taking-off-sifive/
