@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const aarch64 = @import("arch/aarch64.zig");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const rank_loader = @import("rank_loader.zig");
+const pretokenizer = @import("pretokenizer.zig");
 
 const rank_cache_allocator = std.heap.page_allocator;
 
@@ -77,6 +78,39 @@ pub export fn turbotoken_count(_: [*c]const u8, text_len: usize) isize {
         return -1;
     }
     return @as(isize, @intCast(text_len));
+}
+
+pub export fn turbotoken_pretokenize_ascii_letter_space_ranges(
+    text: [*c]const u8,
+    text_len: usize,
+    out_starts: [*c]u32,
+    out_ends: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const in_slice = text[0..text_len];
+
+    if (out_starts == null or out_ends == null) {
+        const needed = pretokenizer.splitAsciiLetterSpaceRanges(in_slice, null, null) catch return -1;
+        if (needed > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(needed));
+    }
+
+    const starts = out_starts[0..out_cap];
+    const ends = out_ends[0..out_cap];
+    const written = pretokenizer.splitAsciiLetterSpaceRanges(in_slice, starts, ends) catch return -1;
+    if (written > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(written));
 }
 
 fn countNonAsciiScalar(in_slice: []const u8) usize {
@@ -670,6 +704,20 @@ pub export fn turbotoken_decode_bpe_from_ranks(
 test "count returns byte length for placeholder path" {
     const text = "hello";
     try std.testing.expectEqual(@as(isize, 5), turbotoken_count(text.ptr, text.len));
+}
+
+test "ascii letter/space pretokenizer export returns ranges" {
+    const text = "hello  world";
+    const needed = turbotoken_pretokenize_ascii_letter_space_ranges(text.ptr, text.len, null, null, 0);
+    try std.testing.expectEqual(@as(isize, 3), needed);
+
+    var starts: [3]u32 = undefined;
+    var ends: [3]u32 = undefined;
+    const written = turbotoken_pretokenize_ascii_letter_space_ranges(text.ptr, text.len, &starts, &ends, starts.len);
+    try std.testing.expectEqual(@as(isize, 3), written);
+    try std.testing.expectEqualSlices(u8, "hello", text[starts[0]..ends[0]]);
+    try std.testing.expectEqualSlices(u8, " ", text[starts[1]..ends[1]]);
+    try std.testing.expectEqualSlices(u8, " world", text[starts[2]..ends[2]]);
 }
 
 test "encode/decode utf8 byte placeholder path" {

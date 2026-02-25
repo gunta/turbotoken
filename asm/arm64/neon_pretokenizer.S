@@ -12,11 +12,13 @@
 .p2align 2
 TT_SYM(turbotoken_arm64_count_non_ascii):
     mov x2, #0
+    mov x4, #0
+    eor v31.16b, v31.16b, v31.16b
     cbz x1, .Ldone
 
 .Lloop64:
     cmp x1, #64
-    b.lo .Lloop16
+    b.lo .Lflush64
     prfm pldl1keep, [x0, #128]
     ld1 {v0.16b, v1.16b, v2.16b, v3.16b}, [x0], #64
 
@@ -31,12 +33,27 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
     add v4.8h, v4.8h, v5.8h
     add v6.8h, v6.8h, v7.8h
     add v4.8h, v4.8h, v6.8h
-    uaddlv s8, v4.8h
+    add v31.8h, v31.8h, v4.8h
+    add x4, x4, #1
+    and x5, x4, #3
+    cbnz x5, .Lloop64_skip_flush
+    uaddlv s8, v31.8h
     umov w3, v8.s[0]
     add x2, x2, x3
+    eor v31.16b, v31.16b, v31.16b
+
+.Lloop64_skip_flush:
 
     sub x1, x1, #64
     b .Lloop64
+
+.Lflush64:
+    and x5, x4, #3
+    cbz x5, .Lloop16
+    uaddlv s8, v31.8h
+    umov w3, v8.s[0]
+    add x2, x2, x3
+    eor v31.16b, v31.16b, v31.16b
 
 .Lloop16:
     cmp x1, #16

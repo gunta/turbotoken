@@ -66,3 +66,15 @@ def test_encode_single_token_rejects_non_single_token_input() -> None:
     enc = get_encoding("o200k_base")
     with pytest.raises(KeyError):
         enc.encode_single_token("hello world")
+
+
+def test_native_ascii_pretokenizer_fast_path_matches_regex_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("cl100k_base")
+    text = ("hello world " * 256).strip()
+
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_PRETOKENIZER_DISABLE", raising=False)
+    fast = enc.encode_ordinary(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_PRETOKENIZER_DISABLE", "1")
+    slow = enc.encode_ordinary(text)
+    assert fast == slow

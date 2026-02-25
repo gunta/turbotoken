@@ -20,45 +20,51 @@ TT_SYM(turbotoken_arm64_decode_u32_to_u8):
     prfm pldl1keep, [x0, #256]
     prfm pstl1keep, [x2, #64]
 
-    // block 0
+    // block 0/1 preload
     ld1 {v0.4s, v1.4s, v2.4s, v3.4s}, [x0], #64
-    xtn v0.4h, v0.4s
-    xtn2 v0.8h, v1.4s
-    xtn v2.4h, v2.4s
-    xtn2 v2.8h, v3.4s
-    xtn v0.8b, v0.8h
-    xtn2 v0.16b, v2.8h
-    st1 {v0.16b}, [x2], #16
+    ld1 {v4.4s, v5.4s, v6.4s, v7.4s}, [x0], #64
+
+    // block 0
+    xtn v8.4h, v0.4s
+    xtn2 v8.8h, v1.4s
+    xtn v9.4h, v2.4s
+    xtn2 v9.8h, v3.4s
+    xtn v8.8b, v8.8h
+    xtn2 v8.16b, v9.8h
+    st1 {v8.16b}, [x2], #16
+
+    // block 2 preload
+    ld1 {v0.4s, v1.4s, v2.4s, v3.4s}, [x0], #64
 
     // block 1
-    ld1 {v0.4s, v1.4s, v2.4s, v3.4s}, [x0], #64
-    xtn v0.4h, v0.4s
-    xtn2 v0.8h, v1.4s
-    xtn v2.4h, v2.4s
-    xtn2 v2.8h, v3.4s
-    xtn v0.8b, v0.8h
-    xtn2 v0.16b, v2.8h
-    st1 {v0.16b}, [x2], #16
+    xtn v8.4h, v4.4s
+    xtn2 v8.8h, v5.4s
+    xtn v9.4h, v6.4s
+    xtn2 v9.8h, v7.4s
+    xtn v8.8b, v8.8h
+    xtn2 v8.16b, v9.8h
+    st1 {v8.16b}, [x2], #16
+
+    // block 3 preload
+    ld1 {v4.4s, v5.4s, v6.4s, v7.4s}, [x0], #64
 
     // block 2
-    ld1 {v0.4s, v1.4s, v2.4s, v3.4s}, [x0], #64
-    xtn v0.4h, v0.4s
-    xtn2 v0.8h, v1.4s
-    xtn v2.4h, v2.4s
-    xtn2 v2.8h, v3.4s
-    xtn v0.8b, v0.8h
-    xtn2 v0.16b, v2.8h
-    st1 {v0.16b}, [x2], #16
+    xtn v8.4h, v0.4s
+    xtn2 v8.8h, v1.4s
+    xtn v9.4h, v2.4s
+    xtn2 v9.8h, v3.4s
+    xtn v8.8b, v8.8h
+    xtn2 v8.16b, v9.8h
+    st1 {v8.16b}, [x2], #16
 
     // block 3
-    ld1 {v0.4s, v1.4s, v2.4s, v3.4s}, [x0], #64
-    xtn v0.4h, v0.4s
-    xtn2 v0.8h, v1.4s
-    xtn v2.4h, v2.4s
-    xtn2 v2.8h, v3.4s
-    xtn v0.8b, v0.8h
-    xtn2 v0.16b, v2.8h
-    st1 {v0.16b}, [x2], #16
+    xtn v8.4h, v4.4s
+    xtn2 v8.8h, v5.4s
+    xtn v9.4h, v6.4s
+    xtn2 v9.8h, v7.4s
+    xtn v8.8b, v8.8h
+    xtn2 v8.16b, v9.8h
+    st1 {v8.16b}, [x2], #16
 
     sub x1, x1, #64
     b .Lloop64

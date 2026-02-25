@@ -73,6 +73,13 @@ class NativeBridge:
             """
             const char *turbotoken_version(void);
             long turbotoken_count(const char *text, size_t text_len);
+            long turbotoken_pretokenize_ascii_letter_space_ranges(
+                const char *text,
+                size_t text_len,
+                uint32_t *out_starts,
+                uint32_t *out_ends,
+                size_t out_cap
+            );
             unsigned long long turbotoken_arm64_feature_mask(void);
             unsigned int turbotoken_count_non_ascii_kernel_id(void);
             long turbotoken_count_non_ascii_utf8(
@@ -221,6 +228,49 @@ class NativeBridge:
         if result < 0:
             return None
         return result
+
+    def pretokenize_ascii_letter_space_ranges(
+        self,
+        data: bytes,
+    ) -> list[tuple[int, int]] | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+
+        try:
+            needed = int(
+                self._lib.turbotoken_pretokenize_ascii_letter_space_ranges(
+                    data,
+                    len(data),
+                    self._ffi.NULL,
+                    self._ffi.NULL,
+                    0,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        starts = self._ffi.new("uint32_t[]", needed)
+        ends = self._ffi.new("uint32_t[]", needed)
+        try:
+            written = int(
+                self._lib.turbotoken_pretokenize_ascii_letter_space_ranges(
+                    data,
+                    len(data),
+                    starts,
+                    ends,
+                    needed,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return [(int(starts[idx]), int(ends[idx])) for idx in range(written)]
 
     def arm64_feature_mask(self) -> int | None:
         self.load()

@@ -10,6 +10,7 @@ pub const exports = @import("exports.zig");
 comptime {
     _ = exports.turbotoken_version;
     _ = exports.turbotoken_count;
+    _ = exports.turbotoken_pretokenize_ascii_letter_space_ranges;
     _ = exports.turbotoken_arm64_feature_mask;
     _ = exports.turbotoken_count_non_ascii_kernel_id;
     _ = exports.turbotoken_count_non_ascii_utf8;

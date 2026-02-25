@@ -8,8 +8,12 @@ pub const Encoder = struct {
     const NodeIndex = u32;
     const null_index = std.math.maxInt(NodeIndex);
     const dead_index: NodeIndex = std.math.maxInt(NodeIndex) - 1;
+    const CandidateIndex = u32;
+    const invalid_candidate = std.math.maxInt(CandidateIndex);
+    const candidate_bucket_count: usize = 32_768;
 
     const NodeArena = struct {
+        backing: []align(@alignOf(u32)) u8,
         start: []u32,
         end: []u32,
         token: []u32,
@@ -18,29 +22,42 @@ pub const Encoder = struct {
         version: []u32,
 
         fn init(allocator: std.mem.Allocator, node_count: usize) !NodeArena {
-            var arena: NodeArena = undefined;
-            arena.start = try allocator.alloc(u32, node_count);
-            errdefer allocator.free(arena.start);
-            arena.end = try allocator.alloc(u32, node_count);
-            errdefer allocator.free(arena.end);
-            arena.token = try allocator.alloc(u32, node_count);
-            errdefer allocator.free(arena.token);
-            arena.prev = try allocator.alloc(NodeIndex, node_count);
-            errdefer allocator.free(arena.prev);
-            arena.next = try allocator.alloc(NodeIndex, node_count);
-            errdefer allocator.free(arena.next);
-            arena.version = try allocator.alloc(u32, node_count);
-            errdefer allocator.free(arena.version);
-            return arena;
+            const elem_size = @sizeOf(u32) * node_count;
+            const total_size = elem_size * 6;
+            const backing = try allocator.alignedAlloc(u8, .fromByteUnits(@alignOf(u32)), total_size);
+
+            var offset: usize = 0;
+            const start_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const start_slice = std.mem.bytesAsSlice(u32, start_bytes);
+            offset += elem_size;
+            const end_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const end_slice = std.mem.bytesAsSlice(u32, end_bytes);
+            offset += elem_size;
+            const token_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const token_slice = std.mem.bytesAsSlice(u32, token_bytes);
+            offset += elem_size;
+            const prev_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const prev_slice = std.mem.bytesAsSlice(NodeIndex, prev_bytes);
+            offset += elem_size;
+            const next_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const next_slice = std.mem.bytesAsSlice(NodeIndex, next_bytes);
+            offset += elem_size;
+            const version_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
+            const version_slice = std.mem.bytesAsSlice(u32, version_bytes);
+
+            return .{
+                .backing = backing,
+                .start = start_slice,
+                .end = end_slice,
+                .token = token_slice,
+                .prev = prev_slice,
+                .next = next_slice,
+                .version = version_slice,
+            };
         }
 
         fn deinit(self: *NodeArena, allocator: std.mem.Allocator) void {
-            allocator.free(self.start);
-            allocator.free(self.end);
-            allocator.free(self.token);
-            allocator.free(self.prev);
-            allocator.free(self.next);
-            allocator.free(self.version);
+            allocator.free(self.backing);
         }
 
         fn isAlive(self: *const NodeArena, idx: usize) bool {
@@ -51,29 +68,291 @@ pub const Encoder = struct {
     const Candidate = struct {
         rank: u32,
         left: NodeIndex,
-        right: NodeIndex,
         left_version: u32,
         right_version: u32,
     };
 
-    const CandidateQueue = std.PriorityQueue(Candidate, void, compareCandidate);
+    const CandidatePool = struct {
+        rank: std.ArrayListUnmanaged(u32) = .{},
+        left: std.ArrayListUnmanaged(NodeIndex) = .{},
+        left_version: std.ArrayListUnmanaged(u32) = .{},
+        right_version: std.ArrayListUnmanaged(u32) = .{},
+        next: std.ArrayListUnmanaged(CandidateIndex) = .{},
+        free_head: CandidateIndex = invalid_candidate,
+
+        fn deinit(self: *CandidatePool, allocator: std.mem.Allocator) void {
+            self.rank.deinit(allocator);
+            self.left.deinit(allocator);
+            self.left_version.deinit(allocator);
+            self.right_version.deinit(allocator);
+            self.next.deinit(allocator);
+        }
+
+        fn ensureTotalCapacity(self: *CandidatePool, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.rank.ensureTotalCapacity(allocator, capacity);
+            try self.left.ensureTotalCapacity(allocator, capacity);
+            try self.left_version.ensureTotalCapacity(allocator, capacity);
+            try self.right_version.ensureTotalCapacity(allocator, capacity);
+            try self.next.ensureTotalCapacity(allocator, capacity);
+        }
+
+        fn allocIndex(self: *CandidatePool, allocator: std.mem.Allocator) !CandidateIndex {
+            if (self.free_head != invalid_candidate) {
+                const idx = self.free_head;
+                self.free_head = self.next.items[@as(usize, idx)];
+                return idx;
+            }
+
+            const idx = self.rank.items.len;
+            if (idx >= invalid_candidate) {
+                return error.OutOfMemory;
+            }
+
+            try self.rank.append(allocator, 0);
+            try self.left.append(allocator, 0);
+            try self.left_version.append(allocator, 0);
+            try self.right_version.append(allocator, 0);
+            try self.next.append(allocator, invalid_candidate);
+            return @as(CandidateIndex, @intCast(idx));
+        }
+
+        fn set(self: *CandidatePool, idx: CandidateIndex, candidate: Candidate, next_idx: CandidateIndex) void {
+            const i = @as(usize, idx);
+            self.rank.items[i] = candidate.rank;
+            self.left.items[i] = candidate.left;
+            self.left_version.items[i] = candidate.left_version;
+            self.right_version.items[i] = candidate.right_version;
+            self.next.items[i] = next_idx;
+        }
+
+        fn get(self: *const CandidatePool, idx: CandidateIndex) Candidate {
+            const i = @as(usize, idx);
+            return .{
+                .rank = self.rank.items[i],
+                .left = self.left.items[i],
+                .left_version = self.left_version.items[i],
+                .right_version = self.right_version.items[i],
+            };
+        }
+
+        fn nextIndex(self: *const CandidatePool, idx: CandidateIndex) CandidateIndex {
+            return self.next.items[@as(usize, idx)];
+        }
+
+        fn release(self: *CandidatePool, idx: CandidateIndex) void {
+            self.next.items[@as(usize, idx)] = self.free_head;
+            self.free_head = idx;
+        }
+    };
+
+    const BucketQueue = struct {
+        allocator: std.mem.Allocator,
+        pool: CandidatePool = .{},
+        bucket_heads: []CandidateIndex,
+        min_nonempty: usize = candidate_bucket_count,
+        overflow_heap: std.ArrayListUnmanaged(CandidateIndex) = .{},
+
+        fn init(allocator: std.mem.Allocator) !BucketQueue {
+            const queue: BucketQueue = .{
+                .allocator = allocator,
+                .bucket_heads = try allocator.alloc(CandidateIndex, candidate_bucket_count),
+            };
+            @memset(queue.bucket_heads, invalid_candidate);
+            return queue;
+        }
+
+        fn deinit(self: *BucketQueue) void {
+            self.pool.deinit(self.allocator);
+            self.overflow_heap.deinit(self.allocator);
+            self.allocator.free(self.bucket_heads);
+        }
+
+        fn ensureTotalCapacity(self: *BucketQueue, capacity: usize) !void {
+            try self.pool.ensureTotalCapacity(self.allocator, capacity);
+            try self.overflow_heap.ensureTotalCapacity(self.allocator, capacity / 4 + 1);
+        }
+
+        fn add(self: *BucketQueue, candidate: Candidate) !void {
+            const idx = try self.pool.allocIndex(self.allocator);
+            if (candidate.rank < candidate_bucket_count) {
+                const bucket = @as(usize, @intCast(candidate.rank));
+                const head = self.bucket_heads[bucket];
+                self.pool.set(idx, candidate, head);
+                self.bucket_heads[bucket] = idx;
+                if (bucket < self.min_nonempty) {
+                    self.min_nonempty = bucket;
+                }
+            } else {
+                self.pool.set(idx, candidate, invalid_candidate);
+                try self.overflowPush(idx);
+            }
+        }
+
+        fn removeOrNull(self: *BucketQueue) ?Candidate {
+            const bucket_idx_opt = self.peekBucketHead();
+            const overflow_idx_opt = self.peekOverflowHead();
+
+            const choice: QueueChoice = blk: {
+                if (bucket_idx_opt == null and overflow_idx_opt == null) {
+                    return null;
+                }
+                if (bucket_idx_opt == null) {
+                    break :blk .overflow;
+                }
+                if (overflow_idx_opt == null) {
+                    break :blk .bucket;
+                }
+
+                break :blk switch (self.compareCandidateIndices(bucket_idx_opt.?, overflow_idx_opt.?)) {
+                    .gt => .overflow,
+                    else => .bucket,
+                };
+            };
+
+            const idx = switch (choice) {
+                .bucket => self.popBucketHead().?,
+                .overflow => self.popOverflowHead().?,
+            };
+            const candidate = self.pool.get(idx);
+            self.pool.release(idx);
+            return candidate;
+        }
+
+        fn peekOrNull(self: *BucketQueue) ?Candidate {
+            const bucket_idx_opt = self.peekBucketHead();
+            const overflow_idx_opt = self.peekOverflowHead();
+
+            if (bucket_idx_opt == null and overflow_idx_opt == null) {
+                return null;
+            }
+            if (bucket_idx_opt == null) {
+                return self.pool.get(overflow_idx_opt.?);
+            }
+            if (overflow_idx_opt == null) {
+                return self.pool.get(bucket_idx_opt.?);
+            }
+
+            return switch (self.compareCandidateIndices(bucket_idx_opt.?, overflow_idx_opt.?)) {
+                .gt => self.pool.get(overflow_idx_opt.?),
+                else => self.pool.get(bucket_idx_opt.?),
+            };
+        }
+
+        fn peekBucketHead(self: *BucketQueue) ?CandidateIndex {
+            self.advanceMinNonEmpty();
+            if (self.min_nonempty >= candidate_bucket_count) {
+                return null;
+            }
+            return self.bucket_heads[self.min_nonempty];
+        }
+
+        fn popBucketHead(self: *BucketQueue) ?CandidateIndex {
+            self.advanceMinNonEmpty();
+            if (self.min_nonempty >= candidate_bucket_count) {
+                return null;
+            }
+
+            const head = self.bucket_heads[self.min_nonempty];
+            self.bucket_heads[self.min_nonempty] = self.pool.nextIndex(head);
+            if (self.bucket_heads[self.min_nonempty] == invalid_candidate) {
+                self.advanceMinNonEmpty();
+            }
+            return head;
+        }
+
+        fn advanceMinNonEmpty(self: *BucketQueue) void {
+            while (self.min_nonempty < candidate_bucket_count and self.bucket_heads[self.min_nonempty] == invalid_candidate) {
+                self.min_nonempty += 1;
+            }
+        }
+
+        fn peekOverflowHead(self: *const BucketQueue) ?CandidateIndex {
+            if (self.overflow_heap.items.len == 0) {
+                return null;
+            }
+            return self.overflow_heap.items[0];
+        }
+
+        fn popOverflowHead(self: *BucketQueue) ?CandidateIndex {
+            if (self.overflow_heap.items.len == 0) {
+                return null;
+            }
+
+            const min_idx = self.overflow_heap.items[0];
+            const last_idx = self.overflow_heap.pop().?;
+            if (self.overflow_heap.items.len > 0) {
+                self.overflow_heap.items[0] = last_idx;
+                self.overflowSiftDown(0);
+            }
+            return min_idx;
+        }
+
+        fn overflowPush(self: *BucketQueue, idx: CandidateIndex) !void {
+            try self.overflow_heap.append(self.allocator, idx);
+            var child = self.overflow_heap.items.len - 1;
+            while (child > 0) {
+                const parent = (child - 1) / 2;
+                if (self.compareCandidateIndices(self.overflow_heap.items[child], self.overflow_heap.items[parent]) != .lt) {
+                    break;
+                }
+                std.mem.swap(CandidateIndex, &self.overflow_heap.items[child], &self.overflow_heap.items[parent]);
+                child = parent;
+            }
+        }
+
+        fn overflowSiftDown(self: *BucketQueue, start_idx: usize) void {
+            var parent = start_idx;
+            const len = self.overflow_heap.items.len;
+            while (true) {
+                const left = parent * 2 + 1;
+                if (left >= len) {
+                    break;
+                }
+
+                var smallest = left;
+                const right = left + 1;
+                if (right < len and self.compareCandidateIndices(self.overflow_heap.items[right], self.overflow_heap.items[left]) == .lt) {
+                    smallest = right;
+                }
+
+                if (self.compareCandidateIndices(self.overflow_heap.items[smallest], self.overflow_heap.items[parent]) != .lt) {
+                    break;
+                }
+                std.mem.swap(CandidateIndex, &self.overflow_heap.items[parent], &self.overflow_heap.items[smallest]);
+                parent = smallest;
+            }
+        }
+
+        fn compareCandidateIndices(self: *const BucketQueue, lhs_idx: CandidateIndex, rhs_idx: CandidateIndex) std.math.Order {
+            const lhs_i = @as(usize, lhs_idx);
+            const rhs_i = @as(usize, rhs_idx);
+
+            const rank_order = std.math.order(self.pool.rank.items[lhs_i], self.pool.rank.items[rhs_i]);
+            if (rank_order != .eq) {
+                return rank_order;
+            }
+            return std.math.order(self.pool.left.items[lhs_i], self.pool.left.items[rhs_i]);
+        }
+    };
+
+    const QueueChoice = enum {
+        bucket,
+        overflow,
+    };
     const cache_miss = std.math.maxInt(u32);
     const MergeResult = struct {
         arena: NodeArena,
         head_idx: NodeIndex,
     };
 
-    fn compareCandidate(_: void, a: Candidate, b: Candidate) std.math.Order {
+    fn compareCandidate(a: Candidate, b: Candidate) std.math.Order {
         const rank_order = std.math.order(a.rank, b.rank);
         if (rank_order != .eq) {
             return rank_order;
         }
 
         const left_order = std.math.order(a.left, b.left);
-        if (left_order != .eq) {
-            return left_order;
-        }
-        return std.math.order(a.right, b.right);
+        return left_order;
     }
 
     fn pairRank(
@@ -113,7 +392,7 @@ pub const Encoder = struct {
 
     fn enqueueCandidate(
         allocator: std.mem.Allocator,
-        queue: *CandidateQueue,
+        queue: *BucketQueue,
         arena: *const NodeArena,
         table: *const rank_loader.RankTable,
         cache: *pair_cache.PairCache,
@@ -142,7 +421,6 @@ pub const Encoder = struct {
 
         try queue.add(.{
             .left = @as(NodeIndex, @intCast(left_idx)),
-            .right = right_idx,
             .rank = rank,
             .left_version = arena.version[left_idx],
             .right_version = arena.version[right_usize],
@@ -177,7 +455,7 @@ pub const Encoder = struct {
         var scratch = std.ArrayListUnmanaged(u8){};
         defer scratch.deinit(allocator);
 
-        var queue = CandidateQueue.init(allocator, {});
+        var queue = try BucketQueue.init(allocator);
         defer queue.deinit();
 
         if (arena.token.len > 1) {
@@ -188,9 +466,16 @@ pub const Encoder = struct {
         }
 
         while (queue.removeOrNull()) |candidate| {
+            if (queue.peekOrNull()) |next_candidate| {
+                const next_left_idx = @as(usize, next_candidate.left);
+                if (next_left_idx < arena.token.len) {
+                    @prefetch(&arena.token[next_left_idx], .{ .rw = .read, .locality = 2 });
+                    @prefetch(&arena.next[next_left_idx], .{ .rw = .read, .locality = 2 });
+                }
+            }
+
             const left_idx = @as(usize, candidate.left);
-            const right_idx = @as(usize, candidate.right);
-            if (left_idx >= arena.token.len or right_idx >= arena.token.len) {
+            if (left_idx >= arena.token.len) {
                 continue;
             }
 
@@ -200,9 +485,6 @@ pub const Encoder = struct {
 
             const actual_right_idx = arena.next[left_idx];
             if (actual_right_idx == null_index or actual_right_idx == dead_index) {
-                continue;
-            }
-            if (actual_right_idx != candidate.right) {
                 continue;
             }
 

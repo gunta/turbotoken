@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -152,6 +153,57 @@ class Encoding:
             self._piece_regex = regex.compile(self._spec.pat_str)
         return self._piece_regex
 
+    def _native_ascii_letter_space_piece_bytes(self, text: str) -> list[bytes] | None:
+        if os.environ.get("TURBOTOKEN_NATIVE_PRETOKENIZER_DISABLE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            return None
+        if self.name not in {"cl100k_base", "o200k_base"}:
+            return None
+        if len(text) < 2048 or not text.isascii():
+            return None
+
+        data = text.encode("ascii")
+        for byte in data:
+            if byte == 0x20:
+                continue
+            if 65 <= byte <= 90:
+                continue
+            if 97 <= byte <= 122:
+                continue
+            return None
+
+        bridge = get_native_bridge()
+        if not bridge.available:
+            return None
+        ranges = bridge.pretokenize_ascii_letter_space_ranges(data)
+        if ranges is None:
+            return None
+
+        pieces: list[bytes] = []
+        for start, end in ranges:
+            if start < 0 or end < start or end > len(data):
+                return None
+            if start == end:
+                continue
+            pieces.append(data[start:end])
+        return pieces
+
+    def _ordinary_piece_bytes(self, text: str) -> list[bytes]:
+        native_pieces = self._native_ascii_letter_space_piece_bytes(text)
+        if native_pieces is not None:
+            return native_pieces
+
+        piece_regex = self._ensure_piece_regex()
+        pieces: list[bytes] = []
+        for piece in piece_regex.findall(text):
+            if not piece:
+                continue
+            pieces.append(piece.encode("utf-8"))
+        return pieces
+
     def _bpe_tokenize_piece(self, piece: bytes) -> tuple[int, ...]:
         if not piece:
             return ()
@@ -202,12 +254,9 @@ class Encoding:
     def _encode_ordinary_impl(self, text: str) -> list[int]:
         if not text:
             return []
-        piece_regex = self._ensure_piece_regex()
         out: list[int] = []
-        for piece in piece_regex.findall(text):
-            if not piece:
-                continue
-            out.extend(self._bpe_tokenize_piece(piece.encode("utf-8")))
+        for piece_bytes in self._ordinary_piece_bytes(text):
+            out.extend(self._bpe_tokenize_piece(piece_bytes))
         return out
 
     def _encode_ordinary_gpu_impl(
@@ -225,13 +274,8 @@ class Encoding:
         self.load_mergeable_ranks()
         rank_payload = self._rank_payload_cache
         native_bridge = get_native_bridge() if rank_payload is not None else None
-        piece_regex = self._ensure_piece_regex()
         out: list[int] = []
-        for piece in piece_regex.findall(text):
-            if not piece:
-                continue
-
-            piece_bytes = piece.encode("utf-8")
+        for piece_bytes in self._ordinary_piece_bytes(text):
             if rank_payload is None:
                 out.extend(self._bpe_tokenize_piece(piece_bytes))
                 continue
@@ -276,12 +320,8 @@ class Encoding:
             return 0
         self.load_mergeable_ranks()
         native_bridge = get_native_bridge() if self._rank_payload_cache is not None else None
-        piece_regex = self._ensure_piece_regex()
         count = 0
-        for piece in piece_regex.findall(text):
-            if not piece:
-                continue
-            piece_bytes = piece.encode("utf-8")
+        for piece_bytes in self._ordinary_piece_bytes(text):
 
             # Keep count() allocation-free for large pieces by using the native scalar fast path.
             if len(piece_bytes) >= 2048 and native_bridge is not None and self._rank_payload_cache is not None:

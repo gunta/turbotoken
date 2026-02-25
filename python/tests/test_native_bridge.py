@@ -76,6 +76,21 @@ def test_native_bridge_non_ascii_count_wrappers_when_available() -> None:
         assert kernel_id in (1, 2, 3)
 
 
+def test_native_bridge_ascii_pretokenizer_ranges_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    data = b"hello  world"
+    ranges = bridge.pretokenize_ascii_letter_space_ranges(data)
+    if ranges is None:
+        pytest.skip("native library does not expose ascii pretokenizer symbol")
+
+    pieces = [data[start:end] for start, end in ranges]
+    assert pieces == [b"hello", b" ", b" world"]
+    assert bridge.pretokenize_ascii_letter_space_ranges(b"hello, world") is None
+
+
 def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:

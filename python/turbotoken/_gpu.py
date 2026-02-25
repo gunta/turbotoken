@@ -174,6 +174,7 @@ def _bench_mean_ms(fn: Any, loops: int) -> float:
 
 _rank_token_len_cache: dict[str, dict[int, int]] = {}
 _metal_stitch_support_cache: dict[tuple[str, int, int, int], bool] = {}
+_metal_bpe_rank_table_ready: dict[str, bool] = {}
 
 
 def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
@@ -190,6 +191,98 @@ def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
         oldest = next(iter(_rank_token_len_cache))
         del _rank_token_len_cache[oldest]
     return token_lens
+
+
+def _fnv1a_pair(left: int, right: int) -> int:
+    h = 2166136261
+    h = ((h ^ left) * 16777619) & 0xFFFFFFFF
+    h = ((h ^ right) * 16777619) & 0xFFFFFFFF
+    return h
+
+
+def _build_metal_pair_hash_table(
+    rank_payload: bytes,
+) -> tuple[list[int], list[int]] | None:
+    mergeable = parse_rank_file_bytes(rank_payload)
+    byte_tokens: list[int] = []
+    for value in range(256):
+        token = mergeable.get(bytes([value]))
+        if token is None:
+            return None
+        byte_tokens.append(token)
+
+    pair_to_merge: dict[tuple[int, int], tuple[int, int]] = {}
+    for merged_bytes, merged_token in mergeable.items():
+        if len(merged_bytes) < 2:
+            continue
+        for split in range(1, len(merged_bytes)):
+            left_token = mergeable.get(merged_bytes[:split])
+            right_token = mergeable.get(merged_bytes[split:])
+            if left_token is None or right_token is None:
+                continue
+            key = (left_token, right_token)
+            existing = pair_to_merge.get(key)
+            if existing is None or merged_token < existing[0]:
+                # merge_rank and merged_token are the same id in rank files.
+                pair_to_merge[key] = (merged_token, merged_token)
+
+    if not pair_to_merge:
+        return None
+
+    table_size = 1024
+    while table_size < (len(pair_to_merge) * 2):
+        table_size <<= 1
+
+    empty = 0xFFFFFFFF
+    entries: list[list[int]] = [[empty, empty, empty, empty] for _ in range(table_size)]
+    mask = table_size - 1
+    for (left_token, right_token), (merge_rank, merged_token) in pair_to_merge.items():
+        slot = _fnv1a_pair(left_token, right_token) & mask
+        for _ in range(64):
+            row = entries[slot]
+            if row[2] == empty:
+                entries[slot] = [left_token, right_token, merge_rank, merged_token]
+                break
+            if row[0] == left_token and row[1] == right_token:
+                if merge_rank < row[2]:
+                    entries[slot] = [left_token, right_token, merge_rank, merged_token]
+                break
+            slot = (slot + 1) & mask
+        else:
+            return None
+
+    flattened: list[int] = []
+    for row in entries:
+        flattened.extend(row)
+    return flattened, byte_tokens
+
+
+def _ensure_metal_bpe_rank_table(rank_payload: bytes) -> bool:
+    digest = hashlib.sha256(rank_payload).hexdigest()
+    if _metal_bpe_rank_table_ready.get(digest) is True:
+        return True
+
+    bridge = get_metal_bridge()
+    if not bridge.available:
+        return False
+
+    built = _build_metal_pair_hash_table(rank_payload)
+    if built is None:
+        _metal_bpe_rank_table_ready[digest] = False
+        return False
+    table_entries, byte_tokens = built
+    if not bridge.set_bpe_rank_table(table_entries):
+        _metal_bpe_rank_table_ready[digest] = False
+        return False
+    if not bridge.set_bpe_byte_token_map(byte_tokens):
+        _metal_bpe_rank_table_ready[digest] = False
+        return False
+
+    _metal_bpe_rank_table_ready[digest] = True
+    if len(_metal_bpe_rank_table_ready) > 4:
+        oldest = next(iter(_metal_bpe_rank_table_ready))
+        del _metal_bpe_rank_table_ready[oldest]
+    return True
 
 
 @dataclass(slots=True)
@@ -257,6 +350,20 @@ class MetalBridge:
                 uint32_t *out_flags,
                 size_t out_cap
             );
+            long turbotoken_metal_bpe_set_rank_table(
+                const uint32_t *entries_u32,
+                size_t entry_u32_len
+            );
+            long turbotoken_metal_bpe_set_byte_token_map(
+                const uint32_t *byte_tokens,
+                size_t byte_tokens_len
+            );
+            long turbotoken_metal_bpe_encode_from_bytes(
+                const unsigned char *input,
+                size_t input_len,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
             uint64_t turbotoken_metal_last_encode_cpu_ns(void);
             uint64_t turbotoken_metal_last_encode_gpu_ns(void);
             uint64_t turbotoken_metal_last_encode_bytes(void);
@@ -271,6 +378,11 @@ class MetalBridge:
             uint64_t turbotoken_metal_last_stitch_tokens(void);
             uint64_t turbotoken_metal_last_stitch_chunk_bytes(void);
             uint64_t turbotoken_metal_last_stitch_num_chunks(void);
+            uint64_t turbotoken_metal_last_bpe_cpu_ns(void);
+            uint64_t turbotoken_metal_last_bpe_gpu_ns(void);
+            uint64_t turbotoken_metal_last_bpe_rounds(void);
+            uint64_t turbotoken_metal_last_bpe_input_bytes(void);
+            uint64_t turbotoken_metal_last_bpe_output_tokens(void);
             """
         )
 
@@ -470,6 +582,76 @@ class MetalBridge:
             return None
         return [int(out[idx]) for idx in range(written)]
 
+    def set_bpe_rank_table(self, entries_u32: Sequence[int]) -> bool:
+        self.load()
+        if not self._available or self._lib is None or self._ffi is None:
+            return False
+        if len(entries_u32) == 0:
+            return False
+        try:
+            table_buf = self._ffi.new("uint32_t[]", list(entries_u32))
+            written = int(
+                self._lib.turbotoken_metal_bpe_set_rank_table(
+                    table_buf,
+                    len(entries_u32),
+                )
+            )
+        except (AttributeError, OverflowError, TypeError):
+            return False
+        return written > 0
+
+    def set_bpe_byte_token_map(self, byte_tokens: Sequence[int]) -> bool:
+        self.load()
+        if not self._available or self._lib is None or self._ffi is None:
+            return False
+        if len(byte_tokens) != 256:
+            return False
+        try:
+            byte_buf = self._ffi.new("uint32_t[]", list(byte_tokens))
+            written = int(
+                self._lib.turbotoken_metal_bpe_set_byte_token_map(
+                    byte_buf,
+                    len(byte_tokens),
+                )
+            )
+        except (AttributeError, OverflowError, TypeError):
+            return False
+        return written == 256
+
+    def encode_bpe_from_bytes(self, data: bytes) -> list[int] | None:
+        self.load()
+        if not self._available or self._lib is None or self._ffi is None:
+            return None
+        if not data:
+            return []
+
+        in_buf = self._ffi.from_buffer("const unsigned char[]", data)
+        needed = int(
+            self._lib.turbotoken_metal_bpe_encode_from_bytes(
+                in_buf,
+                len(data),
+                self._ffi.NULL,
+                0,
+            )
+        )
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        out = self._ffi.new("uint32_t[]", needed)
+        written = int(
+            self._lib.turbotoken_metal_bpe_encode_from_bytes(
+                in_buf,
+                len(data),
+                out,
+                needed,
+            )
+        )
+        if written < 0:
+            return None
+        return [int(out[idx]) for idx in range(written)]
+
     def last_profile(self) -> dict[str, int] | None:
         self.load()
         if not self._available or self._lib is None:
@@ -491,6 +673,11 @@ class MetalBridge:
                 "stitch_tokens": int(self._lib.turbotoken_metal_last_stitch_tokens()),
                 "stitch_chunk_bytes": int(self._lib.turbotoken_metal_last_stitch_chunk_bytes()),
                 "stitch_num_chunks": int(self._lib.turbotoken_metal_last_stitch_num_chunks()),
+                "bpe_cpu_ns": int(self._lib.turbotoken_metal_last_bpe_cpu_ns()),
+                "bpe_gpu_ns": int(self._lib.turbotoken_metal_last_bpe_gpu_ns()),
+                "bpe_rounds": int(self._lib.turbotoken_metal_last_bpe_rounds()),
+                "bpe_input_bytes": int(self._lib.turbotoken_metal_last_bpe_input_bytes()),
+                "bpe_output_tokens": int(self._lib.turbotoken_metal_last_bpe_output_tokens()),
             }
         except (AttributeError, TypeError):
             return None
@@ -873,6 +1060,16 @@ def _encode_bpe_chunked_stitched_metal(
         return None
 
     token_lens = _rank_token_lens_from_payload(rank_payload)
+    full_piece_max_bytes = int(
+        os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384")
+    )
+    if len(data) <= full_piece_max_bytes and _ensure_metal_bpe_rank_table(rank_payload):
+        gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+        if gpu_tokens is not None:
+            total_bytes = _token_total_bytes(gpu_tokens, token_lens)
+            if total_bytes == len(data):
+                return gpu_tokens
+
     num_chunks = (len(data) + chunk_bytes - 1) // chunk_bytes
     chunk_ranges: list[tuple[int, int]] = []
     for chunk_idx in range(num_chunks):
