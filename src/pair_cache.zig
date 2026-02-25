@@ -1,5 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const rank_loader = @import("rank_loader.zig");
+const hash = @import("hash.zig");
 const generated_seeds = @import("generated/pair_cache_seeds.zig");
 
 pub const bytes: usize = 4 * 1024 * 1024;
@@ -14,6 +16,18 @@ const Entry = extern struct {
 pub const entry_count: usize = bytes / @sizeOf(Entry);
 
 pub const PairCache = struct {
+    const HashMode = enum {
+        rapidhash,
+        crc32,
+    };
+    const aarch64_crc_supported = builtin.cpu.arch == .aarch64 and
+        std.Target.aarch64.featureSetHas(builtin.cpu.features, .crc);
+
+    extern fn turbotoken_arm64_hash_crc32_u64(key: u64) u64;
+
+    var selected_hash_mode: HashMode = .rapidhash;
+    var selected_hash_mode_once = std.once(initHashMode);
+
     entries: [entry_count]Entry align(64),
 
     pub fn init() PairCache {
@@ -120,31 +134,60 @@ pub const PairCache = struct {
     }
 
     fn slotIndex(key: u64) usize {
-        const hash = std.hash.Wyhash.hash(0, std.mem.asBytes(&key));
-        return @as(usize, @truncate(hash)) & (entry_count - 1);
+        const slot_hash = switch (selectHashMode()) {
+            .rapidhash => hash.bytes(std.mem.asBytes(&key)),
+            .crc32 => if (comptime aarch64_crc_supported)
+                turbotoken_arm64_hash_crc32_u64(key)
+            else
+                hash.bytes(std.mem.asBytes(&key)),
+        };
+        return @as(usize, @truncate(slot_hash)) & (entry_count - 1);
+    }
+
+    fn selectHashMode() HashMode {
+        selected_hash_mode_once.call();
+        return selected_hash_mode;
+    }
+
+    fn initHashMode() void {
+        const mode = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_PAIR_CACHE_HASH") catch {
+            selected_hash_mode = .rapidhash;
+            return;
+        };
+        defer std.heap.page_allocator.free(mode);
+
+        if (std.ascii.eqlIgnoreCase(mode, "rapidhash")) {
+            selected_hash_mode = .rapidhash;
+            return;
+        }
+        if (std.ascii.eqlIgnoreCase(mode, "crc32")) {
+            selected_hash_mode = if (comptime aarch64_crc_supported) .crc32 else .rapidhash;
+            return;
+        }
+        selected_hash_mode = .rapidhash;
     }
 
     fn rankTableFingerprint(table: *const rank_loader.RankTable, limit: u32) u64 {
-        var hash: u64 = 0xcbf29ce484222325;
+        var fingerprint: u64 = 0xcbf29ce484222325;
         var rank: u32 = 0;
 
         while (rank < limit) : (rank += 1) {
             const token = table.tokenForRank(rank) orelse break;
-            hash = fnv1aU32(hash, rank);
-            hash = fnv1aU32(hash, @as(u32, @intCast(token.len)));
-            hash = fnv1aBytes(hash, token);
+            fingerprint = fnv1aU32(fingerprint, rank);
+            fingerprint = fnv1aU32(fingerprint, @as(u32, @intCast(token.len)));
+            fingerprint = fnv1aBytes(fingerprint, token);
         }
 
-        return hash;
+        return fingerprint;
     }
 
     fn fnv1aBytes(initial_hash: u64, data: []const u8) u64 {
-        var hash = initial_hash;
+        var acc = initial_hash;
         for (data) |byte| {
-            hash ^= @as(u64, byte);
-            hash *%= 0x100000001b3;
+            acc ^= @as(u64, byte);
+            acc *%= 0x100000001b3;
         }
-        return hash;
+        return acc;
     }
 
     fn fnv1aU32(initial_hash: u64, value: u32) u64 {

@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const aarch64 = @import("arch/aarch64.zig");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
+const hash = @import("hash.zig");
 const rank_loader = @import("rank_loader.zig");
 const pretokenizer = @import("pretokenizer.zig");
 
@@ -42,10 +43,10 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
         return &rank_table_cache.table.?;
     }
 
-    const hash = std.hash.Wyhash.hash(0, rank_slice);
+    const rank_hash = hash.bytes(rank_slice);
 
     if (rank_table_cache.payload) |payload| {
-        if (rank_table_cache.hash == hash and payload.len == input_len and std.mem.eql(u8, payload, rank_slice)) {
+        if (rank_table_cache.hash == rank_hash and payload.len == input_len and std.mem.eql(u8, payload, rank_slice)) {
             rank_table_cache.last_input_ptr = input_ptr;
             rank_table_cache.last_input_len = input_len;
             return &rank_table_cache.table.?;
@@ -61,7 +62,7 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
     var table = try rank_loader.loadFromBytes(rank_cache_allocator, rank_slice);
     errdefer table.deinit();
 
-    rank_table_cache.hash = hash;
+    rank_table_cache.hash = rank_hash;
     rank_table_cache.payload = payload_copy;
     rank_table_cache.last_input_ptr = input_ptr;
     rank_table_cache.last_input_len = input_len;
@@ -249,6 +250,63 @@ pub export fn turbotoken_count_non_ascii_utf8_sme(
     }
 
     const count = aarch64.countNonAsciiSme(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_ascii_class_boundaries_utf8(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len <= 1) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const count = pretokenizer.countAsciiClassBoundaries(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_ascii_class_boundaries_utf8_scalar(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len <= 1) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const count = pretokenizer.countAsciiClassBoundariesScalar(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_ascii_class_boundaries_utf8_neon(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len <= 1) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+    if (builtin.cpu.arch != .aarch64 or !aarch64.available()) {
+        return -1;
+    }
+
+    const count = pretokenizer.countAsciiClassBoundariesNeon(text[0..text_len]);
     if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
@@ -809,6 +867,32 @@ test "count non-ascii exports agree with scalar baseline" {
         try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_neon(text.ptr, text.len));
         try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_dotprod(text.ptr, text.len));
         try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_sme(text.ptr, text.len));
+    }
+}
+
+test "ascii class boundary exports agree with scalar baseline" {
+    const text = "hello 123!! world\tz";
+    const expected = pretokenizer.countAsciiClassBoundariesScalar(text);
+
+    try std.testing.expectEqual(
+        @as(isize, @intCast(expected)),
+        turbotoken_count_ascii_class_boundaries_utf8(text.ptr, text.len),
+    );
+    try std.testing.expectEqual(
+        @as(isize, @intCast(expected)),
+        turbotoken_count_ascii_class_boundaries_utf8_scalar(text.ptr, text.len),
+    );
+
+    if (builtin.cpu.arch == .aarch64 and aarch64.available()) {
+        try std.testing.expectEqual(
+            @as(isize, @intCast(expected)),
+            turbotoken_count_ascii_class_boundaries_utf8_neon(text.ptr, text.len),
+        );
+    } else {
+        try std.testing.expectEqual(
+            @as(isize, -1),
+            turbotoken_count_ascii_class_boundaries_utf8_neon(text.ptr, text.len),
+        );
     }
 }
 

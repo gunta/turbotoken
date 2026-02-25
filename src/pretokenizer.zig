@@ -24,6 +24,112 @@ fn isAsciiLetter(byte: u8) bool {
     return (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z');
 }
 
+fn classifyAsciiByte(byte: u8) u8 {
+    if (byte == ' ') {
+        return 0;
+    }
+    if (isAsciiLetter(byte)) {
+        return 1;
+    }
+    if (byte >= '0' and byte <= '9') {
+        return 2;
+    }
+    if (byte >= 33 and byte <= 126) {
+        return 3;
+    }
+    return 4;
+}
+
+fn classifyAsciiChunk16(chunk: @Vector(16, u8)) @Vector(16, u8) {
+    const Vec16u8 = @Vector(16, u8);
+    const Vec16b = @Vector(16, bool);
+    const code_space = @as(Vec16u8, @splat(@as(u8, 0)));
+    const code_letter = @as(Vec16u8, @splat(@as(u8, 1)));
+    const code_digit = @as(Vec16u8, @splat(@as(u8, 2)));
+    const code_punct = @as(Vec16u8, @splat(@as(u8, 3)));
+    const code_other = @as(Vec16u8, @splat(@as(u8, 4)));
+
+    const is_ascii: Vec16b = chunk < @as(Vec16u8, @splat(@as(u8, 0x80)));
+    const is_space: Vec16b = chunk == @as(Vec16u8, @splat(@as(u8, ' ')));
+    const is_upper: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, 'A')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 'Z'))));
+    const is_lower: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, 'a')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 'z'))));
+    const is_letter: Vec16b = is_upper | is_lower;
+    const is_digit: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, '0')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, '9'))));
+    const is_printable: Vec16b = is_ascii & (chunk >= @as(Vec16u8, @splat(@as(u8, 33)))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 126))));
+    const is_punct: Vec16b = is_printable & ~(is_space | is_letter | is_digit);
+
+    var out = code_other;
+    out = @select(u8, is_punct, code_punct, out);
+    out = @select(u8, is_digit, code_digit, out);
+    out = @select(u8, is_letter, code_letter, out);
+    out = @select(u8, is_space, code_space, out);
+    return out;
+}
+
+pub fn countAsciiClassBoundariesScalar(text: []const u8) usize {
+    if (text.len <= 1) {
+        return 0;
+    }
+
+    var boundaries: usize = 0;
+    var prev = classifyAsciiByte(text[0]);
+    for (text[1..]) |byte| {
+        const cls = classifyAsciiByte(byte);
+        if (cls != prev) {
+            boundaries += 1;
+        }
+        prev = cls;
+    }
+    return boundaries;
+}
+
+fn countAsciiClassBoundariesNeonLike(text: []const u8) usize {
+    if (text.len <= 1) {
+        return 0;
+    }
+
+    var boundaries: usize = 0;
+    var prev = classifyAsciiByte(text[0]);
+    var idx: usize = 1;
+
+    while (idx + 16 <= text.len) : (idx += 16) {
+        const chunk_ptr: *const [16]u8 = @ptrCast(text[idx .. idx + 16].ptr);
+        const chunk: @Vector(16, u8) = chunk_ptr.*;
+        const classes: @Vector(16, u8) = classifyAsciiChunk16(chunk);
+        const classes_arr: [16]u8 = @bitCast(classes);
+        inline for (classes_arr) |cls| {
+            if (cls != prev) {
+                boundaries += 1;
+            }
+            prev = cls;
+        }
+    }
+
+    while (idx < text.len) : (idx += 1) {
+        const cls = classifyAsciiByte(text[idx]);
+        if (cls != prev) {
+            boundaries += 1;
+        }
+        prev = cls;
+    }
+
+    return boundaries;
+}
+
+pub fn countAsciiClassBoundariesNeon(text: []const u8) usize {
+    return countAsciiClassBoundariesNeonLike(text);
+}
+
+pub fn countAsciiClassBoundaries(text: []const u8) usize {
+    if (text.len <= 1) {
+        return 0;
+    }
+    if (builtin.cpu.arch == .aarch64 and aarch64.available() and text.len >= 32) {
+        return countAsciiClassBoundariesNeonLike(text);
+    }
+    return countAsciiClassBoundariesScalar(text);
+}
+
 fn emitRange(
     starts_opt: ?[]u32,
     ends_opt: ?[]u32,
@@ -142,4 +248,17 @@ test "split ascii letter/space ranges rejects unsupported bytes" {
         error.UnsupportedInput,
         splitAsciiLetterSpaceRanges("hello, world", &starts, &ends),
     );
+}
+
+test "ascii class boundary counter matches scalar baseline" {
+    const text = "hello 123!! world\tz\xff";
+    try std.testing.expectEqual(
+        countAsciiClassBoundariesScalar(text),
+        countAsciiClassBoundaries(text),
+    );
+}
+
+test "ascii class boundary counter handles empty and single-byte inputs" {
+    try std.testing.expectEqual(@as(usize, 0), countAsciiClassBoundaries(""));
+    try std.testing.expectEqual(@as(usize, 0), countAsciiClassBoundaries("a"));
 }

@@ -44,6 +44,16 @@ pub const RankTable = struct {
         return self.by_rank.get(rank);
     }
 
+    pub fn maxRankPlusOne(self: *const RankTable) usize {
+        var idx = self.by_rank_dense.items.len;
+        while (idx > 0) : (idx -= 1) {
+            if (self.by_rank_dense.items[idx - 1] != null) {
+                return idx;
+            }
+        }
+        return 0;
+    }
+
     fn addOwned(self: *RankTable, token: []u8, rank: u32) !void {
         if (self.by_token.contains(token)) {
             return error.DuplicateToken;
@@ -122,6 +132,7 @@ test "loadFromBytes parses valid rank data" {
     defer table.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), table.len());
+    try std.testing.expectEqual(@as(usize, 3), table.maxRankPlusOne());
     try std.testing.expectEqual(@as(?u32, 1), table.get("a"));
     try std.testing.expectEqual(@as(?u32, 2), table.get("b"));
     try std.testing.expectEqualStrings("a", table.tokenForRank(1).?);
@@ -142,6 +153,7 @@ test "loadFromBytes supports sparse high rank lookups" {
     try std.testing.expectEqualStrings("a", table.tokenForRank(0).?);
     try std.testing.expectEqualStrings("b", table.tokenForRank(1024).?);
     try std.testing.expect(table.tokenForRank(1023) == null);
+    try std.testing.expectEqual(@as(usize, 1025), table.maxRankPlusOne());
 }
 
 test "loadFromBytes rejects malformed lines" {

@@ -40,6 +40,7 @@ fn addStaticLibraryCompat(
     if (target.result.cpu.arch == .aarch64) {
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/hash_crc32.S"));
         if (enable_experimental_sme) {
             lib.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }
@@ -73,6 +74,7 @@ fn addSharedLibraryCompat(
     if (target.result.cpu.arch == .aarch64) {
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/hash_crc32.S"));
         if (enable_experimental_sme) {
             lib.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }
@@ -103,6 +105,7 @@ fn addTestCompat(
     if (target.result.cpu.arch == .aarch64) {
         tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
+        tests.root_module.addAssemblyFile(b.path("asm/arm64/hash_crc32.S"));
         if (enable_experimental_sme) {
             tests.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }

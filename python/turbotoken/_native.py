@@ -102,6 +102,18 @@ class NativeBridge:
                 const char *text,
                 size_t text_len
             );
+            long turbotoken_count_ascii_class_boundaries_utf8(
+                const char *text,
+                size_t text_len
+            );
+            long turbotoken_count_ascii_class_boundaries_utf8_scalar(
+                const char *text,
+                size_t text_len
+            );
+            long turbotoken_count_ascii_class_boundaries_utf8_neon(
+                const char *text,
+                size_t text_len
+            );
             long turbotoken_encode_utf8_bytes(
                 const char *text,
                 size_t text_len,
@@ -320,6 +332,29 @@ class NativeBridge:
 
     def count_non_ascii_utf8_sme(self, data: bytes) -> int | None:
         return self._count_non_ascii("turbotoken_count_non_ascii_utf8_sme", data)
+
+    def _count_ascii_boundaries(self, symbol: str, data: bytes) -> int | None:
+        self.load()
+        if self._lib is None:
+            return None
+
+        try:
+            fn = getattr(self._lib, symbol)
+            result = int(fn(data, len(data)))
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def count_ascii_class_boundaries_utf8(self, data: bytes) -> int | None:
+        return self._count_ascii_boundaries("turbotoken_count_ascii_class_boundaries_utf8", data)
+
+    def count_ascii_class_boundaries_utf8_scalar(self, data: bytes) -> int | None:
+        return self._count_ascii_boundaries("turbotoken_count_ascii_class_boundaries_utf8_scalar", data)
+
+    def count_ascii_class_boundaries_utf8_neon(self, data: bytes) -> int | None:
+        return self._count_ascii_boundaries("turbotoken_count_ascii_class_boundaries_utf8_neon", data)
 
     def encode_utf8_bytes(self, data: bytes) -> list[int] | None:
         self.load()

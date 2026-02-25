@@ -91,6 +91,46 @@ def test_native_bridge_ascii_pretokenizer_ranges_when_available() -> None:
     assert bridge.pretokenize_ascii_letter_space_ranges(b"hello, world") is None
 
 
+def _ascii_class(byte: int) -> int:
+    if byte == 0x20:
+        return 0
+    if 65 <= byte <= 90 or 97 <= byte <= 122:
+        return 1
+    if 48 <= byte <= 57:
+        return 2
+    if 33 <= byte <= 126:
+        return 3
+    return 4
+
+
+def test_native_bridge_ascii_boundary_count_wrappers_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    data = b"hello 123!! world\tz\xff"
+    expected = 0
+    if len(data) > 1:
+        prev = _ascii_class(data[0])
+        for byte in data[1:]:
+            cls = _ascii_class(byte)
+            if cls != prev:
+                expected += 1
+            prev = cls
+
+    auto = bridge.count_ascii_class_boundaries_utf8(data)
+    scalar = bridge.count_ascii_class_boundaries_utf8_scalar(data)
+    if auto is None or scalar is None:
+        pytest.skip("native library does not expose ascii boundary count symbols")
+
+    assert auto == expected
+    assert scalar == expected
+
+    neon = bridge.count_ascii_class_boundaries_utf8_neon(data)
+    if neon is not None:
+        assert neon == expected
+
+
 def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:

@@ -11,6 +11,15 @@ pub const Encoder = struct {
     const CandidateIndex = u32;
     const invalid_candidate = std.math.maxInt(CandidateIndex);
     const candidate_bucket_count: usize = 32_768;
+    const max_full_bucket_count: usize = 1_048_576;
+
+    const QueueMode = enum {
+        hybrid,
+        full_bucket,
+    };
+
+    var selected_queue_mode: QueueMode = .hybrid;
+    var queue_mode_once = std.once(initQueueMode);
 
     const NodeArena = struct {
         backing: []align(@alignOf(u32)) u8,
@@ -149,13 +158,16 @@ pub const Encoder = struct {
         allocator: std.mem.Allocator,
         pool: CandidatePool = .{},
         bucket_heads: []CandidateIndex,
-        min_nonempty: usize = candidate_bucket_count,
+        min_nonempty: usize,
+        overflow_enabled: bool,
         overflow_heap: std.ArrayListUnmanaged(CandidateIndex) = .{},
 
-        fn init(allocator: std.mem.Allocator) !BucketQueue {
+        fn init(allocator: std.mem.Allocator, bucket_count: usize, overflow_enabled: bool) !BucketQueue {
             const queue: BucketQueue = .{
                 .allocator = allocator,
-                .bucket_heads = try allocator.alloc(CandidateIndex, candidate_bucket_count),
+                .bucket_heads = try allocator.alloc(CandidateIndex, bucket_count),
+                .min_nonempty = bucket_count,
+                .overflow_enabled = overflow_enabled,
             };
             @memset(queue.bucket_heads, invalid_candidate);
             return queue;
@@ -163,18 +175,22 @@ pub const Encoder = struct {
 
         fn deinit(self: *BucketQueue) void {
             self.pool.deinit(self.allocator);
-            self.overflow_heap.deinit(self.allocator);
+            if (self.overflow_enabled) {
+                self.overflow_heap.deinit(self.allocator);
+            }
             self.allocator.free(self.bucket_heads);
         }
 
         fn ensureTotalCapacity(self: *BucketQueue, capacity: usize) !void {
             try self.pool.ensureTotalCapacity(self.allocator, capacity);
-            try self.overflow_heap.ensureTotalCapacity(self.allocator, capacity / 4 + 1);
+            if (self.overflow_enabled) {
+                try self.overflow_heap.ensureTotalCapacity(self.allocator, capacity / 4 + 1);
+            }
         }
 
         fn add(self: *BucketQueue, candidate: Candidate) !void {
             const idx = try self.pool.allocIndex(self.allocator);
-            if (candidate.rank < candidate_bucket_count) {
+            if (candidate.rank < self.bucket_heads.len) {
                 const bucket = @as(usize, @intCast(candidate.rank));
                 const head = self.bucket_heads[bucket];
                 self.pool.set(idx, candidate, head);
@@ -182,9 +198,12 @@ pub const Encoder = struct {
                 if (bucket < self.min_nonempty) {
                     self.min_nonempty = bucket;
                 }
-            } else {
+            } else if (self.overflow_enabled) {
                 self.pool.set(idx, candidate, invalid_candidate);
                 try self.overflowPush(idx);
+            } else {
+                self.pool.release(idx);
+                return error.RankOutOfRange;
             }
         }
 
@@ -240,7 +259,7 @@ pub const Encoder = struct {
 
         fn peekBucketHead(self: *BucketQueue) ?CandidateIndex {
             self.advanceMinNonEmpty();
-            if (self.min_nonempty >= candidate_bucket_count) {
+            if (self.min_nonempty >= self.bucket_heads.len) {
                 return null;
             }
             return self.bucket_heads[self.min_nonempty];
@@ -248,7 +267,7 @@ pub const Encoder = struct {
 
         fn popBucketHead(self: *BucketQueue) ?CandidateIndex {
             self.advanceMinNonEmpty();
-            if (self.min_nonempty >= candidate_bucket_count) {
+            if (self.min_nonempty >= self.bucket_heads.len) {
                 return null;
             }
 
@@ -261,12 +280,15 @@ pub const Encoder = struct {
         }
 
         fn advanceMinNonEmpty(self: *BucketQueue) void {
-            while (self.min_nonempty < candidate_bucket_count and self.bucket_heads[self.min_nonempty] == invalid_candidate) {
+            while (self.min_nonempty < self.bucket_heads.len and self.bucket_heads[self.min_nonempty] == invalid_candidate) {
                 self.min_nonempty += 1;
             }
         }
 
         fn peekOverflowHead(self: *const BucketQueue) ?CandidateIndex {
+            if (!self.overflow_enabled) {
+                return null;
+            }
             if (self.overflow_heap.items.len == 0) {
                 return null;
             }
@@ -274,6 +296,9 @@ pub const Encoder = struct {
         }
 
         fn popOverflowHead(self: *BucketQueue) ?CandidateIndex {
+            if (!self.overflow_enabled) {
+                return null;
+            }
             if (self.overflow_heap.items.len == 0) {
                 return null;
             }
@@ -288,6 +313,9 @@ pub const Encoder = struct {
         }
 
         fn overflowPush(self: *BucketQueue, idx: CandidateIndex) !void {
+            if (!self.overflow_enabled) {
+                return error.RankOutOfRange;
+            }
             try self.overflow_heap.append(self.allocator, idx);
             var child = self.overflow_heap.items.len - 1;
             while (child > 0) {
@@ -344,6 +372,10 @@ pub const Encoder = struct {
         arena: NodeArena,
         head_idx: NodeIndex,
     };
+    const QueueConfig = struct {
+        bucket_count: usize,
+        overflow_enabled: bool,
+    };
 
     fn compareCandidate(a: Candidate, b: Candidate) std.math.Order {
         const rank_order = std.math.order(a.rank, b.rank);
@@ -353,6 +385,52 @@ pub const Encoder = struct {
 
         const left_order = std.math.order(a.left, b.left);
         return left_order;
+    }
+
+    fn initQueueMode() void {
+        const mode = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_ENCODER_QUEUE") catch {
+            selected_queue_mode = .hybrid;
+            return;
+        };
+        defer std.heap.page_allocator.free(mode);
+
+        if (std.ascii.eqlIgnoreCase(mode, "full-bucket") or
+            std.ascii.eqlIgnoreCase(mode, "full_bucket") or
+            std.ascii.eqlIgnoreCase(mode, "full"))
+        {
+            selected_queue_mode = .full_bucket;
+            return;
+        }
+        selected_queue_mode = .hybrid;
+    }
+
+    fn queueMode() QueueMode {
+        queue_mode_once.call();
+        return selected_queue_mode;
+    }
+
+    fn resolveQueueConfig(table: *const rank_loader.RankTable) QueueConfig {
+        if (queueMode() != .full_bucket) {
+            return .{
+                .bucket_count = candidate_bucket_count,
+                .overflow_enabled = true,
+            };
+        }
+
+        const rank_upper_bound = table.maxRankPlusOne();
+        if (rank_upper_bound == 0) {
+            return .{
+                .bucket_count = candidate_bucket_count,
+                .overflow_enabled = true,
+            };
+        }
+
+        const capped = @min(rank_upper_bound, max_full_bucket_count);
+        const bucket_count = @max(capped, candidate_bucket_count);
+        return .{
+            .bucket_count = bucket_count,
+            .overflow_enabled = rank_upper_bound > bucket_count,
+        };
     }
 
     fn pairRank(
@@ -455,7 +533,8 @@ pub const Encoder = struct {
         var scratch = std.ArrayListUnmanaged(u8){};
         defer scratch.deinit(allocator);
 
-        var queue = try BucketQueue.init(allocator);
+        const queue_config = resolveQueueConfig(table);
+        var queue = try BucketQueue.init(allocator, queue_config.bucket_count, queue_config.overflow_enabled);
         defer queue.deinit();
 
         if (arena.token.len > 1) {

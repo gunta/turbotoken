@@ -173,6 +173,7 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 | 2026-02-25 | Lightweight byte-rank fast map in rank loader + fallback lookup in node init | No stable win; kept reverting to plain lookup for now | `bench/results/bench-scalar-fallback-20260225-123036.json`, `bench/results/bench-scalar-fallback-20260225-123104.json` |
 | 2026-02-25 | NEON encode 64-byte loop rewrite to remove `mov` staging (direct `uxtl/uxtl2` from source vectors) | Regressed measured throughput on M4 Max; reverted to staged variant | `bench/results/bench-native-byte-path-20260225-131605.json` |
 | 2026-02-25 | ARM64 `aes/pmull` pair-cache slot hash (`slotIndex`) via new crypto asm helper | No stable scalar-BPE win across reruns (one run regressed; second was mixed/near-noise); reverted | `bench/results/bench-scalar-fallback-20260225-132701.json`, `bench/results/bench-scalar-fallback-20260225-132746.json` |
+| 2026-02-25 | ARM64 CRC32 pair-cache slot hash vs `wyhash` under runtime selector (`TURBOTOKEN_PAIR_CACHE_HASH`) | First pass only: no stable scalar-BPE win; this result was later superseded by a second-pass `rapidhash` adoption decision | `bench/results/bench-pair-cache-hash-20260225-175906.json` |
 | 2026-02-25 | Force ARM64 DotProd non-ASCII count kernel as default pretokenizer path | Slower than NEON on this M4 Max workload; kept DotProd as an optional auto-tune candidate only | `bench/results/bench-native-pretokenizer-20260225-134405.json` |
 | 2026-02-25 | Metal bridge `commandBufferWithUnretainedReferences` + reduced count threadgroup scratch (`partial[32]`) | Regressed count crossover throughput and worsened some small encode rows; reverted to retained command buffers + `partial[256]` | `bench/results/bench-gpu-20260225-161816.json`, `bench/results/bench-gpu-crossover-1772036123264.json` |
 | 2026-02-25 | Lower count-lane heuristic for 1KB segments (force 32 lanes for mid-size batches) | Helped some small/medium rows but regressed `4096`/`8192` batch crossover means; reverted to previous lane thresholds | `bench/results/bench-gpu-crossover-1772036652520.json` |
@@ -195,6 +196,7 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 | 2026-02-24 | M4 Max as primary dev target | Cloud-first | Optimize for what we have |
 | 2026-02-24 | Phase order: NEON > Metal > WASM > AVX > CUDA > RVV | Various | Hardware at hand first, then expanding reach |
 | 2026-02-25 | Keep GPU BPE strict mode parity-gated | GPU byte-only pretokenization only, unconditional GPU routing | BlockBPE shows high-batch throughput upside but also quality drift risk when regex behavior diverges; keep GPU paths opt-in/guarded until token-identical |
+| 2026-02-25 | Pair-cache slot hash default switched to `rapidhash`; keep `wyhash`/ARM64 `crc32` as opt-in env modes | Keep `wyhash` default, switch to `crc32` default | New A/B (`bench/results/bench-pair-cache-hash-20260225-181644.json`) showed `rapidhash` faster than `wyhash` on both count and encode in this run, while `crc32` remained mixed/noisy |
 
 ---
 

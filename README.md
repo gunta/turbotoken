@@ -58,4 +58,5 @@ Comparison snapshot (`bench-comparison`):
 ## Repository Layout
 
 See [docs/PRD.md](./docs/PRD.md), [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md),
-and [docs/BENCHMARKS.md](./docs/BENCHMARKS.md) for details.
+[docs/BENCHMARKS.md](./docs/BENCHMARKS.md), and
+[docs/OPTIMIZATION-EXPERIMENTS.md](./docs/OPTIMIZATION-EXPERIMENTS.md) for details.

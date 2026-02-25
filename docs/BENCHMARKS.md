@@ -72,6 +72,24 @@ Comparison (`bench-comparison`):
 
 ---
 
+## Latest Pair-Cache Hash A/B (2026-02-25, macOS ARM64)
+
+Direct hash strategy comparison from:
+- `bench/results/bench-pair-cache-hash-20260225-181644.json`
+- run command: `bun run scripts/bench-pair-cache-hash.ts`
+- env switch used per row: `TURBOTOKEN_PAIR_CACHE_HASH=rapidhash|wyhash|crc32`
+
+| Operation | `rapidhash` mean | `wyhash` mean | `crc32` mean | Relative |
+|---|---:|---:|---:|---:|
+| native count BPE 100KB | 1.115 s | 1.131 s | 1.115 s | rapidhash ~1.4% faster than wyhash; crc32 ties rapidhash in this run |
+| native encode BPE 100KB | 1.455 s | 1.496 s | 1.442 s | rapidhash ~2.7% faster than wyhash; crc32 ~0.9% faster than rapidhash |
+
+Decision for now:
+- use `rapidhash` as default.
+- keep `wyhash` and ARM64 `crc32` as opt-in modes for direct A/B checks (`TURBOTOKEN_PAIR_CACHE_HASH=wyhash|crc32`).
+
+---
+
 ## Latest Native Byte-Path Comparison (2026-02-25, macOS ARM64)
 
 Direct ARM64 byte-kernel comparison from:

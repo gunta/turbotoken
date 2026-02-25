@@ -29,6 +29,7 @@
 - `scripts/test-upstream-alias.ts` to run upstream public `tiktoken` tests against a `turbotoken` alias shim
 - `scripts/bench-native-byte-path.ts` to benchmark native C ABI UTF-8 byte encode/decode paths independently of scalar BPE
 - `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd, plus optional SME when built with `-Dexperimental-sme=true`)
+- `scripts/bench-pair-cache-hash.ts` to compare scalar BPE throughput across pair-cache hash strategies (`rapidhash`, `wyhash`, ARM64 `crc32`) under identical commands
 - `scripts/bench-gpu-crossover.ts` now includes long-piece BPE crossover rows (`encode_gpu(auto)` vs forced `encode_gpu(metal)`) with baseline correctness checks, plus optional `TURBOTOKEN_BENCH_LONG=1` mode that appends a `10,485,760` bytes/chars row for periodic heavy comparison runs
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
@@ -114,6 +115,7 @@
 - Native pretokenizer benchmark now measures auto/scalar/NEON/DotProd paths with kernel-selection visibility (`bench/results/bench-native-pretokenizer-20260225-134405.json`)
 - `docs/PROGRESS.md` now tracks rolled-back optimization trials with benchmark artifact references to avoid re-running known regressions blindly
 - Recorded and rolled back an ARM64 `aes/pmull` pair-cache hash experiment after no stable scalar-BPE win across reruns (`bench/results/bench-scalar-fallback-20260225-132701.json`, `bench/results/bench-scalar-fallback-20260225-132746.json`)
+- Pair-cache slot hashing now defaults to `rapidhash` (`src/hash.zig`), while retaining opt-in `wyhash` and ARM64 `crc32` modes via `TURBOTOKEN_PAIR_CACHE_HASH` for direct A/B checks (`bench/results/bench-pair-cache-hash-20260225-181644.json`)
 - Launch bundle milestone is now explicitly marked postponed in planning docs (`LAUNCH: PyPI + GitHub + HN + Twitter`)
 - Benchmark scripts now consistently use the repo venv Python interpreter when available
 - Full benchmark suite now runs with real Hyperfine measurements and regenerated chart summaries (`bun run bench`)
