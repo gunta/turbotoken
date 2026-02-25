@@ -90,6 +90,43 @@ Decision for now:
 
 ---
 
+## Latest Encoder Queue A/B (2026-02-25, macOS ARM64)
+
+Direct queue strategy comparison from:
+- `bench/results/bench-encoder-queue-20260225-180932.json`
+- `bench/results/bench-encoder-queue-20260225-181051.json`
+- run command: `bun run scripts/bench-encoder-queue.ts`
+- env switch used per row: `TURBOTOKEN_ENCODER_QUEUE=hybrid|full-bucket`
+
+Representative rerun (`...181051.json`):
+
+| Operation | `hybrid` mean | `full-bucket` mean | Relative |
+|---|---:|---:|---:|
+| native count BPE 100KB | 1.110 s | 1.113 s | full-bucket ~0.3% slower |
+| native encode BPE 100KB | 1.478 s | 1.465 s | full-bucket ~0.9% faster |
+
+Decision for now:
+- keep `hybrid` as default.
+- keep `full-bucket` as opt-in experiment only (`TURBOTOKEN_ENCODER_QUEUE=full-bucket`).
+
+---
+
+## Latest ASCII Boundary Classifier (2026-02-25, macOS ARM64)
+
+Experimental boundary-classification benchmark from:
+- `bench/results/bench-boundary-classifier-20260225-181856.json`
+- run command: `bun run scripts/bench-boundary-classifier.ts`
+
+| Operation | Auto mean | Scalar mean | Relative |
+|---|---:|---:|---:|
+| boundary-class english-1mb | 1.604 s | 2.979 s | auto ~1.86x faster |
+| boundary-class unicode-1mb | 1.667 s | 3.773 s | auto ~2.26x faster |
+
+Note:
+- This is a new additive pretokenizer primitive (`count_ascii_class_boundaries`), not a replacement of the core BPE path.
+
+---
+
 ## Latest Native Byte-Path Comparison (2026-02-25, macOS ARM64)
 
 Direct ARM64 byte-kernel comparison from:
@@ -179,6 +216,11 @@ Benchmark setup:
 Notes:
 - This measures experimental Metal kernels and routing only.
 - Full-piece GPU BPE merge path is currently capped to small inputs by default (`TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES=16384`) and larger pieces fall back to chunk/native-verified paths.
+- Additional first-pass GPU optimization trials on 2026-02-25 (wide-load encode variants plus BPE loop dispatch/min-rank changes) regressed crossover means and were rolled back as-is:
+  - `bench/results/bench-gpu-20260225-182512.json`
+  - `bench/results/bench-gpu-crossover-1772043937345.json`
+  - `bench/results/bench-gpu-20260225-182816.json`
+  - `bench/results/bench-gpu-crossover-1772044096004.json`
 
 ---
 

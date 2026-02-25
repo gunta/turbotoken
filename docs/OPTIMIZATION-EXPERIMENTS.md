@@ -18,11 +18,11 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | ID | Area | Idea | Status |
 |---|---|---|---|
 | CPU-001 | Pair-cache hashing | `rapidhash` default with ARM64 `crc32` optional for `slotIndex` | `DONE (second pass)` |
-| CPU-002 | Merge algorithm | Replace merge priority queue strategy with strict O(N) structured backtracking | `TODO` |
-| CPU-003 | Pretokenizer | NEON/SVE2 boundary classification (`vtbl`/packed masks) | `TODO` |
-| GPU-001 | Metal BPE | On-GPU BlockBPE merge in threadgroup memory | `TODO` |
-| GPU-002 | Metal dispatch | Indirect Command Buffers for reduced CPU round-trips | `TODO` |
-| GPU-003 | Metal memory | Wider `uchar16`/simdgroup loads in byte widen kernels | `TODO` |
+| CPU-002 | Merge algorithm | Queue strategy experiment toward O(N)-leaning merge scheduling | `DONE (first pass)` |
+| CPU-003 | Pretokenizer | NEON-like ASCII boundary classification (`packed classes`) | `DONE (first pass)` |
+| GPU-001 | Metal BPE | SIMD-group min-rank reduction in BPE merge loop | `DONE (first pass, reverted)` |
+| GPU-002 | Metal dispatch | Lower per-round dispatch overhead in BPE loop | `DONE (first pass, reverted)` |
+| GPU-003 | Metal memory | Wider byte-path loads in UTF-8 widen kernel | `DONE (first pass, reverted)` |
 
 ## Experiment CPU-001 (2026-02-25)
 
@@ -64,3 +64,98 @@ bun run scripts/bench-pair-cache-hash.ts
 
 Decision: `adopt` (`rapidhash` default) and `keep optional` (`crc32`).
 Reason: `rapidhash` is now the only generic software hash mode; ARM64 `crc32` remains an architecture-specific optional mode for direct A/B checks.
+
+## Experiment CPU-002 (2026-02-25)
+
+### Goal
+
+Test an alternate queue mode for rank-BPE merges to reduce overflow-heap pressure on high-rank merges.
+
+### Implementation
+
+- Added queue mode selector in `src/encoder.zig`:
+  - `TURBOTOKEN_ENCODER_QUEUE=hybrid` (default)
+  - `TURBOTOKEN_ENCODER_QUEUE=full-bucket` (optional experiment)
+- Added rank-table helper `RankTable.maxRankPlusOne()` in `src/rank_loader.zig`.
+- Added benchmark runner: `scripts/bench-encoder-queue.ts`.
+
+### Commands
+
+```bash
+bun run scripts/bench-encoder-queue.ts
+```
+
+### Artifacts
+
+- `bench/results/bench-encoder-queue-20260225-180932.json`
+- `bench/results/bench-encoder-queue-20260225-181051.json`
+
+### Result Summary
+
+Mixed/near-noise:
+- encode row showed small `full-bucket` edge in one pass (~1%).
+- count row showed no stable win across reruns.
+
+Decision: `keep optional`.
+
+## Experiment CPU-003 (2026-02-25)
+
+### Goal
+
+Prototype NEON-like ASCII boundary classification for pretokenizer chunk planning.
+
+### Implementation
+
+- Added new boundary classifier in `src/pretokenizer.zig`:
+  - scalar reference
+  - AArch64 vectorized path (`countAsciiClassBoundariesNeonLike`)
+- Added C ABI exports in `src/exports.zig`:
+  - `turbotoken_count_ascii_class_boundaries_utf8`
+  - `turbotoken_count_ascii_class_boundaries_utf8_scalar`
+  - `turbotoken_count_ascii_class_boundaries_utf8_neon`
+- Added Python bridge wrappers and tests (`python/turbotoken/_native.py`, `python/tests/test_native_bridge.py`).
+- Added benchmark runner: `scripts/bench-boundary-classifier.ts`.
+
+### Commands
+
+```bash
+bun run scripts/bench-boundary-classifier.ts
+```
+
+### Artifacts
+
+- `bench/results/bench-boundary-classifier-20260225-181603.json`
+- `bench/results/bench-boundary-classifier-20260225-181856.json`
+
+### Result Summary
+
+On this M4 Max run:
+- auto/neon path was roughly `~1.8x` to `~2.35x` faster than scalar on 1MB fixtures.
+
+Decision: `adopt` (new additive API path; no default routing regression introduced).
+
+## Experiments GPU-001 / GPU-002 / GPU-003 (2026-02-25 first pass)
+
+### Goal
+
+Test practical GPU-side merge and dispatch/memory optimizations without changing correctness guarantees.
+
+### Implementation Attempts
+
+- GPU-003: wider byte-path load experiments in Metal encode kernel (including failed `uchar16/uchar8` variants and a compiling `uint4` unpack variant).
+- GPU-001: `simd_min` reduction in `tt_bpe_find_min_rank`.
+- GPU-002: single compute-encoder-per-round dispatch in Metal BPE loop (reducing per-round encoder setup overhead).
+
+### Artifacts
+
+- `bench/results/bench-gpu-20260225-182512.json`
+- `bench/results/bench-gpu-crossover-1772043937345.json`
+- `bench/results/bench-gpu-20260225-182816.json`
+- `bench/results/bench-gpu-crossover-1772044096004.json`
+
+### Result Summary
+
+- Byte-path and crossover means regressed vs the previous stable baseline in this environment.
+- BPE autoroute threshold regressed back to "never Metal" in the combined GPU-001/002/003 pass.
+
+Decision: `revert` all three GPU trials as-is for now; keep benchmark evidence and revisit with tighter isolated kernels.
