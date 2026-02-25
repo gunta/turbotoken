@@ -2,6 +2,50 @@ const std = @import("std");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const rank_loader = @import("rank_loader.zig");
 
+const RankTableCache = struct {
+    hash: u64 = 0,
+    payload: ?[]u8 = null,
+    table: ?rank_loader.RankTable = null,
+};
+
+var rank_table_cache: RankTableCache = .{};
+
+fn clearRankTableCache() void {
+    if (rank_table_cache.table) |*table| {
+        table.deinit();
+        rank_table_cache.table = null;
+    }
+    if (rank_table_cache.payload) |payload| {
+        std.heap.c_allocator.free(payload);
+        rank_table_cache.payload = null;
+    }
+    rank_table_cache.hash = 0;
+}
+
+fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
+    const hash = std.hash.Wyhash.hash(0, rank_slice);
+
+    if (rank_table_cache.payload) |payload| {
+        if (rank_table_cache.hash == hash and std.mem.eql(u8, payload, rank_slice)) {
+            return &rank_table_cache.table.?;
+        }
+    }
+
+    clearRankTableCache();
+
+    const payload_copy = try std.heap.c_allocator.alloc(u8, rank_slice.len);
+    errdefer std.heap.c_allocator.free(payload_copy);
+    @memcpy(payload_copy, rank_slice);
+
+    var table = try rank_loader.loadFromBytes(std.heap.c_allocator, rank_slice);
+    errdefer table.deinit();
+
+    rank_table_cache.hash = hash;
+    rank_table_cache.payload = payload_copy;
+    rank_table_cache.table = table;
+    return &(rank_table_cache.table.?);
+}
+
 pub export fn turbotoken_version() [*c]const u8 {
     return "0.1.0-dev";
 }
@@ -80,11 +124,10 @@ pub export fn turbotoken_encode_bpe_from_ranks(
 
     const allocator = std.heap.page_allocator;
     const rank_slice = rank_bytes[0..rank_len];
-    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
-    defer table.deinit();
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
 
     const backend = ScalarBackend.init();
-    const tokens = backend.encode(allocator, text[0..text_len], &table) catch return -1;
+    const tokens = backend.encode(allocator, text[0..text_len], table) catch return -1;
     defer allocator.free(tokens);
 
     if (out_tokens == null) {
@@ -114,11 +157,10 @@ pub export fn turbotoken_count_bpe_from_ranks(
 
     const allocator = std.heap.page_allocator;
     const rank_slice = rank_bytes[0..rank_len];
-    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
-    defer table.deinit();
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
 
     const backend = ScalarBackend.init();
-    const token_count = backend.count(allocator, text[0..text_len], &table) catch return -1;
+    const token_count = backend.count(allocator, text[0..text_len], table) catch return -1;
     if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
@@ -139,11 +181,10 @@ pub export fn turbotoken_decode_bpe_from_ranks(
 
     const allocator = std.heap.page_allocator;
     const rank_slice = rank_bytes[0..rank_len];
-    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
-    defer table.deinit();
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
 
     const backend = ScalarBackend.init();
-    const bytes = backend.decode(allocator, tokens[0..token_len], &table) catch return -1;
+    const bytes = backend.decode(allocator, tokens[0..token_len], table) catch return -1;
     defer allocator.free(bytes);
 
     if (out_bytes == null) {
