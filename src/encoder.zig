@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const aarch64 = @import("arch/aarch64.zig");
 const pair_cache = @import("pair_cache.zig");
 const rank_loader = @import("rank_loader.zig");
 
@@ -56,12 +58,22 @@ pub const Encoder = struct {
         const left_bytes = table.tokenForRank(left_token) orelse return error.UnknownTokenRank;
         const right_bytes = table.tokenForRank(right_token) orelse return error.UnknownTokenRank;
 
-        scratch.clearRetainingCapacity();
-        try scratch.ensureTotalCapacity(allocator, left_bytes.len + right_bytes.len);
-        scratch.appendSliceAssumeCapacity(left_bytes);
-        scratch.appendSliceAssumeCapacity(right_bytes);
+        const merged_len = left_bytes.len + right_bytes.len;
+        const resolved_rank = blk: {
+            if (merged_len <= 128) {
+                var merged_stack: [128]u8 = undefined;
+                @memcpy(merged_stack[0..left_bytes.len], left_bytes);
+                @memcpy(merged_stack[left_bytes.len..merged_len], right_bytes);
+                break :blk table.get(merged_stack[0..merged_len]);
+            }
 
-        const resolved_rank = table.get(scratch.items);
+            scratch.clearRetainingCapacity();
+            try scratch.ensureTotalCapacity(allocator, merged_len);
+            scratch.items.len = merged_len;
+            @memcpy(scratch.items[0..left_bytes.len], left_bytes);
+            @memcpy(scratch.items[left_bytes.len..merged_len], right_bytes);
+            break :blk table.get(scratch.items[0..merged_len]);
+        };
         _ = cache.put(left_token, right_token, resolved_rank orelse cache_miss);
         return resolved_rank;
     }
@@ -204,6 +216,12 @@ pub const Encoder = struct {
     pub fn encode(self: *const Encoder, allocator: std.mem.Allocator, text: []const u8) ![]u32 {
         _ = self;
         var out = try allocator.alloc(u32, text.len);
+
+        if (builtin.cpu.arch == .aarch64 and aarch64.available() and text.len >= 16) {
+            aarch64.encodeU8ToU32(text, out);
+            return out;
+        }
+
         for (text, 0..) |byte, idx| {
             out[idx] = byte;
         }

@@ -408,7 +408,7 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 
 **Week 1: Core Zig + ARM64 Assembly**
 - [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`
-- [ ] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
+- [x] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
 - [x] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
 - [x] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
 - [x] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch (`.S` assembly)
@@ -430,7 +430,7 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 - [x] Run full Hyperfine benchmark suite, generate charts
 - [x] Write README, benchmark page, architecture doc
 - [x] CLI tool (`turbotoken count`, `turbotoken bench`, `turbotoken info`)
-- [ ] **LAUNCH: PyPI + GitHub + HN + Twitter**
+- [ ] **LAUNCH: PyPI + GitHub + HN + Twitter** (`POSTPONED`)
 
 ### Phase 2: Apple Metal GPU Backend (Weeks 4-5)
 

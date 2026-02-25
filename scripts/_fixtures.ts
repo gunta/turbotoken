@@ -61,6 +61,22 @@ print(json.dumps(tokens))
   writeFileSync(tokensPath, `${JSON.stringify(tokens)}\n`, "utf8");
 }
 
+function createNativeByteDecodeFixture(force: boolean): void {
+  const sourcePath = resolve(FIXTURES_DIR, "english-1mb.txt");
+  const tokensPath = resolve(FIXTURES_DIR, "english-1mb.u32le.bin");
+
+  if (!force && existsSync(tokensPath)) {
+    return;
+  }
+
+  const bytes = readFileSync(sourcePath);
+  const out = Buffer.allocUnsafe(bytes.length * 4);
+  for (let idx = 0; idx < bytes.length; idx += 1) {
+    out.writeUInt32LE(bytes[idx], idx * 4);
+  }
+  writeFileSync(tokensPath, out);
+}
+
 export function ensureFixtures(force = false): void {
   ensureDir(FIXTURES_DIR);
 
@@ -91,5 +107,6 @@ export function ensureFixtures(force = false): void {
   writeFixture(resolve(FIXTURES_DIR, "cjk-10kb.txt"), repeatToSize(cjkSeed, 10 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "emoji-10kb.txt"), repeatToSize(emojiSeed, 10 * 1024), force);
 
+  createNativeByteDecodeFixture(force);
   createDecodeTokensFixture(force);
 }

@@ -10,6 +10,7 @@ pub const RankTable = struct {
     entries: std.ArrayListUnmanaged(RankEntry) = .{},
     by_token: std.StringHashMapUnmanaged(u32) = .{},
     by_rank: std.AutoHashMapUnmanaged(u32, []u8) = .{},
+    by_rank_dense: std.ArrayListUnmanaged(?[]u8) = .{},
 
     pub fn init(allocator: std.mem.Allocator) RankTable {
         return .{ .allocator = allocator };
@@ -22,6 +23,7 @@ pub const RankTable = struct {
         self.entries.deinit(self.allocator);
         self.by_token.deinit(self.allocator);
         self.by_rank.deinit(self.allocator);
+        self.by_rank_dense.deinit(self.allocator);
     }
 
     pub fn len(self: *const RankTable) usize {
@@ -33,6 +35,12 @@ pub const RankTable = struct {
     }
 
     pub fn tokenForRank(self: *const RankTable, rank: u32) ?[]const u8 {
+        const idx: usize = @intCast(rank);
+        if (idx < self.by_rank_dense.items.len) {
+            if (self.by_rank_dense.items[idx]) |token| {
+                return token;
+            }
+        }
         return self.by_rank.get(rank);
     }
 
@@ -44,10 +52,25 @@ pub const RankTable = struct {
             return error.DuplicateRank;
         }
 
+        const rank_idx: usize = @intCast(rank);
+        if (rank_idx >= self.by_rank_dense.items.len) {
+            const grow_by = (rank_idx + 1) - self.by_rank_dense.items.len;
+            try self.by_rank_dense.ensureUnusedCapacity(self.allocator, grow_by);
+            var idx = self.by_rank_dense.items.len;
+            while (idx <= rank_idx) : (idx += 1) {
+                self.by_rank_dense.appendAssumeCapacity(null);
+            }
+        }
+        if (self.by_rank_dense.items[rank_idx] != null) {
+            return error.DuplicateRank;
+        }
+
         try self.by_token.putNoClobber(self.allocator, token, rank);
         errdefer _ = self.by_token.remove(token);
         try self.by_rank.putNoClobber(self.allocator, rank, token);
         errdefer _ = self.by_rank.remove(rank);
+        self.by_rank_dense.items[rank_idx] = token;
+        errdefer self.by_rank_dense.items[rank_idx] = null;
 
         try self.entries.append(self.allocator, .{
             .token = token,
@@ -103,6 +126,22 @@ test "loadFromBytes parses valid rank data" {
     try std.testing.expectEqual(@as(?u32, 2), table.get("b"));
     try std.testing.expectEqualStrings("a", table.tokenForRank(1).?);
     try std.testing.expect(table.tokenForRank(999) == null);
+}
+
+test "loadFromBytes supports sparse high rank lookups" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1024
+        \\
+    ;
+
+    var table = try loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    try std.testing.expectEqualStrings("a", table.tokenForRank(0).?);
+    try std.testing.expectEqualStrings("b", table.tokenForRank(1024).?);
+    try std.testing.expect(table.tokenForRank(1023) == null);
 }
 
 test "loadFromBytes rejects malformed lines" {

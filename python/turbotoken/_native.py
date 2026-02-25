@@ -73,6 +73,30 @@ class NativeBridge:
             """
             const char *turbotoken_version(void);
             long turbotoken_count(const char *text, size_t text_len);
+            long turbotoken_encode_utf8_bytes(
+                const char *text,
+                size_t text_len,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
+            long turbotoken_encode_utf8_bytes_scalar(
+                const char *text,
+                size_t text_len,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
+            long turbotoken_decode_utf8_bytes(
+                const uint32_t *tokens,
+                size_t token_len,
+                unsigned char *out_bytes,
+                size_t out_cap
+            );
+            long turbotoken_decode_utf8_bytes_scalar(
+                const uint32_t *tokens,
+                size_t token_len,
+                unsigned char *out_bytes,
+                size_t out_cap
+            );
             long turbotoken_encode_bpe_from_ranks(
                 const char *rank_bytes,
                 size_t rank_len,
@@ -140,6 +164,125 @@ class NativeBridge:
         if result < 0:
             return None
         return result
+
+    def encode_utf8_bytes(self, data: bytes) -> list[int] | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+
+        try:
+            needed = int(self._lib.turbotoken_encode_utf8_bytes(data, len(data), self._ffi.NULL, 0))
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        out = self._ffi.new("uint32_t[]", needed)
+        try:
+            written = int(self._lib.turbotoken_encode_utf8_bytes(data, len(data), out, needed))
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return [int(out[idx]) for idx in range(written)]
+
+    def decode_utf8_bytes(self, tokens: list[int]) -> bytes | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+
+        token_buf = self._ffi.new("uint32_t[]", tokens)
+        try:
+            needed = int(self._lib.turbotoken_decode_utf8_bytes(token_buf, len(tokens), self._ffi.NULL, 0))
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return b""
+
+        out = self._ffi.new("unsigned char[]", needed)
+        try:
+            written = int(
+                self._lib.turbotoken_decode_utf8_bytes(
+                    token_buf,
+                    len(tokens),
+                    out,
+                    needed,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return bytes(self._ffi.buffer(out, written))
+
+    def encode_utf8_bytes_scalar(self, data: bytes) -> list[int] | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+
+        try:
+            needed = int(
+                self._lib.turbotoken_encode_utf8_bytes_scalar(data, len(data), self._ffi.NULL, 0)
+            )
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        out = self._ffi.new("uint32_t[]", needed)
+        try:
+            written = int(
+                self._lib.turbotoken_encode_utf8_bytes_scalar(data, len(data), out, needed)
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return [int(out[idx]) for idx in range(written)]
+
+    def decode_utf8_bytes_scalar(self, tokens: list[int]) -> bytes | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+
+        token_buf = self._ffi.new("uint32_t[]", tokens)
+        try:
+            needed = int(
+                self._lib.turbotoken_decode_utf8_bytes_scalar(
+                    token_buf,
+                    len(tokens),
+                    self._ffi.NULL,
+                    0,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return b""
+
+        out = self._ffi.new("unsigned char[]", needed)
+        try:
+            written = int(
+                self._lib.turbotoken_decode_utf8_bytes_scalar(
+                    token_buf,
+                    len(tokens),
+                    out,
+                    needed,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return bytes(self._ffi.buffer(out, written))
 
     def encode_bpe_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
         self.load()

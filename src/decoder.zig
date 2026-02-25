@@ -10,20 +10,20 @@ pub const Decoder = struct {
 
     pub fn decode(self: *const Decoder, allocator: std.mem.Allocator, tokens: []const u32) ![]u8 {
         _ = self;
-        for (tokens) |token| {
-            if (token > std.math.maxInt(u8)) {
-                return error.InvalidToken;
-            }
-        }
-
         var out = try allocator.alloc(u8, tokens.len);
+        errdefer allocator.free(out);
 
         if (builtin.cpu.arch == .aarch64 and aarch64.available() and tokens.len >= 16) {
-            aarch64.decodeU32ToU8(tokens, out);
+            if (!aarch64.validateAndDecodeU32ToU8(tokens, out)) {
+                return error.InvalidToken;
+            }
             return out;
         }
 
         for (tokens, 0..) |token, idx| {
+            if (token > std.math.maxInt(u8)) {
+                return error.InvalidToken;
+            }
             out[idx] = @as(u8, @intCast(token));
         }
         return out;
@@ -89,4 +89,12 @@ test "decode errors when token exceeds byte range" {
     const allocator = std.testing.allocator;
     const dec = Decoder.init();
     try std.testing.expectError(error.InvalidToken, dec.decode(allocator, &[_]u32{300}));
+}
+
+test "decode errors when long token slice includes invalid value" {
+    const allocator = std.testing.allocator;
+    const dec = Decoder.init();
+    var tokens = [_]u32{65} ** 16;
+    tokens[7] = 300;
+    try std.testing.expectError(error.InvalidToken, dec.decode(allocator, &tokens));
 }

@@ -12,6 +12,7 @@ const scripts = [
   "scripts/bench-parallel.ts",
   "scripts/bench-comparison.ts",
   "scripts/bench-scalar-fallback.ts",
+  "scripts/bench-native-byte-path.ts",
   "scripts/bench-ram.ts",
   "scripts/bench-binary-size.ts",
   "scripts/bench-wasm.ts",

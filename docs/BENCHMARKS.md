@@ -38,6 +38,11 @@
 | Node.js | 22.x LTS |
 | Bun | 1.x |
 
+Local benchmark host details (from `sysctl` / `uname`):
+- model identifier: `Mac16,5`
+- kernel / arch: `Darwin 25.3.0` / `arm64` (`AArch64`)
+- ISA features detected: NEON/AdvSIMD, FP16, DotProd, BF16, I8MM, SHA3/AES/PMULL, LSE/LSE2, SME/SME2 (current hot path uses AdvSIMD/NEON instructions)
+
 > Additional machines will be added as we benchmark on Graviton, x86, RISC-V, etc.
 
 ---
@@ -80,6 +85,32 @@ Other measured artifacts from the same run:
   - `x86_64-linux`: 1,890 bytes
   - `wasm32-freestanding`: 1,030 bytes
 - wasm build artifact (`bench-wasm`): 1,030 bytes (`exitCode=0`)
+
+---
+
+## Latest Native Byte-Path Comparison (2026-02-25, macOS ARM64)
+
+Direct ARM64 byte-kernel comparison from:
+- `bench/results/bench-native-byte-path-20260225-133026.json`
+- `bench/results/bench-native-byte-path-20260225-133026.meta.json`
+
+Benchmark setup:
+- Fixture: `bench/fixtures/english-1mb.txt` (+ generated `english-1mb.u32le.bin` for decode)
+- In-process iterations per Hyperfine sample: 128 calls
+- Commands compare C ABI NEON path (`turbotoken_encode/decode_utf8_bytes`) vs explicit scalar exports (`turbotoken_encode/decode_utf8_bytes_scalar`)
+
+| Operation | NEON mean | Scalar mean | Speedup |
+|---|---:|---:|---:|
+| encode UTF-8 bytes (1MB x 128) | 104.2 ms | 423.2 ms | 4.06x |
+| decode UTF-8 bytes (1MB x 128) | 103.7 ms | 454.7 ms | 4.38x |
+
+Approx throughput from the same means:
+- encode NEON: ~1228.4 MB/s vs scalar ~302.5 MB/s
+- decode NEON: ~1234.3 MB/s vs scalar ~281.5 MB/s
+
+Supplemental in-process microbenchmark (single Python process, warmed, 1MB payload):
+- encode NEON: 0.0604 ms vs scalar 2.5200 ms (~41.7x)
+- decode NEON: 0.0514 ms vs scalar 2.5160 ms (~48.9x)
 
 ---
 
