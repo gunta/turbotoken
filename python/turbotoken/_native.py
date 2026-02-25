@@ -91,6 +91,10 @@ class NativeBridge:
                 const char *text,
                 size_t text_len
             );
+            long turbotoken_count_non_ascii_utf8_sme(
+                const char *text,
+                size_t text_len
+            );
             long turbotoken_encode_utf8_bytes(
                 const char *text,
                 size_t text_len,
@@ -263,6 +267,9 @@ class NativeBridge:
 
     def count_non_ascii_utf8_dotprod(self, data: bytes) -> int | None:
         return self._count_non_ascii("turbotoken_count_non_ascii_utf8_dotprod", data)
+
+    def count_non_ascii_utf8_sme(self, data: bytes) -> int | None:
+        return self._count_non_ascii("turbotoken_count_non_ascii_utf8_sme", data)
 
     def encode_utf8_bytes(self, data: bytes) -> list[int] | None:
         self.load()

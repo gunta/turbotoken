@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { ensureDir, pythonExecutable, repoRoot, runCommand, section, writeJson } from "./_lib";
+import { ensureDir, ensurePythonDevEnvironment, repoRoot, runCommand, section, writeJson } from "./_lib";
 import { writeFileSync } from "node:fs";
 import { delimiter, resolve } from "node:path";
 
@@ -30,7 +30,7 @@ writeFileSync(
 );
 
 section("Run upstream tiktoken public tests against turbotoken alias");
-const python = pythonExecutable();
+const python = ensurePythonDevEnvironment();
 const pyPath = [resolve(repoRoot, ".tmp", "tiktoken_shim"), resolve(repoRoot, "python")].join(delimiter);
 const hypothesisDb = resolve(repoRoot, ".tmp", "hypothesis-upstream-alias");
 const pytestArgs = ["-m", "pytest", "-q", "--import-mode=importlib"];

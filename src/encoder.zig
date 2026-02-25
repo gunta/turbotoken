@@ -5,20 +5,53 @@ const pair_cache = @import("pair_cache.zig");
 const rank_loader = @import("rank_loader.zig");
 
 pub const Encoder = struct {
-    const Node = struct {
-        start: usize,
-        end: usize,
-        token: u32,
-        prev: ?usize,
-        next: ?usize,
-        alive: bool,
-        version: u32,
+    const NodeIndex = u32;
+    const null_index = std.math.maxInt(NodeIndex);
+    const dead_index: NodeIndex = std.math.maxInt(NodeIndex) - 1;
+
+    const NodeArena = struct {
+        start: []u32,
+        end: []u32,
+        token: []u32,
+        prev: []NodeIndex,
+        next: []NodeIndex,
+        version: []u32,
+
+        fn init(allocator: std.mem.Allocator, node_count: usize) !NodeArena {
+            var arena: NodeArena = undefined;
+            arena.start = try allocator.alloc(u32, node_count);
+            errdefer allocator.free(arena.start);
+            arena.end = try allocator.alloc(u32, node_count);
+            errdefer allocator.free(arena.end);
+            arena.token = try allocator.alloc(u32, node_count);
+            errdefer allocator.free(arena.token);
+            arena.prev = try allocator.alloc(NodeIndex, node_count);
+            errdefer allocator.free(arena.prev);
+            arena.next = try allocator.alloc(NodeIndex, node_count);
+            errdefer allocator.free(arena.next);
+            arena.version = try allocator.alloc(u32, node_count);
+            errdefer allocator.free(arena.version);
+            return arena;
+        }
+
+        fn deinit(self: *NodeArena, allocator: std.mem.Allocator) void {
+            allocator.free(self.start);
+            allocator.free(self.end);
+            allocator.free(self.token);
+            allocator.free(self.prev);
+            allocator.free(self.next);
+            allocator.free(self.version);
+        }
+
+        fn isAlive(self: *const NodeArena, idx: usize) bool {
+            return self.next[idx] != dead_index;
+        }
     };
 
     const Candidate = struct {
-        left: usize,
-        right: usize,
         rank: u32,
+        left: NodeIndex,
+        right: NodeIndex,
         left_version: u32,
         right_version: u32,
     };
@@ -26,8 +59,8 @@ pub const Encoder = struct {
     const CandidateQueue = std.PriorityQueue(Candidate, void, compareCandidate);
     const cache_miss = std.math.maxInt(u32);
     const MergeResult = struct {
-        nodes: []Node,
-        head_idx: usize,
+        arena: NodeArena,
+        head_idx: NodeIndex,
     };
 
     fn compareCandidate(_: void, a: Candidate, b: Candidate) std.math.Order {
@@ -81,35 +114,38 @@ pub const Encoder = struct {
     fn enqueueCandidate(
         allocator: std.mem.Allocator,
         queue: *CandidateQueue,
-        nodes: []Node,
+        arena: *const NodeArena,
         table: *const rank_loader.RankTable,
         cache: *pair_cache.PairCache,
         scratch: *std.ArrayListUnmanaged(u8),
         left_idx: usize,
     ) !void {
-        if (left_idx >= nodes.len) {
+        if (left_idx >= arena.token.len) {
             return;
         }
 
-        const left = nodes[left_idx];
-        if (!left.alive) {
+        if (!arena.isAlive(left_idx)) {
             return;
         }
 
-        const right_idx = left.next orelse return;
-        const right = nodes[right_idx];
-        if (!right.alive) {
+        const right_idx = arena.next[left_idx];
+        if (right_idx == null_index or right_idx == dead_index) {
             return;
         }
 
-        const rank = try pairRank(allocator, table, cache, scratch, left.token, right.token) orelse return;
+        const right_usize = @as(usize, right_idx);
+        if (!arena.isAlive(right_usize)) {
+            return;
+        }
+
+        const rank = try pairRank(allocator, table, cache, scratch, arena.token[left_idx], arena.token[right_usize]) orelse return;
 
         try queue.add(.{
-            .left = left_idx,
+            .left = @as(NodeIndex, @intCast(left_idx)),
             .right = right_idx,
             .rank = rank,
-            .left_version = left.version,
-            .right_version = right.version,
+            .left_version = arena.version[left_idx],
+            .right_version = arena.version[right_usize],
         });
     }
 
@@ -118,20 +154,22 @@ pub const Encoder = struct {
         text: []const u8,
         table: *const rank_loader.RankTable,
     ) !MergeResult {
-        const nodes = try allocator.alloc(Node, text.len);
-        errdefer allocator.free(nodes);
+        if (text.len > @as(usize, dead_index)) {
+            return error.InputTooLarge;
+        }
+
+        var arena = try NodeArena.init(allocator, text.len);
+        errdefer arena.deinit(allocator);
 
         for (text, 0..) |_, idx| {
             const byte_token = table.get(text[idx .. idx + 1]) orelse return error.UnknownToken;
-            nodes[idx] = .{
-                .start = idx,
-                .end = idx + 1,
-                .token = byte_token,
-                .prev = if (idx == 0) null else idx - 1,
-                .next = if (idx + 1 < text.len) idx + 1 else null,
-                .alive = true,
-                .version = 0,
-            };
+            const idx_u32 = @as(u32, @intCast(idx));
+            arena.start[idx] = idx_u32;
+            arena.end[idx] = idx_u32 + 1;
+            arena.token[idx] = byte_token;
+            arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
+            arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
+            arena.version[idx] = 0;
         }
 
         var cache = pair_cache.PairCache.init();
@@ -142,69 +180,81 @@ pub const Encoder = struct {
         var queue = CandidateQueue.init(allocator, {});
         defer queue.deinit();
 
-        if (nodes.len > 1) {
-            try queue.ensureTotalCapacity(nodes.len - 1);
-            for (0..nodes.len - 1) |idx| {
-                try enqueueCandidate(allocator, &queue, nodes, table, &cache, &scratch, idx);
+        if (arena.token.len > 1) {
+            try queue.ensureTotalCapacity(arena.token.len - 1);
+            for (0..arena.token.len - 1) |idx| {
+                try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, idx);
             }
         }
 
         while (queue.removeOrNull()) |candidate| {
-            if (candidate.left >= nodes.len or candidate.right >= nodes.len) {
+            const left_idx = @as(usize, candidate.left);
+            const right_idx = @as(usize, candidate.right);
+            if (left_idx >= arena.token.len or right_idx >= arena.token.len) {
                 continue;
             }
 
-            var left = &nodes[candidate.left];
-            if (!left.alive or left.version != candidate.left_version) {
+            if (!arena.isAlive(left_idx) or arena.version[left_idx] != candidate.left_version) {
                 continue;
             }
 
-            const actual_right_idx = left.next orelse continue;
+            const actual_right_idx = arena.next[left_idx];
+            if (actual_right_idx == null_index or actual_right_idx == dead_index) {
+                continue;
+            }
             if (actual_right_idx != candidate.right) {
                 continue;
             }
 
-            var right = &nodes[actual_right_idx];
-            if (!right.alive or right.version != candidate.right_version) {
+            const actual_right_usize = @as(usize, actual_right_idx);
+            if (!arena.isAlive(actual_right_usize) or arena.version[actual_right_usize] != candidate.right_version) {
                 continue;
             }
 
-            const current_rank = try pairRank(allocator, table, &cache, &scratch, left.token, right.token) orelse continue;
-            if (current_rank != candidate.rank) {
-                continue;
+            const prev_idx = arena.prev[left_idx];
+            const next_next_idx = arena.next[actual_right_usize];
+            if (prev_idx != null_index and prev_idx != dead_index) {
+                const prev_usize = @as(usize, prev_idx);
+                const prev_rank_slot = cache.slotIndexFor(arena.token[prev_usize], candidate.rank);
+                @prefetch(&cache.entries[prev_rank_slot], .{ .rw = .read, .locality = 3 });
+            }
+            if (next_next_idx != null_index and next_next_idx != dead_index) {
+                const next_next_usize = @as(usize, next_next_idx);
+                const next_rank_slot = cache.slotIndexFor(candidate.rank, arena.token[next_next_usize]);
+                @prefetch(&cache.entries[next_rank_slot], .{ .rw = .read, .locality = 3 });
             }
 
-            left.end = right.end;
-            left.token = current_rank;
-            left.next = right.next;
-            left.version +%= 1;
+            arena.end[left_idx] = arena.end[actual_right_usize];
+            arena.token[left_idx] = candidate.rank;
+            arena.next[left_idx] = next_next_idx;
+            arena.version[left_idx] +%= 1;
 
-            if (right.next) |next_idx| {
-                nodes[next_idx].prev = candidate.left;
-                nodes[next_idx].version +%= 1;
+            if (next_next_idx != null_index and next_next_idx != dead_index) {
+                const next_idx = @as(usize, next_next_idx);
+                arena.prev[next_idx] = candidate.left;
+                arena.version[next_idx] +%= 1;
             }
 
-            right.alive = false;
-            right.prev = null;
-            right.next = null;
-            right.version +%= 1;
+            arena.prev[actual_right_usize] = dead_index;
+            arena.next[actual_right_usize] = dead_index;
+            arena.version[actual_right_usize] +%= 1;
 
-            if (left.prev) |prev_idx| {
-                try enqueueCandidate(allocator, &queue, nodes, table, &cache, &scratch, prev_idx);
+            if (prev_idx != null_index and prev_idx != dead_index) {
+                try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, @as(usize, prev_idx));
             }
-            try enqueueCandidate(allocator, &queue, nodes, table, &cache, &scratch, candidate.left);
+            try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, left_idx);
         }
 
-        var head_idx: ?usize = null;
-        for (nodes, 0..) |node, idx| {
-            if (node.alive and node.prev == null) {
-                head_idx = idx;
+        var head_idx: ?NodeIndex = null;
+        for (0..arena.token.len) |idx| {
+            if (arena.isAlive(idx) and arena.prev[idx] == null_index) {
+                head_idx = @as(NodeIndex, @intCast(idx));
                 break;
             }
         }
 
         return .{
-            .nodes = nodes,
+            .arena = arena,
             .head_idx = head_idx orelse return error.InvalidTokenizerState,
         };
     }
@@ -240,19 +290,23 @@ pub const Encoder = struct {
             return allocator.alloc(u32, 0);
         }
 
-        const merged = try buildMergedNodes(allocator, text, table);
-        defer allocator.free(merged.nodes);
-        const nodes = merged.nodes;
+        var merged = try buildMergedNodes(allocator, text, table);
+        defer merged.arena.deinit(allocator);
+        const arena = &merged.arena;
 
         var out = std.ArrayListUnmanaged(u32){};
         errdefer out.deinit(allocator);
 
-        var cursor: ?usize = merged.head_idx;
-        while (cursor) |idx| : (cursor = nodes[idx].next) {
-            if (!nodes[idx].alive) {
+        var cursor = merged.head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
                 return error.InvalidTokenizerState;
             }
-            try out.append(allocator, nodes[idx].token);
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
+                return error.InvalidTokenizerState;
+            }
+            try out.append(allocator, arena.token[idx]);
         }
 
         return out.toOwnedSlice(allocator);
@@ -270,13 +324,18 @@ pub const Encoder = struct {
             return 0;
         }
 
-        const merged = try buildMergedNodes(allocator, text, table);
-        defer allocator.free(merged.nodes);
+        var merged = try buildMergedNodes(allocator, text, table);
+        defer merged.arena.deinit(allocator);
+        const arena = &merged.arena;
 
         var count: usize = 0;
-        var cursor: ?usize = merged.head_idx;
-        while (cursor) |idx| : (cursor = merged.nodes[idx].next) {
-            if (!merged.nodes[idx].alive) {
+        var cursor = merged.head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
                 return error.InvalidTokenizerState;
             }
             count += 1;

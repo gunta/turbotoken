@@ -69,6 +69,10 @@ pub const PairCache = struct {
         return null;
     }
 
+    pub fn slotIndexFor(_: *const PairCache, left: u32, right: u32) usize {
+        return slotIndex(packPair(left, right));
+    }
+
     pub fn usedSlots(self: *const PairCache) usize {
         var used: usize = 0;
         for (self.entries) |entry| {

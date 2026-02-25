@@ -81,10 +81,10 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 2.1 | Metal 4 compute shader for batch pre-tokenization | `DONE` | Replaced placeholder kernels with `tt_encode_u8_to_u32` and `tt_count_nonzero_segments`, plus Objective-C Metal host bridge (`gpu/metal/metal_bridge.m`) with pipeline + buffer caching |
-| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `IN PROGRESS` | Added experimental chunked BPE stitch prototype, native batch/range/chunked C ABI helpers for rank-based stitching (`turbotoken_encode_bpe_batch_from_ranks`, `..._ranges_...`, `..._chunked_stitched_...`), and a Metal owner-mask stitch kernel (`tt_chunk_owner_flags`); true on-GPU merge kernels still pending |
-| 2.3 | `encode_gpu()` / `count_gpu()` Python methods | `DONE` | Added public experimental `Encoding.encode_gpu()` / `count_gpu()`, auto-route calibration v2 cache (encode/count/BPE thresholds), and route split where `device=\"auto\"` stays exact/native unless calibrated metal thresholds are met while `device=\"metal\"` opts into experimental chunked stitch mode |
-| 2.4 | Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken | `DONE` | `scripts/bench-gpu.ts` runs real Metal/NEON byte-path benchmarks; added crossover matrix bench (`scripts/bench-gpu-crossover.ts`) with auto-route + profiling output |
+| 2.1 | Metal 4 compute shader for batch pre-tokenization | `DONE` | Replaced placeholder kernels with `tt_encode_u8_to_u32` and `tt_count_nonzero_segments`, plus Objective-C Metal host bridge (`gpu/metal/metal_bridge.m`) with pipeline + buffer caching; latest tuning pass (`metal-byte-path-v4`) increased encode bytes/thread (`512`), added unrolled `uchar4 -> uint4` vector widening stores, switched count hot loop to 8x unrolled accumulation with single-simdgroup fast path, and updated host dispatch heuristics |
+| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `IN PROGRESS` | Added experimental chunked BPE stitch prototype, native batch/range/chunked C ABI helpers for rank-based stitching (`turbotoken_encode_bpe_batch_from_ranks`, `..._ranges_...`, `..._chunked_stitched_...`), and a Metal owner-mask stitch kernel (`tt_chunk_owner_flags`); true on-GPU merge kernels still pending. Latest research pass (2026-02-25) prioritized a three-kernel loop for min-rank selection, non-overlap ownership, and prefix-sum compaction (see `docs/metal-gpu.md` + `docs/RESEARCH.md`). |
+| 2.3 | `encode_gpu()` / `count_gpu()` Python methods | `DONE` | Added public experimental `Encoding.encode_gpu()` / `count_gpu()`, auto-route calibration v4 cache (encode/count/BPE thresholds), and route split where `device=\"auto\"` stays exact/native unless calibrated metal thresholds are met while `device=\"metal\"` opts into experimental chunked stitch mode |
+| 2.4 | Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken | `DONE` | `scripts/bench-gpu.ts` runs real Metal/NEON byte-path benchmarks (latest: `bench/results/bench-gpu-20260225-160631.json`); added crossover matrix bench (`scripts/bench-gpu-crossover.ts`) with auto-route + profiling output (latest standard: `bench/results/bench-gpu-crossover-1772035615674.json`) |
 | 2.5 | Blog post: Metal GPU tokenization | `TODO` | `docs/metal-gpu.md` |
 
 ---
@@ -122,8 +122,8 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 5.1 | CUDA BlockBPE kernel (sm_80+) | `TODO` | `gpu/cuda/batch_encode.cu` |
-| 5.2 | Shared memory merge table for coalesced access | `TODO` | |
+| 5.1 | CUDA BlockBPE kernel (sm_80+) | `TODO` | `gpu/cuda/batch_encode.cu`; research references captured for implementation (`BlockBPE` paper + one-block-per-string merge loop + compaction) |
+| 5.2 | Shared memory merge table for coalesced access | `TODO` | Prototype plan now targets `cuCollections::static_map` for pair-rank lookup and CCCL/CUB `BlockScan` for compaction writes before custom table tiling |
 | 5.3 | Benchmarks on RTX 4090 / A100 | `TODO` | |
 | 5.4 | Blog post: GPU tokenization at scale | `TODO` | |
 
@@ -174,6 +174,9 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 | 2026-02-25 | NEON encode 64-byte loop rewrite to remove `mov` staging (direct `uxtl/uxtl2` from source vectors) | Regressed measured throughput on M4 Max; reverted to staged variant | `bench/results/bench-native-byte-path-20260225-131605.json` |
 | 2026-02-25 | ARM64 `aes/pmull` pair-cache slot hash (`slotIndex`) via new crypto asm helper | No stable scalar-BPE win across reruns (one run regressed; second was mixed/near-noise); reverted | `bench/results/bench-scalar-fallback-20260225-132701.json`, `bench/results/bench-scalar-fallback-20260225-132746.json` |
 | 2026-02-25 | Force ARM64 DotProd non-ASCII count kernel as default pretokenizer path | Slower than NEON on this M4 Max workload; kept DotProd as an optional auto-tune candidate only | `bench/results/bench-native-pretokenizer-20260225-134405.json` |
+| 2026-02-25 | Metal bridge `commandBufferWithUnretainedReferences` + reduced count threadgroup scratch (`partial[32]`) | Regressed count crossover throughput and worsened some small encode rows; reverted to retained command buffers + `partial[256]` | `bench/results/bench-gpu-20260225-161816.json`, `bench/results/bench-gpu-crossover-1772036123264.json` |
+| 2026-02-25 | Lower count-lane heuristic for 1KB segments (force 32 lanes for mid-size batches) | Helped some small/medium rows but regressed `4096`/`8192` batch crossover means; reverted to previous lane thresholds | `bench/results/bench-gpu-crossover-1772036652520.json` |
+| 2026-02-25 | Aligned packed-`u32` count kernel (`tt_count_nonzero_segments_u32`) with byte-zero bitmask + `popcount` | Regressed count crossover means across key batch sizes (`256/1024/4096/8192`), despite correctness; reverted to byte-loop SIMD-group reducer | `bench/results/bench-gpu-20260225-163126.json`, `bench/results/bench-gpu-crossover-1772037111250.json` |
 
 ---
 
@@ -191,6 +194,7 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 | 2026-02-24 | **Zig WASM unified** (same codebase) | MoonBit, Emscripten, Rust | One codebase, zero runtime, smallest binary |
 | 2026-02-24 | M4 Max as primary dev target | Cloud-first | Optimize for what we have |
 | 2026-02-24 | Phase order: NEON > Metal > WASM > AVX > CUDA > RVV | Various | Hardware at hand first, then expanding reach |
+| 2026-02-25 | Keep GPU BPE strict mode parity-gated | GPU byte-only pretokenization only, unconditional GPU routing | BlockBPE shows high-batch throughput upside but also quality drift risk when regex behavior diverges; keep GPU paths opt-in/guarded until token-identical |
 
 ---
 
@@ -240,7 +244,9 @@ Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:nativ
 - Refactored encoder merge internals to share a reusable merged-node path and added `Encoder.countWithRanks` to avoid output token-slice allocation during scalar counting.
 - Updated C ABI rank-based encode/decode exports to call through the scalar backend wrapper instead of direct encoder/decoder calls.
 - Added Zig executable resolution in Bun scripts (`scripts/_lib.ts`) to prefer a real toolchain binary over broken shims in local environments.
-- Started Phase 2 Metal implementation: added Objective-C host bridge (`gpu/metal/metal_bridge.m`) with cached compute pipelines/reusable buffers, experimental Python GPU bridge APIs in `python/turbotoken/_gpu.py`, and real `bench-gpu` measurements (`bench/results/bench-gpu-20260225-145052.json`) showing early large-batch count wins over pure Python while NEON remains faster for byte-path encode.
-- Tuned Metal kernel launch strategy on M4 Max: encode kernel now processes larger byte chunks per thread and count kernel uses threadgroup reduction, with added per-run profiling counters (CPU/GPU ns, bytes, dispatch threads/lanes) exported through `_gpu.profile_last()`.
-- Added GPU crossover matrix benchmark (`bench/results/bench-gpu-crossover-1772030955226.json`) and auto-route calibration cache (`~/.cache/turbotoken/metal/autoroute-v1.json`) to choose backend thresholds from measured data.
-- Added rank-BPE batch/range/chunk-stitch native exports and Python bridge bindings, then split `encode_gpu` routing so `device="auto"` stays exact/native while `device="metal"` enables experimental chunked stitching with a Metal owner-mask stage; updated crossover artifact with BPE rows (`bench/results/bench-gpu-crossover-1772030955226.json`).
+- Started Phase 2 Metal implementation: added Objective-C host bridge (`gpu/metal/metal_bridge.m`) with cached compute pipelines/reusable buffers, experimental Python GPU bridge APIs in `python/turbotoken/_gpu.py`, and real `bench-gpu` measurements (`bench/results/bench-gpu-20260225-160631.json`) showing large-batch count wins over pure Python while NEON remains faster for byte-path encode.
+- Landed Metal byte-path tuning pass `metal-byte-path-v3`: encode kernel now processes `256` bytes/thread with unrolled `uint4` stores, count kernel uses SIMD-group reduction + 4x unrolled strided accumulation, and host dispatch now applies adaptive count lanes plus dedicated encode threadgroup sizing.
+- Landed follow-up tuning pass `metal-byte-path-v4`: encode bytes/thread now `512` with unrolled `uchar4 -> uint4` widening loops, count kernel now runs 8x unrolled accumulation with a single-simdgroup fast path, and count lane heuristics favor lower-lane launches for mid-size segments; latest v4 `bench-gpu` run improved Metal means versus v3 by `~0.37%` (encode) and `~2.72%` (count).
+- Added GPU crossover matrix benchmark (latest standard artifact: `bench/results/bench-gpu-crossover-1772035615674.json`) and auto-route calibration cache (`~/.cache/turbotoken/metal/autoroute-v1.json`, schema `v4`) to choose backend thresholds from measured data.
+- Added rank-BPE batch/range/chunk-stitch native exports and Python bridge bindings, then split `encode_gpu` routing so `device="auto"` stays exact/native while `device="metal"` enables experimental chunked stitching with a Metal owner-mask stage and exactness guard/cache path; latest optional long-mode artifact (`TURBOTOKEN_BENCH_LONG=1`) is `bench/results/bench-gpu-crossover-1772033988163.json` with added `10,485,760`-char BPE row.
+- Added GPU tokenizer research consolidation (2026-02-25) from primary sources: BlockBPE paper, RAPIDS libcudf BPE/WordPiece APIs, HuggingFace tokenizers parallelism internals, and historical CUDA rule-based tokenizer code. Resulting plan updates were recorded in `docs/RESEARCH.md`, `docs/metal-gpu.md`, and this tracker.

@@ -66,10 +66,14 @@ def test_native_bridge_non_ascii_count_wrappers_when_available() -> None:
     if dotprod is not None:
         assert dotprod == expected
 
+    sme = bridge.count_non_ascii_utf8_sme(data)
+    if sme is not None:
+        assert sme == expected
+
     mask = bridge.arm64_feature_mask()
     kernel_id = bridge.count_non_ascii_kernel_id()
     if mask is not None and kernel_id is not None and mask != 0:
-        assert kernel_id in (1, 2)
+        assert kernel_id in (1, 2, 3)
 
 
 def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:

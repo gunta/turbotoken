@@ -12,7 +12,7 @@ static NSString *const kKernelSource =
     @"#include <metal_stdlib>\n"
     @"using namespace metal;\n"
     @"\n"
-    @"constant uint TT_ENCODE_BYTES_PER_THREAD = 128;\n"
+    @"constant uint TT_ENCODE_BYTES_PER_THREAD = 512;\n"
     @"\n"
     @"kernel void tt_encode_u8_to_u32(\n"
     @"    const device uchar *input [[buffer(0)]],\n"
@@ -24,7 +24,25 @@ static NSString *const kKernelSource =
     @"        return;\n"
     @"    }\n"
     @"    uint end = min(base + TT_ENCODE_BYTES_PER_THREAD, total_len);\n"
-    @"    for (uint idx = base; idx < end; idx += 1) {\n"
+    @"    uint idx = base;\n"
+    @"    for (; idx + 32 <= end; idx += 32) {\n"
+    @"        const device uchar4 *in4 = (const device uchar4 *)(input + idx);\n"
+    @"        device uint4 *out4 = (device uint4 *)(output + idx);\n"
+    @"        out4[0] = uint4(in4[0]);\n"
+    @"        out4[1] = uint4(in4[1]);\n"
+    @"        out4[2] = uint4(in4[2]);\n"
+    @"        out4[3] = uint4(in4[3]);\n"
+    @"        out4[4] = uint4(in4[4]);\n"
+    @"        out4[5] = uint4(in4[5]);\n"
+    @"        out4[6] = uint4(in4[6]);\n"
+    @"        out4[7] = uint4(in4[7]);\n"
+    @"    }\n"
+    @"    for (; idx + 4 <= end; idx += 4) {\n"
+    @"        const device uchar4 *in4 = (const device uchar4 *)(input + idx);\n"
+    @"        device uint4 *out4 = (device uint4 *)(output + idx);\n"
+    @"        out4[0] = uint4(in4[0]);\n"
+    @"    }\n"
+    @"    for (; idx < end; idx += 1) {\n"
     @"        output[idx] = (uint)input[idx];\n"
     @"    }\n"
     @"}\n"
@@ -36,27 +54,48 @@ static NSString *const kKernelSource =
     @"    constant uint &segment_count [[buffer(3)]],\n"
     @"    uint segment_id [[threadgroup_position_in_grid]],\n"
     @"    uint lane_id [[thread_index_in_threadgroup]],\n"
-    @"    uint lanes_per_group [[threads_per_threadgroup]]) {\n"
+    @"    uint lanes_per_group [[threads_per_threadgroup]],\n"
+    @"    uint simdgroup_id [[simdgroup_index_in_threadgroup]],\n"
+    @"    uint simdgroups_per_group [[simdgroups_per_threadgroup]]) {\n"
     @"    if (segment_id >= segment_count) {\n"
     @"        return;\n"
     @"    }\n"
     @"    uint start = offsets[segment_id];\n"
     @"    uint end = offsets[segment_id + 1];\n"
     @"    uint local_total = 0;\n"
-    @"    for (uint idx = start + lane_id; idx < end; idx += lanes_per_group) {\n"
+    @"    uint idx = start + lane_id;\n"
+    @"    uint stride = lanes_per_group;\n"
+    @"    for (; idx + (stride * 7) < end; idx += stride * 8) {\n"
+    @"        local_total += input[idx] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + stride] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 2)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 3)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 4)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 5)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 6)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 7)] != 0 ? 1u : 0u;\n"
+    @"    }\n"
+    @"    for (; idx < end; idx += lanes_per_group) {\n"
     @"        local_total += input[idx] != 0 ? 1u : 0u;\n"
     @"    }\n"
-    @"    threadgroup uint partial[256];\n"
-    @"    partial[lane_id] = local_total;\n"
-    @"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
-    @"    for (uint stride = lanes_per_group >> 1; stride > 0; stride >>= 1) {\n"
-    @"        if (lane_id < stride) {\n"
-    @"            partial[lane_id] += partial[lane_id + stride];\n"
+    @"    uint simd_total = simd_sum(local_total);\n"
+    @"    if (simdgroups_per_group <= 1) {\n"
+    @"        if (simd_is_first()) {\n"
+    @"            counts[segment_id] = simd_total;\n"
     @"        }\n"
-    @"        threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+    @"        return;\n"
     @"    }\n"
-    @"    if (lane_id == 0) {\n"
-    @"        counts[segment_id] = partial[0];\n"
+    @"    threadgroup uint partial[256];\n"
+    @"    if (simd_is_first()) {\n"
+    @"        partial[simdgroup_id] = simd_total;\n"
+    @"    }\n"
+    @"    threadgroup_barrier(mem_flags::mem_threadgroup);\n"
+    @"    if (simdgroup_id == 0) {\n"
+    @"        uint group_total = lane_id < simdgroups_per_group ? partial[lane_id] : 0u;\n"
+    @"        group_total = simd_sum(group_total);\n"
+    @"        if (simd_is_first()) {\n"
+    @"            counts[segment_id] = group_total;\n"
+    @"        }\n"
     @"    }\n"
     @"}\n"
     @"\n"
@@ -94,6 +133,8 @@ static id<MTLBuffer> g_output_u32_buffer = nil;
 static NSUInteger g_output_u32_capacity = 0;
 static id<MTLBuffer> g_offsets_u32_buffer = nil;
 static NSUInteger g_offsets_u32_capacity = 0;
+
+static const NSUInteger kEncodeBytesPerThread = 512;
 
 static uint64_t g_last_encode_cpu_ns = 0;
 static uint64_t g_last_encode_gpu_ns = 0;
@@ -211,6 +252,27 @@ static MTLSize threads_per_group_for(id<MTLComputePipelineState> pipeline) {
     return MTLSizeMake(threads, 1, 1);
 }
 
+static MTLSize encode_threads_per_group_for(id<MTLComputePipelineState> pipeline) {
+    NSUInteger width = [pipeline threadExecutionWidth];
+    NSUInteger max_threads = [pipeline maxTotalThreadsPerThreadgroup];
+    if (width == 0) {
+        width = 32;
+    }
+
+    // Each thread processes a larger byte chunk, so favor occupancy over giant groups.
+    NSUInteger threads = width * 2;
+    if (threads > max_threads) {
+        threads = max_threads;
+    }
+    if (threads < width) {
+        threads = width;
+    }
+    if (threads == 0) {
+        threads = 1;
+    }
+    return MTLSizeMake(threads, 1, 1);
+}
+
 static NSUInteger floor_power_of_two(NSUInteger value) {
     if (value <= 1) {
         return 1;
@@ -222,10 +284,43 @@ static NSUInteger floor_power_of_two(NSUInteger value) {
     return out;
 }
 
-static NSUInteger count_threads_per_group_for(id<MTLComputePipelineState> pipeline) {
+static NSUInteger count_threads_per_group_for(
+    id<MTLComputePipelineState> pipeline,
+    size_t input_len,
+    size_t segment_count
+) {
     const NSUInteger max_threads = [pipeline maxTotalThreadsPerThreadgroup];
     const NSUInteger capped = max_threads < 256 ? max_threads : 256;
-    return floor_power_of_two(capped);
+    if (capped == 0) {
+        return 1;
+    }
+
+    NSUInteger width = [pipeline threadExecutionWidth];
+    if (width == 0) {
+        width = 32;
+    }
+    if (width > capped) {
+        width = capped;
+    }
+    width = floor_power_of_two(width);
+
+    const NSUInteger avg_bytes = segment_count > 0 ? (NSUInteger)(input_len / segment_count) : 0;
+    NSUInteger target = width;
+    if (avg_bytes >= 4096) {
+        target = width * 8;
+    } else if (avg_bytes >= 1536) {
+        target = width * 4;
+    } else if (avg_bytes >= 384) {
+        target = width * 2;
+    }
+
+    if (target > capped) {
+        target = capped;
+    }
+    if (target < width) {
+        target = width;
+    }
+    return floor_power_of_two(target);
 }
 
 static bool init_metal_locked(void) {
@@ -314,7 +409,7 @@ static bool wait_for_completion_locked(id<MTLCommandBuffer> command_buffer, cons
 }
 
 const char *turbotoken_metal_version(void) {
-    return "metal-byte-path-v2";
+    return "metal-byte-path-v4";
 }
 
 const char *turbotoken_metal_last_error(void) {
@@ -508,10 +603,10 @@ long turbotoken_metal_encode_utf8_bytes(
     [encoder setBuffer:output_buffer offset:0 atIndex:1];
     [encoder setBytes:&total_len_u32 length:sizeof(total_len_u32) atIndex:2];
 
-    const NSUInteger bytes_per_thread = 128;
+    const NSUInteger bytes_per_thread = kEncodeBytesPerThread;
     const NSUInteger dispatch_threads = (in_bytes + bytes_per_thread - 1) / bytes_per_thread;
     const MTLSize grid = MTLSizeMake(dispatch_threads, 1, 1);
-    const MTLSize threads = threads_per_group_for(g_encode_pipeline);
+    const MTLSize threads = encode_threads_per_group_for(g_encode_pipeline);
     [encoder dispatchThreads:grid threadsPerThreadgroup:threads];
     [encoder endEncoding];
 
@@ -653,7 +748,8 @@ long turbotoken_metal_count_nonzero_segments(
     [encoder setBuffer:output_buffer offset:0 atIndex:2];
     [encoder setBytes:&segment_count_u32 length:sizeof(segment_count_u32) atIndex:3];
 
-    const NSUInteger lanes = count_threads_per_group_for(g_count_pipeline);
+    const NSUInteger lanes =
+        count_threads_per_group_for(g_count_pipeline, input_len, segment_count);
     const MTLSize groups = MTLSizeMake((NSUInteger)segment_count, 1, 1);
     const MTLSize threads = MTLSizeMake(lanes, 1, 1);
     [encoder dispatchThreadgroups:groups threadsPerThreadgroup:threads];

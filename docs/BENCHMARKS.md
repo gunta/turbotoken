@@ -117,26 +117,41 @@ Supplemental in-process microbenchmark (single Python process, warmed, 1MB paylo
 ## Latest Native Pretokenizer Comparison (2026-02-25, macOS ARM64)
 
 Direct non-ASCII byte-count kernel comparison from:
-- `bench/results/bench-native-pretokenizer-20260225-134405.json`
-- `bench/results/bench-native-pretokenizer-20260225-134405.meta.json`
+- baseline mode:
+  - `bench/results/bench-native-pretokenizer-20260225-165242.json`
+  - `bench/results/bench-native-pretokenizer-20260225-165242.meta.json`
+- SME auto opt-in mode:
+  - `bench/results/bench-native-pretokenizer-sme-auto-20260225-165325.json`
+  - `bench/results/bench-native-pretokenizer-sme-auto-20260225-165325.meta.json`
 
 Benchmark setup:
-- Fixture: `bench/fixtures/english-1mb.txt`
+- Fixtures:
+  - `bench/fixtures/english-1mb.txt` (`mixed-ascii`)
+  - `bench/fixtures/unicode-1mb.txt` (`non-ascii-heavy`)
 - In-process iterations per Hyperfine sample: 256 calls
-- Commands compare scalar vs explicit NEON vs explicit DotProd kernel and `auto` runtime kernel selection
+- Commands compare scalar vs explicit NEON vs explicit DotProd kernel and `auto` runtime kernel selection (plus explicit SME when built with `-Dexperimental-sme=true` on SME-capable hardware)
+- Runtime auto-selection note: SME is excluded from auto unless `TURBOTOKEN_EXPERIMENTAL_SME_AUTO` is set.
+- Modes are intentionally separate:
+  - baseline: `bun run bench:native-pretokenizer`
+  - SME auto opt-in: `bun run bench:native-pretokenizer:sme-auto`
+  - each mode writes a separate artifact (`bench-native-pretokenizer-*.json` vs `bench-native-pretokenizer-sme-auto-*.json`)
 
 | Operation | Mean | Relative |
 |---|---:|---:|
-| count non-ascii auto-dispatch (1MB x 256) | 133.6 ms | baseline |
-| count non-ascii scalar (1MB x 256) | 515.7 ms | 3.86x slower |
-| count non-ascii NEON (1MB x 256) | 137.1 ms | 1.03x slower |
-| count non-ascii DotProd (1MB x 256) | 153.3 ms | 1.15x slower |
+| count non-ascii unicode-1mb auto | 122.2 ms | baseline |
+| count non-ascii english-1mb auto | 123.9 ms | 1.01x slower |
+| count non-ascii english-1mb NEON | 124.2 ms | 1.02x slower |
+| count non-ascii unicode-1mb NEON | 125.5 ms | 1.03x slower |
+| count non-ascii unicode-1mb SME | 129.9 ms | 1.06x slower |
+| count non-ascii english-1mb SME | 131.7 ms | 1.08x slower |
+| count non-ascii english-1mb DotProd | 136.6 ms | 1.12x slower |
+| count non-ascii unicode-1mb DotProd | 141.5 ms | 1.16x slower |
+| count non-ascii english-1mb scalar | 422.3 ms | 3.46x slower |
+| count non-ascii unicode-1mb scalar | 423.8 ms | 3.47x slower |
 
-Approx throughput from the same means:
-- auto: ~1916.2 MB/s
-- scalar: ~496.4 MB/s
-- NEON: ~1867.3 MB/s
-- DotProd: ~1670.0 MB/s
+SME tuning note:
+- The latest SME pass (4x streaming-vector unroll + prefetch in `asm/arm64/sme_pretokenizer.S`) improved micro-kernel throughput, but end-to-end Hyperfine means still vary across runs by roughly `~7-11 ms`; treat sub-2% deltas as noise unless confirmed by repeated quiet-system runs.
+- In the separate `sme-auto` artifact above, auto-dispatch remained NEON-leaning on this machine and did not show a stable SME auto-route win.
 
 Runtime dispatch probe (same build):
 - `turbotoken_arm64_feature_mask() = 4095` (`NEON/FP16/DotProd/BF16/I8MM/AES+PMULL/SHA3/LSE/LSE2/SME/SME2`)
@@ -147,8 +162,8 @@ Runtime dispatch probe (same build):
 ## Latest Metal Byte-Path Comparison (2026-02-25, macOS ARM64)
 
 Experimental Metal backend benchmark from:
-- `bench/results/bench-gpu-20260225-145052.json`
-- `bench/results/bench-gpu-20260225-145052.meta.json`
+- `bench/results/bench-gpu-20260225-160631.json`
+- `bench/results/bench-gpu-20260225-160631.meta.json`
 
 Benchmark setup:
 - Encode fixture: `bench/fixtures/english-1mb.txt`
@@ -159,42 +174,48 @@ Benchmark setup:
 
 | Operation | Mean | Relative |
 |---|---:|---:|
-| Metal encode UTF-8 bytes (1MB x 128) | 180.9 ms | baseline (metal encode) |
-| Native NEON encode UTF-8 bytes (1MB x 128) | 107.3 ms | 1.69x faster than metal encode |
-| Metal count non-zero batch (4096 x 1KB, x512 loops) | 277.6 ms | baseline (metal batch count) |
-| Python CPU count non-zero batch (4096 x 1KB, x512 loops) | 792.6 ms | 2.86x slower than metal batch count |
+| Metal encode UTF-8 bytes (1MB x 128) | 158.1 ms | baseline (metal encode) |
+| Native NEON encode UTF-8 bytes (1MB x 128) | 101.8 ms | 1.55x faster than metal encode |
+| Metal count non-zero batch (4096 x 1KB, x512 loops) | 221.1 ms | baseline (metal batch count) |
+| Python CPU count non-zero batch (4096 x 1KB, x512 loops) | 732.0 ms | 3.31x slower than metal batch count |
 
 Notes:
 - This measures experimental byte-path kernels only; full GPU BPE merge parity is still pending.
-- Recent kernel tuning (larger encode chunk-per-thread + threadgroup reduction for counts) improved metal means versus earlier bridge runs.
+- Latest v4 tuning pass (larger encode chunk-per-thread + vectorized widening + higher count-loop unroll + single-simdgroup fast path) improved means versus v3 by `~0.37%` encode and `~2.72%` count.
 
 ---
 
 ## Latest Metal Crossover Matrix (2026-02-25, macOS ARM64)
 
 Matrix benchmark from:
-- `bench/results/bench-gpu-crossover-1772030955226.json`
+- standard: `bench/results/bench-gpu-crossover-1772035615674.json`
+- optional long mode (`TURBOTOKEN_BENCH_LONG=1`): `bench/results/bench-gpu-crossover-1772033988163.json`
+- run command: `bun run scripts/bench-gpu-crossover.ts`
+- default: `TURBOTOKEN_BENCH_LONG=0` (long mode disabled)
+- optional long-run row (adds `10,485,760` bytes/chars): `TURBOTOKEN_BENCH_LONG=1 bun run scripts/bench-gpu-crossover.ts`
 
 Outputs include:
 - size/batch crossover rows for Metal vs native/Python baselines
 - auto-route backend decisions
 - per-run low-level profile counters (CPU ns + GPU ns + dispatch geometry)
 - persisted auto-route thresholds in `~/.cache/turbotoken/metal/autoroute-v1.json`
-  - cache payload schema version: `2`
+  - cache payload schema version: `4`
+- long-mode metadata (`long_mode.enabled`, `bench_sizes`) for reproducible optional heavy runs
 
 Current calibration summary on this machine:
 - encode auto-route threshold: effectively "never Metal" for byte encode (`2^60` bytes sentinel)
 - count auto-route threshold: effectively "never Metal" for current non-zero count benchmark (`2^60` bytes sentinel)
 - bpe auto-route threshold: effectively "never Metal" for current long-piece BPE benchmark (`2^60` bytes sentinel)
-- practical implication: current byte-path Metal kernels are promising infrastructure, and experimental BPE stitch is improving, but not yet both faster and token-identical for calibrated BPE workloads.
+- practical implication: current byte-path Metal kernels are promising infrastructure; experimental BPE stitch now preserves exact token outputs on calibrated long-piece rows via exactness guards, but still does not beat native crossover thresholds.
 
 Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 
 | Input Size | CPU encode | `encode_gpu(device="auto", strict_verify=False)` | `encode_gpu(device="metal", strict_verify=False)` | Correctness |
 |---|---:|---:|---:|---|
-| 65,536 chars | 148.6 ms | 147.5 ms | 168.3 ms | auto matches baseline, metal does not |
-| 262,144 chars | 599.9 ms | 604.3 ms | 679.8 ms | auto matches baseline, metal does not |
-| 1,048,576 chars | 2588.2 ms | 2598.3 ms | 2697.7 ms | auto matches baseline, metal does not |
+| 65,536 chars | 137.7 ms | 138.2 ms | 141.4 ms | auto matches baseline, metal matches baseline |
+| 262,144 chars | 570.5 ms | 560.7 ms | 565.0 ms | auto matches baseline, metal matches baseline |
+| 1,048,576 chars | 2428.9 ms | 2441.9 ms | 2463.5 ms | auto matches baseline, metal matches baseline |
+| 10,485,760 chars (`TURBOTOKEN_BENCH_LONG=1`) | 28097.3 ms | 28200.7 ms | 28134.0 ms | auto matches baseline, metal matches baseline |
 
 ---
 

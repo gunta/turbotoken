@@ -10,7 +10,7 @@
 - Implemented Python APIs:
   - `Encoding.encode_gpu()` / `Encoding.count_gpu()`
   - default `encode_gpu(device="auto")` keeps exact CPU/native rank-BPE path
-  - experimental chunked stitch path is opt-in via `encode_gpu(device="metal", strict_verify=False)` and now uses a Metal owner-mask kernel before native/Python fallbacks
+  - experimental chunked stitch path is opt-in via `encode_gpu(device="metal", strict_verify=False)` and now uses a Metal owner-mask kernel plus boundary-repair/exactness guards before native/Python fallbacks
   - byte-path auto-route helpers in `python/turbotoken/_gpu.py`
 - Not implemented yet:
   - GPU BPE merge logic (BlockBPE-style chunk merge/stitching)
@@ -25,6 +25,16 @@ This backend should be treated as a high-throughput building block for the futur
 - Build model: on-demand compile via `xcrun clang` into `~/.cache/turbotoken/metal/`.
 - Pipelines are compiled once and cached per process.
 - Shared `MTLBuffer` pools are reused and grown geometrically to avoid per-call allocations.
+
+## Latest Kernel Tuning Pass (2026-02-25, `metal-byte-path-v4`)
+
+Implemented optimizations from the current research backlog:
+- Encode kernel now processes `512` bytes per thread (previously `256`) to further reduce dispatch overhead.
+- Encode kernel widened inner-loop writes with unrolled `uchar4 -> uint4` vector loads/stores (`32` bytes/iteration main loop).
+- Count kernel keeps SIMD-group reduction (`simd_sum`) and now adds 8x unrolled strided accumulation in the hot loop.
+- Count kernel has an early single-simdgroup fast path to skip threadgroup memory/barrier work on small lane counts.
+- Host bridge now uses lower-pressure encode occupancy (`threadExecutionWidth * 2`) and segment-size-based lane selection that favors fewer lanes for mid-size segments.
+- Autoroute cache schema bumped to `v4` so updated kernels trigger fresh crossover calibration.
 
 ## Why This Shape on M4 Max
 
@@ -51,40 +61,53 @@ Results are written to:
 ## Latest Snapshot (2026-02-25, macOS ARM64 M4 Max)
 
 Source artifact:
-- `bench/results/bench-gpu-20260225-145052.json`
+- `bench/results/bench-gpu-20260225-160631.json`
 
 Measured means:
-- Metal encode UTF-8 bytes (`1MB x 128`): `180.9 ms`
-- Native NEON encode UTF-8 bytes (`1MB x 128`): `107.3 ms`
-- Metal count non-zero batch (`4096 x 1KB`, 512 loops): `277.6 ms`
-- Python CPU count non-zero batch (`4096 x 1KB`, 512 loops): `792.6 ms`
+- Metal encode UTF-8 bytes (`1MB x 128`): `158.1 ms`
+- Native NEON encode UTF-8 bytes (`1MB x 128`): `101.8 ms`
+- Metal count non-zero batch (`4096 x 1KB`, 512 loops): `221.1 ms`
+- Python CPU count non-zero batch (`4096 x 1KB`, 512 loops): `732.0 ms`
 
 Interpretation:
 - For this simple byte->u32 widening workload, native NEON remains faster than Metal.
 - Metal already provides a clear win for large batch counting versus pure-Python counting logic.
 - Full GPU BPE merge support is still needed before making end-to-end tokenizer speed claims for Metal.
+- Versus the previous same-day v3 artifact (`bench-gpu-20260225-155245.json`), this v4 pass improved measured Metal means by `~0.37%` (encode) and `~2.72%` (batch count).
 
 ## Crossover + Profiling
 
 - Matrix benchmark script:
   - `bun run scripts/bench-gpu-crossover.ts`
-- Latest matrix artifact:
-  - `bench/results/bench-gpu-crossover-1772030955226.json`
+  - default: `TURBOTOKEN_BENCH_LONG=0` (long mode disabled)
+  - optional long-run row (adds `10,485,760` bytes/chars): `TURBOTOKEN_BENCH_LONG=1 bun run scripts/bench-gpu-crossover.ts`
+- Latest matrix artifacts:
+  - standard: `bench/results/bench-gpu-crossover-1772035615674.json`
+  - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
 - Auto-route cache:
-  - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `2`)
+  - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `4`)
 - Profiling counters exported from C bridge and exposed through Python:
   - encode: CPU ns, GPU ns, bytes, dispatch threads
   - count: CPU ns, GPU ns, bytes, segment count, lanes
   - stitch: CPU ns, GPU ns, token count, chunk bytes, chunk count
+- Long-run metadata in benchmark output:
+  - `long_mode.enabled` + `long_mode.long_chars`
+  - `bench_sizes.encode_bytes` and `bench_sizes.bpe_chars`
 
 Current calibration on this machine prefers:
 - native CPU path for byte encode (latest matrix run kept byte-path threshold at sentinel)
 - Python baseline for batch non-zero count
 - native path for BPE pieces (BPE threshold remains sentinel in latest calibration)
 
+Nuance from latest matrix:
+- At `1,048,576` bytes in the standard crossover run, Metal byte-encode is effectively tied with native (`23.79 ms` vs `23.78 ms`), so it still misses the >=5% auto-route win margin.
+- For `8192 x 1KB` count batches, Metal now slightly beats Python (`2.48 ms` vs `2.54 ms`) with `64` lanes, but still misses the >=10% auto-route gate.
+
 New BPE crossover rows in the same artifact show:
 - `encode_gpu(device="auto", strict_verify=False)` matches baseline token output and tracks CPU/native performance closely.
-- `encode_gpu(device="metal", strict_verify=False)` is much closer to CPU than earlier prototypes after GPU owner-mask stitching, but is still not token-identical on tested long-piece cases.
+- `encode_gpu(device="metal", strict_verify=False)` is now token-identical on tested long-piece cases because exactness guards fall back when stitch output is not exact.
+- optional long mode (`10,485,760` chars) stays token-identical for both auto and forced-metal routes, but runtime remains CPU-like (`~28.1s` CPU baseline, `~28.2s` auto, `~28.1s` forced metal in latest run).
+- despite improved correctness, BPE auto-route remains pinned to native (`2^60` sentinel) because Metal stitch path still does not beat baseline crossover targets.
 
 ## Next Steps Toward Full GPU BPE
 
@@ -92,3 +115,43 @@ New BPE crossover rows in the same artifact show:
 2. Replace prototype chunked stitch fallback with true on-GPU boundary merge/stitch.
 3. Recalibrate auto-route using full BPE workloads (not only byte-path primitives).
 4. Benchmark crossover points (batch size, string length) vs NEON CPU path on M4 Max.
+
+## Research-Backed Constraints (2026-02-25)
+
+- BlockBPE-style kernels are promising for high-batch throughput, but not guaranteed wins for low-batch interactive workloads.
+- BlockBPE also reports that dropping regex pre-tokenization can reduce downstream quality on some tasks; strict parity mode must stay available.
+- RAPIDS/cuDF now exposes GPU `byte_pair_encoding` and `wordpiece_tokenize` APIs, which confirms viability of GPU vocab/merge tables but does not provide `tiktoken`-compatible behavior out of the box.
+- Existing `Fast-tokenizers` CUDA code is useful for thread-per-byte neighborhood patterns, but it documents correctness limitations for long repeating sequences and is not a compatibility target.
+
+Primary references:
+- https://arxiv.org/html/2507.11941v1
+- https://docs.rapids.ai/api/libcudf/stable/group__nvtext__tokenize
+- https://raw.githubusercontent.com/rapidsai/cudf/branch-25.08/cpp/include/nvtext/byte_pair_encoding.hpp
+- https://github.com/github2015david/Fast-tokenizers
+
+## Metal BPE Kernel Plan (Draft)
+
+```c
+// Host-side iterative dispatch (experimental path only).
+for each piece in batch:
+  load bytes/tokens to work buffers
+  do:
+    dispatch tt_find_min_pair_rank       // pair-rank lookup + threadgroup min reduction
+    dispatch tt_mark_non_overlapping     // deterministic merge ownership mask
+    dispatch tt_compact_after_merge      // prefix-sum based compaction
+  while (merged_any)
+  dispatch tt_emit_token_ids
+```
+
+Proposed kernel responsibilities:
+- `tt_find_min_pair_rank`: per-token pair rank lookup from rank table + threadgroup min.
+- `tt_mark_non_overlapping`: left-to-right tie-break/ownership mask to avoid overlapping merges.
+- `tt_compact_after_merge`: move surviving/merged tokens into next buffer via prefix-sum write indices.
+
+## Validation Gates Before Auto-Route
+
+1. Token identity parity against CPU/native for `cl100k_base` + `o200k_base` corpus fixtures.
+2. Crossover wins on measured matrix, not synthetic claims:
+   - batch: `1, 8, 32, 128, 512, 1024`
+   - piece chars: `64, 128, 256, 512, 1024, 4096`
+3. Regression guard: if parity fails or crossover regresses, force fallback to native path.

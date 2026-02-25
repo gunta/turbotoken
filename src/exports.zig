@@ -200,6 +200,27 @@ pub export fn turbotoken_count_non_ascii_utf8_dotprod(
     return @as(isize, @intCast(count));
 }
 
+pub export fn turbotoken_count_non_ascii_utf8_sme(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+    if (builtin.cpu.arch != .aarch64 or !aarch64.smeAvailable()) {
+        return -1;
+    }
+
+    const count = aarch64.countNonAsciiSme(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
 pub export fn turbotoken_encode_utf8_bytes(
     text: [*c]const u8,
     text_len: usize,
@@ -720,17 +741,26 @@ test "count non-ascii exports agree with scalar baseline" {
     const kernel_id = turbotoken_count_non_ascii_kernel_id();
     if (builtin.cpu.arch == .aarch64 and aarch64.available()) {
         try std.testing.expect((feature_mask & aarch64.FeatureBit.advsimd) != 0);
-        try std.testing.expect(kernel_id == @intFromEnum(aarch64.CountKernel.neon) or kernel_id == @intFromEnum(aarch64.CountKernel.dotprod));
+        try std.testing.expect(
+            kernel_id == @intFromEnum(aarch64.CountKernel.neon) or
+                kernel_id == @intFromEnum(aarch64.CountKernel.dotprod) or
+                kernel_id == @intFromEnum(aarch64.CountKernel.sme),
+        );
         try std.testing.expectEqual(@as(isize, @intCast(expected)), turbotoken_count_non_ascii_utf8_neon(text.ptr, text.len));
         const dotprod = turbotoken_count_non_ascii_utf8_dotprod(text.ptr, text.len);
         if (dotprod >= 0) {
             try std.testing.expectEqual(@as(isize, @intCast(expected)), dotprod);
+        }
+        const sme = turbotoken_count_non_ascii_utf8_sme(text.ptr, text.len);
+        if (sme >= 0) {
+            try std.testing.expectEqual(@as(isize, @intCast(expected)), sme);
         }
     } else {
         try std.testing.expectEqual(@as(u64, 0), feature_mask);
         try std.testing.expectEqual(@as(u32, 0), kernel_id);
         try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_neon(text.ptr, text.len));
         try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_dotprod(text.ptr, text.len));
+        try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_sme(text.ptr, text.len));
     }
 }
 

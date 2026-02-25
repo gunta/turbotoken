@@ -16,7 +16,18 @@ function repeatToSize(seed: string, bytes: number): string {
   }
 
   const buffer = Buffer.from(out, "utf8");
-  return buffer.subarray(0, bytes).toString("utf8");
+  let truncated = buffer.subarray(0, bytes);
+  let text = truncated.toString("utf8");
+  // Keep fixture byte size <= target when truncation lands inside a UTF-8 codepoint.
+  while (Buffer.byteLength(text, "utf8") > bytes && truncated.length > 0) {
+    truncated = truncated.subarray(0, truncated.length - 1);
+    text = truncated.toString("utf8");
+  }
+  const shortBy = bytes - Buffer.byteLength(text, "utf8");
+  if (shortBy > 0) {
+    text += "a".repeat(shortBy);
+  }
+  return text;
 }
 
 function writeFixture(path: string, content: string, force: boolean): void {
@@ -98,6 +109,7 @@ export function ensureFixtures(force = false): void {
     "\u660e\u65e5\u306e\u30e2\u30c7\u30eb\u8a55\u4fa1\u3092\u6e96\u5099\u3057\u3066\u3044\u307e\u3059\u3002\n";
   const emojiSeed =
     "Debugging \ud83e\uddea, profiling \ud83d\ude80, and shipping \u2705 with calm iteration.\n";
+  const unicodeSeed = cjkSeed + emojiSeed;
 
   writeFixture(resolve(FIXTURES_DIR, "english-1kb.txt"), repeatToSize(englishSeed, 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "english-10kb.txt"), repeatToSize(englishSeed, 10 * 1024), force);
@@ -106,6 +118,7 @@ export function ensureFixtures(force = false): void {
   writeFixture(resolve(FIXTURES_DIR, "code-50kb.py"), repeatToSize(codeSeed, 50 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "cjk-10kb.txt"), repeatToSize(cjkSeed, 10 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "emoji-10kb.txt"), repeatToSize(emojiSeed, 10 * 1024), force);
+  writeFixture(resolve(FIXTURES_DIR, "unicode-1mb.txt"), repeatToSize(unicodeSeed, 1024 * 1024), force);
 
   createNativeByteDecodeFixture(force);
   createDecodeTokensFixture(force);

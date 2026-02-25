@@ -31,6 +31,27 @@ export function pythonExecutable(): string {
   return existsSync(venvPython) ? venvPython : "python3";
 }
 
+export function ensurePythonDevEnvironment(): string {
+  const venvPython = resolvePath(".venv", "bin", "python");
+
+  if (!existsSync(venvPython)) {
+    if (!commandExists("python3")) {
+      throw new Error("python3 is required to bootstrap .venv");
+    }
+    section("Bootstrap Python virtual environment (.venv)");
+    runCommand("python3", ["-m", "venv", ".venv"]);
+  }
+
+  const pytestCheck = runCommand(venvPython, ["-m", "pytest", "--version"], { allowFailure: true });
+  if (pytestCheck.code !== 0) {
+    section("Install Python dev dependencies into .venv");
+    runCommand(venvPython, ["-m", "pip", "install", "-U", "pip"]);
+    runCommand(venvPython, ["-m", "pip", "install", "-e", ".[dev]"]);
+  }
+
+  return venvPython;
+}
+
 export function ensureDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }

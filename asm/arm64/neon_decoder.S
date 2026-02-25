@@ -246,9 +246,8 @@ TT_SYM(turbotoken_arm64_encode_u8_to_u32):
     ld1 {v16.16b, v17.16b, v18.16b, v19.16b}, [x0], #64
 
     // block 0
-    mov v0.16b, v16.16b
-    uxtl v1.8h, v0.8b
-    uxtl2 v2.8h, v0.16b
+    uxtl v1.8h, v16.8b
+    uxtl2 v2.8h, v16.16b
     uxtl v3.4s, v1.4h
     uxtl2 v4.4s, v1.8h
     uxtl v5.4s, v2.4h
@@ -256,9 +255,8 @@ TT_SYM(turbotoken_arm64_encode_u8_to_u32):
     st1 {v3.4s, v4.4s, v5.4s, v6.4s}, [x2], #64
 
     // block 1
-    mov v0.16b, v17.16b
-    uxtl v1.8h, v0.8b
-    uxtl2 v2.8h, v0.16b
+    uxtl v1.8h, v17.8b
+    uxtl2 v2.8h, v17.16b
     uxtl v3.4s, v1.4h
     uxtl2 v4.4s, v1.8h
     uxtl v5.4s, v2.4h
@@ -266,9 +264,8 @@ TT_SYM(turbotoken_arm64_encode_u8_to_u32):
     st1 {v3.4s, v4.4s, v5.4s, v6.4s}, [x2], #64
 
     // block 2
-    mov v0.16b, v18.16b
-    uxtl v1.8h, v0.8b
-    uxtl2 v2.8h, v0.16b
+    uxtl v1.8h, v18.8b
+    uxtl2 v2.8h, v18.16b
     uxtl v3.4s, v1.4h
     uxtl2 v4.4s, v1.8h
     uxtl v5.4s, v2.4h
@@ -276,9 +273,8 @@ TT_SYM(turbotoken_arm64_encode_u8_to_u32):
     st1 {v3.4s, v4.4s, v5.4s, v6.4s}, [x2], #64
 
     // block 3
-    mov v0.16b, v19.16b
-    uxtl v1.8h, v0.8b
-    uxtl2 v2.8h, v0.16b
+    uxtl v1.8h, v19.8b
+    uxtl2 v2.8h, v19.16b
     uxtl v3.4s, v1.4h
     uxtl2 v4.4s, v1.8h
     uxtl v5.4s, v2.4h

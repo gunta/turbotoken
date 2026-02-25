@@ -512,7 +512,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend accelerates UTF-8 byte-path primitives; BPE chunked stitch remains experimental and is enabled by device='metal' or by autoroute-v2 thresholds when calibrated.",
+        "note": "Experimental Metal backend accelerates UTF-8 byte-path primitives; BPE chunked stitch remains experimental and is enabled by device='metal' or by autoroute-v4 thresholds, with exactness guards to preserve baseline output when stitch kernels diverge.",
     }
 
 
@@ -542,14 +542,14 @@ def profile_last() -> dict[str, int] | None:
 
 def calibrate_autoroute(*, force: bool = False) -> dict[str, Any]:
     existing = _load_route_cache()
-    if existing is not None and not force and int(existing.get("version", 0)) >= 2:
+    if existing is not None and not force and int(existing.get("version", 0)) >= 4:
         return existing
 
     bridge = get_metal_bridge()
     native = get_native_bridge()
 
     payload: dict[str, Any] = {
-        "version": 2,
+        "version": 4,
         "generated_at": time.time(),
         "encode_use_metal_min_bytes": 1 << 60,
         "count_batch_use_metal_min_total_bytes": 1 << 60,
@@ -725,7 +725,7 @@ def _get_route_thresholds() -> tuple[int, int, int]:
         return 1 << 60, 1 << 60, 1 << 60
 
     cached = _load_route_cache()
-    if cached is None or int(cached.get("version", 0)) < 2:
+    if cached is None or int(cached.get("version", 0)) < 4:
         cached = calibrate_autoroute(force=True)
 
     encode_threshold = int(cached.get("encode_use_metal_min_bytes", 1 << 60))
@@ -1074,6 +1074,7 @@ def encode_bpe_chunked_stitched(
         return bridge.encode_bpe_from_ranks(rank_payload, data)
 
     stitched: list[int] | None = None
+    used_metal_result = False
     stitch_cache_key = (hashlib.sha256(rank_payload).hexdigest()[:16], chunk_bytes, overlap_bytes, len(data))
     stitch_cache_state = _metal_stitch_support_cache.get(stitch_cache_key)
     if prefer_metal_stitch:
@@ -1090,6 +1091,8 @@ def encode_bpe_chunked_stitched(
             )
             if stitched is None:
                 _metal_stitch_support_cache[stitch_cache_key] = False
+            else:
+                used_metal_result = True
 
     if stitched is None:
         stitched = bridge.encode_bpe_chunked_stitched_from_ranks(
@@ -1157,7 +1160,7 @@ def encode_bpe_chunked_stitched(
                 ):
                     return None
 
-    if prefer_metal_stitch and stitched is not None:
+    if prefer_metal_stitch and used_metal_result and stitched is not None:
         repaired = _repair_chunk_boundaries(
             rank_payload,
             data,
@@ -1170,6 +1173,7 @@ def encode_bpe_chunked_stitched(
         else:
             stitched = None
             _metal_stitch_support_cache[stitch_cache_key] = False
+            used_metal_result = False
 
     if stitched is not None:
         token_lens = _rank_token_lens_from_payload(rank_payload)
@@ -1179,17 +1183,22 @@ def encode_bpe_chunked_stitched(
             if exact is None:
                 return None
             stitched = exact
+            used_metal_result = False
     else:
         exact = bridge.encode_bpe_from_ranks(rank_payload, data)
         if exact is None:
             return None
         stitched = exact
+        used_metal_result = False
 
     if prefer_metal_stitch and stitch_cache_state is None:
         exact_probe = bridge.encode_bpe_from_ranks(rank_payload, data)
         if exact_probe is None:
             return None
-        if stitched != exact_probe:
+        if not used_metal_result:
+            _metal_stitch_support_cache[stitch_cache_key] = False
+            stitched = exact_probe
+        elif stitched != exact_probe:
             _metal_stitch_support_cache[stitch_cache_key] = False
             stitched = exact_probe
         else:

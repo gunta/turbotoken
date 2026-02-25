@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { commandExists, pythonExecutable, runCommand, section, zigExecutable } from "./_lib";
+import { commandExists, ensurePythonDevEnvironment, runCommand, section, zigExecutable } from "./_lib";
 
 interface Task {
   name: string;
@@ -8,10 +8,12 @@ interface Task {
   required: boolean;
 }
 
+const python = ensurePythonDevEnvironment();
+
 const tasks: Task[] = [
   {
     name: "python-tests",
-    command: pythonExecutable(),
+    command: python,
     args: ["-m", "pytest", "-q"],
     required: true,
   },

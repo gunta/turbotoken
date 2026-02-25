@@ -16,6 +16,7 @@ comptime {
     _ = exports.turbotoken_count_non_ascii_utf8_scalar;
     _ = exports.turbotoken_count_non_ascii_utf8_neon;
     _ = exports.turbotoken_count_non_ascii_utf8_dotprod;
+    _ = exports.turbotoken_count_non_ascii_utf8_sme;
     _ = exports.turbotoken_encode_utf8_bytes;
     _ = exports.turbotoken_decode_utf8_bytes;
     _ = exports.turbotoken_encode_bpe_from_ranks;

@@ -16,6 +16,7 @@
 7. [RISC-V Vector Research](#7-risc-v-vector-research)
 8. [Merge Table / Data Structure Research](#8-merge-table--data-structure-research)
 9. [Benchmark Methodology Research](#9-benchmark-methodology-research)
+10. [GPU Tokenization Deep Dive (2026-02-25)](#10-gpu-tokenization-deep-dive-2026-02-25)
 
 ---
 
@@ -159,10 +160,10 @@ Real-world with prefetch overhead: target <0.06ms.
 5. Concatenate results
 
 **TODO:**
-- [ ] Read BlockBPE paper in detail
-- [ ] Prototype in Metal compute shader
+- [x] Read BlockBPE paper in detail
+- [x] Prototype in Metal compute shader
 - [ ] Determine optimal chunk size (threadgroup size)
-- [ ] Measure GPU dispatch overhead vs encoding time
+- [x] Measure GPU dispatch overhead vs encoding time
 - [ ] Profile on M4 Max 40-core GPU
 
 ---
@@ -313,7 +314,7 @@ Need to benchmark to confirm net improvement vs AVX2.
 - sm_90: H100 (80GB, 3.35TB/s bandwidth)
 
 **TODO:**
-- [ ] Read BlockBPE paper implementation details
+- [x] Read BlockBPE paper implementation details
 - [ ] Prototype CUDA kernel for chunk-parallel BPE
 - [ ] Shared memory optimization for merge table
 - [ ] Benchmark on RTX 4090 and/or A100
@@ -460,3 +461,92 @@ ls -la zig-out/lib/turbotoken.wasm
 wasm-opt -Oz zig-out/lib/turbotoken.wasm -o turbotoken-opt.wasm
 ls -la turbotoken-opt.wasm
 ```
+
+---
+
+## 10. GPU Tokenization Deep Dive (2026-02-25)
+
+### Primary-source findings
+
+- **BlockBPE (ICML 2025 workshop preprint) is the strongest direct BPE-on-GPU reference so far.**
+  - The paper describes a one-block-per-string design, block-wide minimum-pair selection, and compaction with prefix scans.
+  - Reported throughput wins are concentrated in high-batch settings; low-batch latency remains a CPU strength.
+  - The paper also reports a quality caveat: replacing regex pre-tokenization with byte-level splitting can hurt some workloads (notably math-heavy tasks).
+  - Source: https://arxiv.org/html/2507.11941v1
+
+- **RAPIDS/cuDF now exposes both BPE and WordPiece APIs, but with different scope than `tiktoken` compatibility.**
+  - `nvtext::byte_pair_encoding(...)` is available and merge-pair-driven.
+  - `nvtext::wordpiece_tokenize(...)` is available for WordPiece vocabularies.
+  - These APIs are useful engineering references for vocabulary loading, GPU data structures, and tensor output shaping, but they are not drop-in OpenAI `tiktoken` encoders.
+  - Sources:
+    - https://docs.rapids.ai/api/libcudf/stable/group__nvtext__tokenize
+    - https://raw.githubusercontent.com/rapidsai/cudf/branch-25.08/cpp/include/nvtext/byte_pair_encoding.hpp
+    - https://raw.githubusercontent.com/rapidsai/cudf/branch-25.08/cpp/include/nvtext/wordpiece_tokenize.hpp
+
+- **Current mainstream production tokenizers are still CPU-first.**
+  - `tiktoken` core path is regex + BPE with CPU threading in Python batch helpers.
+  - HuggingFace tokenizers are Rust-native and support optional rayon parallelism (`TOKENIZERS_PARALLELISM`) but still CPU execution.
+  - Sources:
+    - https://raw.githubusercontent.com/openai/tiktoken/main/tiktoken/core.py
+    - https://raw.githubusercontent.com/huggingface/tokenizers/main/tokenizers/src/utils/parallelism.rs
+    - https://raw.githubusercontent.com/huggingface/tokenizers/main/docs/source-doc-builder/index.mdx
+
+- **Older GPU tokenizer codebases are useful for kernel patterns, but not correctness targets.**
+  - `Fast-tokenizers` demonstrates byte-neighborhood rule tokenization with a thread-per-byte pattern plus host-side post-pass cleanup.
+  - The repo itself documents fixed-window limitations for long repeating patterns.
+  - Source:
+    - https://github.com/github2015david/Fast-tokenizers
+    - https://raw.githubusercontent.com/github2015david/Fast-tokenizers/master/src_cpp/GpuTokenize.cu
+
+- **CPU algorithm work still matters even with GPU ambitions.**
+  - `bpe`/`bpe-openai` and `mojo-tokenizer` show strong gains from linear/backtracking algorithms and cache-aware storage, which should remain the correctness/perf baseline while GPU path matures.
+  - Sources:
+    - https://raw.githubusercontent.com/github/rust-gems/main/crates/bpe/README.md
+    - https://raw.githubusercontent.com/github/rust-gems/main/crates/bpe-openai/README.md
+    - https://raw.githubusercontent.com/atsentia/mojo-tokenizer/main/README.md
+
+### Draft GPU merge-pass skeleton (research pseudocode)
+
+```c
+// One threadgroup/block handles one string piece.
+while (true) {
+  rank[i] = lookup_pair_rank(token[i], token[i + 1]); // INF if missing
+  min_rank = block_reduce_min(rank);
+  if (min_rank == INF) break;
+
+  // Tie-break must be deterministic and match reference semantics.
+  merge_flag[i] = (rank[i] == min_rank) && leftmost_non_overlapping(i);
+
+  // Compact surviving tokens after merges.
+  keep_flag[i] = !was_consumed_by_left_merge(i);
+  out_idx[i] = exclusive_prefix_sum(keep_flag[i]);
+  if (keep_flag[i]) next_tokens[out_idx[i]] = merged_or_original(i);
+
+  swap(tokens, next_tokens);
+}
+```
+
+For CUDA, the closest direct building blocks are:
+- `cuCollections::static_map` for GPU-resident pair-rank lookup.
+- CCCL/CUB block scans for compaction and write-index assignment.
+- Sources:
+  - https://github.com/NVIDIA/cuCollections
+  - https://nvidia.github.io/cccl/cub/api/classcub_1_1BlockScan.html
+
+### Practical implications for turbotoken
+
+- Keep **strict compatibility mode** anchored to current CPU/native path until GPU merge path is token-identical.
+- Treat byte-level pre-tokenization-only paths as **explicitly experimental** (`device="metal"`/future `device="cuda"` opt-in).
+- Use batch-size/sequence-length crossover calibration as a hard gate before auto-routing to GPU.
+- Keep all benchmark claims scoped to measured artifacts in `bench/results/`.
+
+### Potential upstream / ecosystem contributions
+
+- [ ] Upstream reproducible crossover methodology:
+  - Publish the `encode/count/BPE` crossover matrix shape (sizes, loops, win thresholds, JSON schema) so CPU/GPU tokenizer projects can compare apples-to-apples.
+- [ ] Upstream parity corpus for GPU stitch paths:
+  - Add an open corpus focused on known boundary-risk cases (long repeats, alternating byte classes, mixed UTF-8 punctuation) with strict token-identity checks.
+- [ ] Coordinate API hooks for chunk-stitch research:
+  - Propose optional low-level APIs in tokenizer runtimes for exposing pre-tokenized piece boundaries and chunk metadata without forcing full regex rework.
+- [ ] Share Metal/CUDA kernel micro-pattern findings:
+  - Document practical wins from SIMD-group reductions, compaction strategy choices, and launch heuristics so future BlockBPE-like backends start from measured baselines.

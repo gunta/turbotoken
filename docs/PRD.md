@@ -4,6 +4,8 @@
 > **Hand-optimized for each target: ARM64 NEON, Apple Metal, WASM, AVX2, CUDA, RISC-V.**
 > **First in the turbo-tools family.**
 
+> **Reality check (2026-02-25):** repository implementation is still mixed maturity. CPU BPE compatibility exists, but current GPU kernels are still experimental building blocks and not full on-GPU `tiktoken`-compatible BPE.
+
 ---
 
 ## 1. NAMING & IDENTITY
@@ -435,11 +437,14 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 ### Phase 2: Apple Metal GPU Backend (Weeks 4-5)
 
 Still M4 Max. GPU batch encoding for when you have many strings.
+Current implementation note (2026-02-25): byte-path kernels are now on `metal-byte-path-v4` with `512`-byte encode chunks per thread, unrolled `uchar4 -> uint4` widening stores, and SIMD-group-based count reduction with unrolled accumulation; full on-GPU BPE merge remains pending.
 
-- [ ] Metal 4 compute shader for batch pre-tokenization (parallel chunk classification)
+- [x] Metal 4 compute shader for batch pre-tokenization (parallel chunk classification)
 - [ ] Metal compute shader for batch BPE merge (BlockBPE-style independent chunks)
-- [ ] `encode_gpu()` / `count_gpu()` Python methods
-- [ ] Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken
+- [ ] Add block-level merge loop kernels: min-rank reduction, deterministic non-overlap ownership, prefix-sum compaction
+- [x] Keep strict parity mode as default route; GPU path remains opt-in until token-identical
+- [x] `encode_gpu()` / `count_gpu()` Python methods
+- [x] Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken
 - [ ] Blog post: "GPU tokenization on Apple Silicon -- turbotoken goes Metal"
 
 ### Phase 3: Zig WebAssembly -- Unified Build (Weeks 6-7)
@@ -481,6 +486,8 @@ GPU batch tokenization for datacenter workloads.
 
 - [ ] CUDA BlockBPE kernel (sm_80+ for A100/H100, sm_89 for RTX 4090)
 - [ ] Shared memory merge table for coalesced access
+- [ ] Evaluate `cuCollections::static_map` + CCCL/CUB `BlockScan` as baseline primitives for rank lookup + compaction
+- [ ] Benchmark crossover matrix across batch size and sequence length before enabling any auto-route
 - [ ] Hyperfine + custom GPU timing benchmarks on RTX 4090/A100
 - [ ] Blog post: "Tokenize 10GB/s on NVIDIA GPUs"
 
@@ -1147,7 +1154,8 @@ No other project has more than 2 of these 6.
 - tiktoken source (the target to beat): https://github.com/openai/tiktoken
 - tiktoken core.py (API to replicate): https://github.com/openai/tiktoken/blob/main/tiktoken/core.py
 - tiktoken test suite (correctness oracle): https://github.com/openai/tiktoken/blob/main/tests/test_encoding.py
-- GitHub `bpe` crate (O(n) algorithm): https://github.com/github/bpe
+- GitHub Rust Gems `bpe` crate (O(n)/backtracking algorithm details): https://github.com/github/rust-gems/tree/main/crates/bpe
+- GitHub Rust Gems `bpe-openai` crate (OpenAI vocab integration): https://github.com/github/rust-gems/tree/main/crates/bpe-openai
 - GitHub Blog on `bpe` crate: https://github.blog/ai-and-ml/llms/so-many-tokens-so-little-time-introducing-a-faster-more-flexible-byte-pair-tokenizer/
 - rs-bpe (Rust, linear scaling, Python bindings): https://github.com/gweidart/rs-bpe
 - TokenDagger (drop-in pattern proof): https://github.com/SuperpoweredAI/token-dagger
@@ -1175,6 +1183,15 @@ No other project has more than 2 of these 6.
 - Metal compute tutorial: https://developer.apple.com/documentation/metal/performing_calculations_on_a_gpu
 - CUDA programming guide: https://docs.nvidia.com/cuda/cuda-c-programming-guide/
 - NVIDIA cuDF GPU tokenization (483x BERT): https://developer.nvidia.com/blog/run-state-of-the-art-nlp-workloads-at-scale-with-rapids-huggingface-and-dask/
+- RAPIDS libcudf tokenizer APIs: https://docs.rapids.ai/api/libcudf/stable/group__nvtext__tokenize
+- RAPIDS BPE API header (`byte_pair_encoding`): https://github.com/rapidsai/cudf/blob/branch-25.08/cpp/include/nvtext/byte_pair_encoding.hpp
+- RAPIDS WordPiece API header (`wordpiece_tokenize`): https://github.com/rapidsai/cudf/blob/branch-25.08/cpp/include/nvtext/wordpiece_tokenize.hpp
+- NVIDIA cuCollections (GPU concurrent hash maps): https://github.com/NVIDIA/cuCollections
+- NVIDIA CCCL/CUB BlockScan docs: https://nvidia.github.io/cccl/cub/api/classcub_1_1BlockScan.html
+- Legacy CUDA tokenizer reference (rule-based PTB): https://github.com/github2015david/Fast-tokenizers
+- BlockBPE discussion thread: https://news.ycombinator.com/item?id=44422480
+- Practical GPU tokenizer tutorial (non-authoritative, implementation sketch): https://www.digitalocean.com/community/tutorials/run-tokenizer-on-gpu-for-faster-nlp
+- NVIDIA Phi-3 model card (example of `tiktoken` tokenizer + 128K context pressure): https://build.nvidia.com/microsoft/phi-3-small-128k-instruct/modelcard
 
 ### Zig Language References
 - Zig language: https://ziglang.org/
@@ -1207,6 +1224,7 @@ No other project has more than 2 of these 6.
 ### Market / Bottleneck Evidence
 - Taalas 17K tok/s: https://taalas.com/the-path-to-ubiquitous-ai/
 - Cotool tokenization latency: https://cotool.ai/blog/context-management
+- Galileo production token accounting guide: https://galileo.ai/blog/tiktoken-guide-production-ai
 - Tokenization benchmarks (July 2025): https://llm-calculator.com/blog/tokenization-performance-benchmark/
 - mojo-tokenizer 144M tok/s on Apple Silicon: https://medium.com/@atveit/fastest-ai-token-output-readable-text-on-apple-silicon-144m-tokens-sec-on-m3-ultr-263a6f2f85e0
 - Agent token consumption (ICLR 2026): https://openreview.net/forum?id=1bUeVB3fov

@@ -4,6 +4,29 @@ import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 section("GPU crossover matrix benchmark");
 const python = pythonExecutable();
 
+const longModeRaw = (process.env.TURBOTOKEN_BENCH_LONG ?? "0").trim().toLowerCase();
+const longBenchmarkEnabled =
+  longModeRaw === "1" ||
+  longModeRaw === "true" ||
+  longModeRaw === "yes" ||
+  longModeRaw === "on";
+const longBenchmarkEnabledPy = longBenchmarkEnabled ? "True" : "False";
+const longChars = 10_485_760;
+
+const encodeSizes = longBenchmarkEnabled
+  ? [1024, 4096, 16384, 65536, 262144, 1048576, longChars]
+  : [1024, 4096, 16384, 65536, 262144, 1048576];
+
+const bpeSizes = longBenchmarkEnabled
+  ? [65536, 262144, 1048576, longChars]
+  : [65536, 262144, 1048576];
+
+if (longBenchmarkEnabled) {
+  console.log(
+    `Long mode enabled via TURBOTOKEN_BENCH_LONG=${process.env.TURBOTOKEN_BENCH_LONG}; appending ${longChars.toLocaleString()}-char benchmark row`,
+  );
+}
+
 const probeResult = Bun.spawnSync({
   cmd: [
     python,
@@ -74,7 +97,7 @@ def mean_ms(fn, loops):
         fn()
     return (time.perf_counter()-start)*1000.0/max(1,loops)
 
-encode_sizes=[1024,4096,16384,65536,262144,1048576]
+encode_sizes=${JSON.stringify(encodeSizes)}
 encode_rows=[]
 for size in encode_sizes:
     loops=max(8,min(256,(16*1048576)//size))
@@ -118,7 +141,7 @@ for batch_size in count_batches:
     })
 
 route=_gpu.calibrate_autoroute(force=True)
-bpe_sizes=[65536,262144,1048576]
+bpe_sizes=${JSON.stringify(bpeSizes)}
 bpe_rows=[]
 for size in bpe_sizes:
     loops=max(2,min(8,(2*1048576)//size))
@@ -177,6 +200,16 @@ for size in bpe_sizes:
 print(json.dumps({
     "tool":"gpu-crossover-bench",
     "generated_at":time.time(),
+    "long_mode":{
+        "enabled":${longBenchmarkEnabledPy},
+        "flag":"TURBOTOKEN_BENCH_LONG",
+        "long_chars":${longChars},
+    },
+    "bench_sizes":{
+        "encode_bytes":encode_sizes,
+        "count_batches":count_batches,
+        "bpe_chars":bpe_sizes,
+    },
     "probe":_gpu.backend_info(),
     "native_available":native.available,
     "encode_rows":encode_rows,

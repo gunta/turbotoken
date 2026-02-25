@@ -28,8 +28,8 @@
 - `scripts/compat-report.ts` to compare token outputs against `tiktoken` and track parity deltas
 - `scripts/test-upstream-alias.ts` to run upstream public `tiktoken` tests against a `turbotoken` alias shim
 - `scripts/bench-native-byte-path.ts` to benchmark native C ABI UTF-8 byte encode/decode paths independently of scalar BPE
-- `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd)
-- `scripts/bench-gpu-crossover.ts` now includes long-piece BPE crossover rows (`encode_gpu(auto)` vs forced `encode_gpu(metal)`) with baseline correctness checks
+- `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd, plus optional SME when built with `-Dexperimental-sme=true`)
+- `scripts/bench-gpu-crossover.ts` now includes long-piece BPE crossover rows (`encode_gpu(auto)` vs forced `encode_gpu(metal)`) with baseline correctness checks, plus optional `TURBOTOKEN_BENCH_LONG=1` mode that appends a `10,485,760` bytes/chars row for periodic heavy comparison runs
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
@@ -98,10 +98,17 @@
 - ARM64 encode 64-byte loop now batches source loads (`ld1` of four vectors) before widening/storing, reducing load overhead in the widening hot path
 - ARM64 pretokenizer now has a DotProd kernel (`turbotoken_arm64_count_non_ascii_dotprod`) and runtime auto-selection between NEON and DotProd via one-time microbenchmark gating
 - C ABI now exports ARM64 feature mask and selected pretokenizer kernel id (`turbotoken_arm64_feature_mask`, `turbotoken_count_non_ascii_kernel_id`) plus explicit non-ASCII counters (`auto`, `scalar`, `neon`, `dotprod`)
+- Added an experimental ARM64 SME non-ASCII counter kernel (`turbotoken_arm64_count_non_ascii_sme`) behind build flag `zig build -Dexperimental-sme=true`, with C ABI export (`turbotoken_count_non_ascii_utf8_sme`); auto-selection now requires explicit runtime opt-in via `TURBOTOKEN_EXPERIMENTAL_SME_AUTO`
+- Experimental SME counter hot loop now uses 4x streaming-vector unroll + prefetch for lower loop/control overhead on large buffers
+- Native pretokenizer benchmark now includes a non-ASCII-heavy `unicode-1mb` fixture row in addition to `english-1mb`
+- Native pretokenizer benchmark now supports separate run modes/artifacts for baseline vs SME auto opt-in (`bench:native-pretokenizer` and `bench:native-pretokenizer:sme-auto`)
 - Current M4 Max tuning data selects NEON (kernel id `1`) over DotProd for non-ASCII counting (`bench/results/bench-native-pretokenizer-20260225-134405.json`)
 - `Encoding.encode_gpu()` routing now distinguishes exact and experimental paths: `device="auto"` keeps exact CPU/native rank-BPE behavior, while `device="metal"` enables experimental chunked stitch kernels
 - Experimental chunked stitch path now prefers a Metal owner-mask kernel stage when requested, then falls back to native/Python stitch implementations when unavailable
-- Metal auto-route calibration cache moved to schema v2 with BPE crossover rows and `bpe_use_metal_min_piece_bytes` threshold gating
+- Metal auto-route calibration cache now uses schema v3 with BPE crossover rows and `bpe_use_metal_min_piece_bytes` threshold gating; v3 bump forces recalibration after `metal-byte-path-v3` kernel changes
+- Experimental chunked stitch path now applies boundary-repair/exactness guards and per-shape compatibility caching so `encode_gpu(device="metal", strict_verify=False)` preserves baseline token output on calibrated long-piece rows
+- Metal byte-path bridge/kernels now run as `metal-byte-path-v3`: encode widened to `256` bytes/thread with unrolled `uint4` stores, count switched to SIMD-group reduction + unrolled accumulation, host dispatch uses dedicated encode threadgroup sizing and adaptive count lanes, and autoroute cache schema moved to `v3` to force recalibration after kernel changes
+- Metal byte-path bridge/kernels now run as `metal-byte-path-v4`: encode widened to `512` bytes/thread with unrolled `uchar4 -> uint4` stores, count hot loop widened to 8x unroll with single-simdgroup fast path, host launch heuristics tuned again (including lower mid-size count lanes), and autoroute cache schema moved to `v4` for recalibration
 - UTF-8 byte C ABI now also exports explicit scalar-only variants (`turbotoken_encode_utf8_bytes_scalar`, `turbotoken_decode_utf8_bytes_scalar`) to allow apples-to-apples NEON-vs-scalar benchmarking
 - Native byte-path benchmark now includes direct NEON-vs-scalar comparison (latest artifact: `bench/results/bench-native-byte-path-20260225-134436.json`)
 - Native pretokenizer benchmark now measures auto/scalar/NEON/DotProd paths with kernel-selection visibility (`bench/results/bench-native-pretokenizer-20260225-134405.json`)

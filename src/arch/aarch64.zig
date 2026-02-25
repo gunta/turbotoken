@@ -1,8 +1,10 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const build_options = @import("build_options");
 
 extern fn turbotoken_arm64_count_non_ascii(bytes: [*]const u8, len: usize) usize;
 extern fn turbotoken_arm64_count_non_ascii_dotprod(bytes: [*]const u8, len: usize) usize;
+extern fn turbotoken_arm64_count_non_ascii_sme(bytes: [*]const u8, len: usize) usize;
 extern fn turbotoken_arm64_decode_u32_to_u8(tokens: [*]const u32, len: usize, out: [*]u8) void;
 extern fn turbotoken_arm64_validate_and_decode_u32_to_u8(tokens: [*]const u32, len: usize, out: [*]u8) u32;
 extern fn turbotoken_arm64_encode_u8_to_u32(bytes: [*]const u8, len: usize, out: [*]u32) void;
@@ -25,10 +27,13 @@ pub const FeatureBit = struct {
 pub const CountKernel = enum(u32) {
     neon = 1,
     dotprod = 2,
+    sme = 3,
 };
 
 var selected_count_kernel: CountKernel = .neon;
 var count_kernel_once = std.once(initCountKernel);
+var sme_auto_opt_in = false;
+var sme_auto_opt_in_once = std.once(initSmeAutoOptIn);
 
 fn hasFeature(feature: std.Target.aarch64.Feature) bool {
     return builtin.cpu.arch == .aarch64 and
@@ -41,6 +46,30 @@ pub fn available() bool {
 
 pub fn dotprodAvailable() bool {
     return hasFeature(.dotprod);
+}
+
+pub fn smeAvailable() bool {
+    if (comptime !build_options.enable_experimental_sme) {
+        return false;
+    }
+    return hasFeature(.sme);
+}
+
+fn initSmeAutoOptIn() void {
+    if (comptime !build_options.enable_experimental_sme) {
+        sme_auto_opt_in = false;
+        return;
+    }
+    // Explicit opt-in gate for auto-kernel selection.
+    sme_auto_opt_in = std.process.hasEnvVarConstant("TURBOTOKEN_EXPERIMENTAL_SME_AUTO");
+}
+
+fn smeAutoEnabled() bool {
+    if (!smeAvailable()) {
+        return false;
+    }
+    sme_auto_opt_in_once.call();
+    return sme_auto_opt_in;
 }
 
 pub fn featureMask() u64 {
@@ -92,7 +121,9 @@ fn initCountKernel() void {
 }
 
 fn selectCountKernel() CountKernel {
-    if (!dotprodAvailable()) {
+    const has_dotprod = dotprodAvailable();
+    const has_sme = smeAutoEnabled();
+    if (!has_dotprod and !has_sme) {
         return .neon;
     }
 
@@ -102,18 +133,35 @@ fn selectCountKernel() CountKernel {
     }
 
     const iterations = 512;
-    var best_neon: u64 = std.math.maxInt(u64);
-    var best_dotprod: u64 = std.math.maxInt(u64);
+    var best_kernel: CountKernel = .neon;
+    var best_time = benchmarkCountKernelBestOf3(.neon, &sample, iterations);
 
+    if (has_dotprod) {
+        const dotprod_time = benchmarkCountKernelBestOf3(.dotprod, &sample, iterations);
+        if (dotprod_time * 100 <= best_time * 99) {
+            best_kernel = .dotprod;
+            best_time = dotprod_time;
+        }
+    }
+
+    if (has_sme) {
+        const sme_time = benchmarkCountKernelBestOf3(.sme, &sample, iterations);
+        if (sme_time * 100 <= best_time * 99) {
+            best_kernel = .sme;
+            best_time = sme_time;
+        }
+    }
+
+    std.mem.doNotOptimizeAway(best_time);
+    return best_kernel;
+}
+
+fn benchmarkCountKernelBestOf3(kernel: CountKernel, sample: []const u8, iterations: usize) u64 {
+    var best: u64 = std.math.maxInt(u64);
     for (0..3) |_| {
-        best_neon = @min(best_neon, benchmarkCountKernel(.neon, &sample, iterations));
-        best_dotprod = @min(best_dotprod, benchmarkCountKernel(.dotprod, &sample, iterations));
+        best = @min(best, benchmarkCountKernel(kernel, sample, iterations));
     }
-
-    if (best_dotprod * 100 <= best_neon * 99) {
-        return .dotprod;
-    }
-    return .neon;
+    return best;
 }
 
 fn benchmarkCountKernel(kernel: CountKernel, sample: []const u8, iterations: usize) u64 {
@@ -125,6 +173,7 @@ fn benchmarkCountKernel(kernel: CountKernel, sample: []const u8, iterations: usi
         const count = switch (kernel) {
             .neon => countNonAsciiNeon(sample),
             .dotprod => countNonAsciiDotProd(sample),
+            .sme => countNonAsciiSme(sample),
         };
         sink +%= count;
     }
@@ -150,8 +199,21 @@ pub fn countNonAsciiDotProd(bytes: []const u8) usize {
     return turbotoken_arm64_count_non_ascii_dotprod(bytes.ptr, bytes.len);
 }
 
+pub fn countNonAsciiSme(bytes: []const u8) usize {
+    if (bytes.len == 0) {
+        return 0;
+    }
+    if (!smeAvailable()) {
+        return countNonAsciiDotProd(bytes);
+    }
+    if (comptime build_options.enable_experimental_sme) {
+        return turbotoken_arm64_count_non_ascii_sme(bytes.ptr, bytes.len);
+    }
+    unreachable;
+}
+
 pub fn selectedCountNonAsciiKernel() CountKernel {
-    if (!dotprodAvailable()) {
+    if (!dotprodAvailable() and !smeAutoEnabled()) {
         return .neon;
     }
     count_kernel_once.call();
@@ -165,6 +227,7 @@ pub fn countNonAscii(bytes: []const u8) usize {
     return switch (selectedCountNonAsciiKernel()) {
         .neon => countNonAsciiNeon(bytes),
         .dotprod => countNonAsciiDotProd(bytes),
+        .sme => countNonAsciiSme(bytes),
     };
 }
 
@@ -254,7 +317,14 @@ test "aarch64 non-ascii kernels agree on result" {
 
     if (dotprodAvailable()) {
         try std.testing.expectEqual(scalar_count, countNonAsciiDotProd(sample));
-        const selected = selectedCountNonAsciiKernel();
-        try std.testing.expect(selected == .neon or selected == .dotprod);
+    }
+    if (smeAvailable()) {
+        try std.testing.expectEqual(scalar_count, countNonAsciiSme(sample));
+    }
+
+    const selected = selectedCountNonAsciiKernel();
+    try std.testing.expect(selected == .neon or selected == .dotprod or selected == .sme);
+    if (smeAvailable() and !std.process.hasEnvVarConstant("TURBOTOKEN_EXPERIMENTAL_SME_AUTO")) {
+        try std.testing.expect(selected != .sme);
     }
 }
