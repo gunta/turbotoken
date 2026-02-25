@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ensureDir, resolvePath } from "./_lib";
+import { commandExists, ensureDir, pythonExecutable, resolvePath, runCommand } from "./_lib";
 
 const FIXTURES_DIR = resolvePath("bench", "fixtures");
 
@@ -35,7 +35,29 @@ function createDecodeTokensFixture(force: boolean): void {
   }
 
   const text = readFileSync(sourcePath, "utf8");
-  const tokens = Array.from(Buffer.from(text, "utf8"));
+  const python = pythonExecutable();
+
+  if (!commandExists(python)) {
+    throw new Error("python is required to generate decode token fixtures");
+  }
+
+  const snippet = `
+import json
+import pathlib
+import sys
+
+sys.path.insert(0, "python")
+from turbotoken import get_encoding
+
+text = pathlib.Path("${sourcePath.replace(/\\/g, "\\\\")}").read_text()
+tokens = get_encoding("o200k_base").encode(text)
+print(json.dumps(tokens))
+`;
+  const run = runCommand(python, ["-c", snippet], { allowFailure: true });
+  if (run.code !== 0) {
+    throw new Error(`failed to generate token fixture: ${run.stderr || run.stdout}`);
+  }
+  const tokens = JSON.parse(run.stdout.trim()) as number[];
   writeFileSync(tokensPath, `${JSON.stringify(tokens)}\n`, "utf8");
 }
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync } from "node:fs";
-import { commandExists, resolvePath, runCommand, section } from "./_lib";
+import { commandExists, pythonExecutable, runCommand, section } from "./_lib";
 
 interface Task {
   name: string;
@@ -12,9 +11,7 @@ interface Task {
 const tasks: Task[] = [
   {
     name: "python-tests",
-    command: existsSync(resolvePath(".venv", "bin", "python"))
-      ? resolvePath(".venv", "bin", "python")
-      : "python3",
+    command: pythonExecutable(),
     args: ["-m", "pytest", "-q"],
     required: true,
   },

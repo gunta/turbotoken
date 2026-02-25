@@ -12,6 +12,7 @@
     "bench:ci": "bun run scripts/ci-benchmark.ts",
     "compat:report": "bun run scripts/compat-report.ts",
     "build:all": "bun run scripts/build-all.ts",
+    "build:wheels": "bun run scripts/build-wheels.ts",
     "fixtures": "bun run scripts/generate-fixture.ts",
     "charts": "bun run scripts/generate-charts.ts",
     "sync:upstream": "bun run scripts/sync-upstream.ts"

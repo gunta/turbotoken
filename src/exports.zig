@@ -1,4 +1,7 @@
 const std = @import("std");
+const Encoder = @import("encoder.zig").Encoder;
+const Decoder = @import("decoder.zig").Decoder;
+const rank_loader = @import("rank_loader.zig");
 
 pub export fn turbotoken_version() [*c]const u8 {
     return "0.1.0-dev";
@@ -64,6 +67,78 @@ pub export fn turbotoken_decode_utf8_bytes(
     return @as(isize, @intCast(token_len));
 }
 
+pub export fn turbotoken_encode_bpe_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    const tokens = enc.encodeWithRanks(allocator, text[0..text_len], &table) catch return -1;
+    defer allocator.free(tokens);
+
+    if (out_tokens == null) {
+        if (tokens.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(tokens.len));
+    }
+
+    if (out_cap < tokens.len) {
+        return -1;
+    }
+
+    @memcpy(out_tokens[0..tokens.len], tokens);
+    return @as(isize, @intCast(tokens.len));
+}
+
+pub export fn turbotoken_decode_bpe_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    tokens: [*c]const u32,
+    token_len: usize,
+    out_bytes: [*c]u8,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or tokens == null) {
+        return -1;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
+    defer table.deinit();
+
+    const dec = Decoder.init();
+    const bytes = dec.decodeWithRanks(allocator, tokens[0..token_len], &table) catch return -1;
+    defer allocator.free(bytes);
+
+    if (out_bytes == null) {
+        if (bytes.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(bytes.len));
+    }
+
+    if (out_cap < bytes.len) {
+        return -1;
+    }
+
+    @memcpy(out_bytes[0..bytes.len], bytes);
+    return @as(isize, @intCast(bytes.len));
+}
+
 test "count returns byte length for placeholder path" {
     const text = "hello";
     try std.testing.expectEqual(@as(isize, 5), turbotoken_count(text.ptr, text.len));
@@ -81,4 +156,29 @@ test "encode/decode utf8 byte placeholder path" {
     const decoded = turbotoken_decode_utf8_bytes(&tokens, tokens.len, &out, out.len);
     try std.testing.expectEqual(@as(isize, 3), decoded);
     try std.testing.expectEqualSlices(u8, "abc", &out);
+}
+
+test "encode/decode bpe path using provided ranks" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const needed = turbotoken_encode_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3, null, 0);
+    try std.testing.expectEqual(@as(isize, 2), needed);
+
+    var tokens: [2]u32 = undefined;
+    const written = turbotoken_encode_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3, &tokens, tokens.len);
+    try std.testing.expectEqual(@as(isize, 2), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, &tokens);
+
+    const bytes_needed = turbotoken_decode_bpe_from_ranks(ranks.ptr, ranks.len, &tokens, tokens.len, null, 0);
+    try std.testing.expectEqual(@as(isize, 3), bytes_needed);
+
+    var out: [3]u8 = undefined;
+    const decoded = turbotoken_decode_bpe_from_ranks(ranks.ptr, ranks.len, &tokens, tokens.len, &out, out.len);
+    try std.testing.expectEqual(@as(isize, 3), decoded);
+    try std.testing.expectEqualSlices(u8, "abb", &out);
 }

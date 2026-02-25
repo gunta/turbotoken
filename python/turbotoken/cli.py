@@ -51,7 +51,7 @@ def _cmd_info(_: argparse.Namespace) -> int:
         },
         "gpu_backend_available": _gpu.available(),
         "status": "scaffold",
-        "note": "Core encode/decode still use UTF-8 byte placeholder behavior until Zig BPE is wired.",
+        "note": "Python uses regex+BPE merge logic with cached .tiktoken ranks; Zig NEON/assembly acceleration is still pending.",
     }
     print(json.dumps(payload, ensure_ascii=True))
     return 0
@@ -90,7 +90,7 @@ def _cmd_bench(args: argparse.Namespace) -> int:
         "encode_ops_per_s": round(args.iterations / encode_s, 2) if encode_s > 0 else None,
         "decode_ops_per_s": round(args.iterations / decode_s, 2) if decode_s > 0 else None,
         "count_ops_per_s": round(args.iterations / count_s, 2) if count_s > 0 else None,
-        "status": "placeholder-benchmark",
+        "status": "python-bpe-benchmark",
     }
     print(json.dumps(payload, ensure_ascii=True))
     return 0

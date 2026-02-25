@@ -1,4 +1,5 @@
 const std = @import("std");
+const rank_loader = @import("rank_loader.zig");
 
 pub const bytes: usize = 4 * 1024 * 1024;
 pub const empty_key: u64 = std.math.maxInt(u64);
@@ -77,6 +78,21 @@ pub const PairCache = struct {
         return used;
     }
 
+    pub fn populateFromRankTable(self: *PairCache, table: *const rank_loader.RankTable) void {
+        for (table.entries.items) |entry| {
+            if (entry.token.len < 2) {
+                continue;
+            }
+
+            var split_at: usize = 1;
+            while (split_at < entry.token.len) : (split_at += 1) {
+                const left = table.get(entry.token[0..split_at]) orelse continue;
+                const right = table.get(entry.token[split_at..]) orelse continue;
+                _ = self.put(left, right, entry.rank);
+            }
+        }
+    }
+
     fn packPair(left: u32, right: u32) u64 {
         return (@as(u64, left) << 32) | @as(u64, right);
     }
@@ -112,4 +128,22 @@ test "pair cache clear resets entries" {
     cache.clear();
     try std.testing.expect(cache.get(10, 11) == null);
     try std.testing.expectEqual(@as(usize, 0), cache.usedSlots());
+}
+
+test "pair cache can be seeded from rank table tokens" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\YWJi 3
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    var cache = PairCache.init();
+    cache.populateFromRankTable(&table);
+    try std.testing.expectEqual(@as(?u32, 2), cache.get(0, 1));
+    try std.testing.expectEqual(@as(?u32, 3), cache.get(2, 1));
 }

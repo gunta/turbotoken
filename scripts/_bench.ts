@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import {
-  commandExists,
   dateTag,
   ensureDir,
   resolvePath,
@@ -78,6 +78,28 @@ function runManualBench(commands: BenchCommand[], warmup: number, runs: number):
   return results;
 }
 
+function resolveHyperfineCommand(): string | null {
+  const home = process.env.HOME ?? "";
+  const candidates = [
+    "hyperfine",
+    "/opt/homebrew/bin/hyperfine",
+    `${home}/.proto/tools/hyperfine/1.20.0/hyperfine-v1.20.0-aarch64-apple-darwin/hyperfine`,
+    `${home}/.proto/tools/hyperfine/1.19.0/hyperfine-v1.19.0-aarch64-apple-darwin/hyperfine`,
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate.includes("/") && !existsSync(candidate)) {
+      continue;
+    }
+    const probe = runCommand(candidate, ["--version"], { allowFailure: true });
+    if (probe.code === 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 export function runBench(options: BenchOptions): number {
   const warmup = options.warmup ?? 3;
   const minRuns = options.minRuns ?? 10;
@@ -92,7 +114,8 @@ export function runBench(options: BenchOptions): number {
   const taggedName = `${options.name}-${dateTag()}`;
   const jsonPath = resolve(resultsDir, `${taggedName}.json`);
 
-  if (commandExists("hyperfine")) {
+  const hyperfine = resolveHyperfineCommand();
+  if (hyperfine !== null) {
     section(`Hyperfine: ${options.name}`);
 
     const args = [
@@ -108,7 +131,7 @@ export function runBench(options: BenchOptions): number {
       args.push("--command-name", item.name, item.command);
     }
 
-    const result = runCommand("hyperfine", args, { allowFailure: true });
+    const result = runCommand(hyperfine, args, { allowFailure: true });
     const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
     if (output.length > 0) {
       console.log(output);

@@ -7,7 +7,42 @@ SIMD backends, and a compatibility-focused Python API.
 
 ## Status
 
-Project scaffold initialized. Core implementation is in progress.
+- Early implementation, actively under development.
+- Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
+- Native Zig acceleration paths (NEON/AVX/GPU) are still in progress.
+- Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`
+  on the tracked compatibility corpus.
+
+## Quick Start
+
+```bash
+bun install
+python3 -m pip install -e ".[dev]"
+
+zig build
+zig build test
+python3 -m pytest -q
+bun run test
+bun run build:wheels
+```
+
+## Latest Benchmark Snapshot (2026-02-24, macOS ARM64)
+
+All numbers below come from Hyperfine output in `bench/results/`.
+
+| Workload | Mean time |
+|---|---:|
+| startup (`bench-startup`) | 139.3 ms |
+| count 100KB (`bench-count`) | 144.3 ms |
+| encode 100KB (`bench-encode`) | 148.7 ms |
+| decode 100KB-equivalent (`bench-decode`) | 181.9 ms |
+| encode 1MB (`bench-bigfile`) | 198.8 ms |
+| parallel count (512 items, 4 workers) (`bench-parallel`) | 1.570 s |
+
+Comparison snapshot (`bench-comparison`):
+- `turbotoken-encode-100kb`: 147.1 ms
+- `tiktoken-encode-100kb`: 195.0 ms
+- Speedup in this run: ~1.33x for turbotoken on the measured workload.
 
 ## Planned Backends
 
@@ -20,4 +55,5 @@ Project scaffold initialized. Core implementation is in progress.
 
 ## Repository Layout
 
-See [PRD.md](./PRD.md) and [ARCHITECTURE.md](./ARCHITECTURE.md) for details.
+See [docs/PRD.md](./docs/PRD.md), [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md),
+and [docs/BENCHMARKS.md](./docs/BENCHMARKS.md) for details.

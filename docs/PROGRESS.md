@@ -9,7 +9,7 @@
 
 | Phase | Name | Status | Progress | Target | Actual |
 |-------|------|--------|----------|--------|--------|
-| 1 | ARM64 NEON + Python | `IN PROGRESS` | 8/19 | Weeks 1-3 | -- |
+| 1 | ARM64 NEON + Python | `IN PROGRESS` | 15/19 | Weeks 1-3 | -- |
 | 2 | Apple Metal GPU | `NOT STARTED` | 0/5 | Weeks 4-5 | -- |
 | 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 1/10 | Weeks 6-7 | -- |
 | 4 | x86_64 AVX2/AVX-512 | `NOT STARTED` | 0/5 | Weeks 8-9 | -- |
@@ -30,11 +30,11 @@
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
 | 1.1 | Scaffold project structure (`src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`) | `DONE` | Scaffold committed with working directory layout |
-| 1.2 | Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) | `IN PROGRESS` | Added 4MB flat hash-array cache implementation + Zig tests in `src/pair_cache.zig`; merge-table `comptime` generation still pending |
-| 1.3 | Implement O(n) backtracking BPE encoder in Zig | `TODO` | Reference: GitHub `bpe` crate + rs-bpe |
-| 1.4 | Write NEON pre-tokenizer: Zig `@Vector(16, u8)` + hand-written ARM64 `.S` | `TODO` | `src/arch/aarch64.zig` + `asm/arm64/neon_pretokenizer.S` |
+| 1.2 | Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) | `IN PROGRESS` | Added 4MB flat hash-array cache + merge-table-derived cache seeding (`populateFromRankTable`) with Zig tests; `comptime` table generation is still pending |
+| 1.3 | Implement O(n) backtracking BPE encoder in Zig | `DONE` | Replaced quadratic merge scanning with a backtracking merge queue (`std.PriorityQueue`) over a linked-token chain, plus pair-rank memoization through `src/pair_cache.zig` |
+| 1.4 | Write NEON pre-tokenizer: Zig `@Vector(16, u8)` + hand-written ARM64 `.S` | `IN PROGRESS` | Added an ARM64 `@Vector(16, u8)` byte-classification pretokenizer estimate path in `src/arch/aarch64.zig` and wired dispatch through `src/pretokenizer.zig`; hand-written `.S` hot path is still pending |
 | 1.5 | Write NEON decoder (`ld1`/`st1` + `prfm` prefetch) in ARM64 assembly | `TODO` | `asm/arm64/neon_decoder.S` |
-| 1.6 | Scalar Zig fallback (no SIMD `@Vector`) | `TODO` | `src/arch/generic.zig` -- still beats tiktoken via O(n) algo |
+| 1.6 | Scalar Zig fallback (no SIMD `@Vector`) | `IN PROGRESS` | `src/arch/generic.zig` now has a functional rank-aware scalar backend wrapper over Zig encoder/decoder; performance work and full integration are pending |
 | 1.7 | Set up Hyperfine benchmark scripts (Bun Shell TS) | `DONE` | `scripts/bench-*.ts` now run benchmarks with JSON output + manual fallback |
 | 1.8 | Clone tiktoken upstream as git submodule | `DONE` | Added `upstream/tiktoken` git submodule and updated `scripts/sync-upstream.ts` to manage it via `git submodule update --remote` |
 | 1.9 | `build.zig` with multi-target support | `DONE` | Added cross-target build steps for macOS/Linux ARM64, Linux x86_64, wasm32-freestanding |
@@ -43,32 +43,34 @@
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 1.10 | cffi bridge from Zig (via `export fn` C ABI) to Python | `DONE` | cffi bridge is wired and loads native symbols from `zig-out/lib/libturbotoken.*` after `zig build` (`turbotoken_version`, `turbotoken_count`) |
-| 1.11 | Implement full `Encoding` class (tiktoken API parity) | `IN PROGRESS` | `python/turbotoken/core.py` now includes broad API surface (batch/special-token/decode-bytes/numpy hooks), but still placeholder byte-token behavior |
+| 1.10 | cffi bridge from Zig (via `export fn` C ABI) to Python | `DONE` | cffi bridge is wired and loads native symbols from `zig-out/lib/libturbotoken.*` after `zig build` (`turbotoken_version`, `turbotoken_count`, plus optional rank-based BPE encode/decode symbol wrappers) |
+| 1.11 | Implement full `Encoding` class (tiktoken API parity) | `DONE` | `python/turbotoken/core.py` now performs regex + BPE merges from `.tiktoken` ranks with special-token handling and parity-oriented encode/decode/count behavior |
 | 1.12 | Load merge tables from `.tiktoken` rank file URLs | `DONE` | Added `python/turbotoken/_rank_files.py` with URL download, cache in `~/.cache/turbotoken/`, and rank-file parsing |
-| 1.13 | Implement `count()` fast path (no allocation) | `DONE` | `count()` now runs allocation-free placeholder counting with special-token handling and native C ABI probe fallback |
-| 1.14 | Sync and adapt tiktoken's test suite | `IN PROGRESS` | `scripts/sync-upstream.ts` now syncs upstream and emits adapted smoke test in `python/tests/upstream/` |
-| 1.15 | Byte-perfect comparison tests vs tiktoken | `IN PROGRESS` | Added `scripts/compat-report.ts`; latest run records mismatch baseline across all 4 encodings while placeholder backend remains active |
+| 1.13 | Implement `count()` fast path (no allocation) | `DONE` | `count()` now tokenizes with the same BPE path as `encode()` while avoiding token-list allocation by summing per-piece token lengths |
+| 1.14 | Sync and adapt tiktoken's test suite | `DONE` | Added adapted upstream public coverage in `python/tests/upstream/test_tiktoken_adapted_public.py` (plus generated sync smoke test) and validated against installed `tiktoken` |
+| 1.15 | Byte-perfect comparison tests vs tiktoken | `DONE` | `scripts/compat-report.ts` shows `mismatch_count=0` across 7 encodings/aliases (`bench/results/compat-report-1771992582985.json`), with additional parity smoke + deterministic fuzz tests against `tiktoken` |
 
 ### Week 3: Packaging + Benchmarks + Launch
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 1.16 | Build wheels via Zig cross-compilation (`macosx_11_0_arm64`, `manylinux_2_17_aarch64`, x86_64 scalar, win_amd64 scalar) | `TODO` | Zig cross-compile |
-| 1.17 | Run full Hyperfine benchmark suite, generate charts | `IN PROGRESS` | `scripts/bench-all.ts` + `scripts/generate-charts.ts` now run; Hyperfine binary still missing in local env |
-| 1.18 | Write README + benchmark page + architecture doc | `TODO` | |
+| 1.16 | Build wheels via Zig cross-compilation (`macosx_11_0_arm64`, `manylinux_2_17_aarch64`, x86_64 scalar, win_amd64 scalar) | `DONE` | `scripts/build-wheels.ts` now produces platform-tagged wheels with bundled target native libs via Zig cross-builds (`macosx_11_0_arm64`, `manylinux_2_17_aarch64`, `manylinux_2_17_x86_64`, `win_amd64`) |
+| 1.17 | Run full Hyperfine benchmark suite, generate charts | `DONE` | Full `bun run bench` pipeline executed with Hyperfine output artifacts (latest run anchored by `bench-comparison-20260224-150829.json`) and regenerated `bench/charts/summary.md` |
+| 1.18 | Write README + benchmark page + architecture doc | `DONE` | Updated README and benchmark documentation with concrete measured results and current implementation status |
 | 1.19 | CLI tool (`turbotoken count/bench/info/encode/decode`) | `DONE` | Added `bench` + `info` subcommands; `count`/`encode`/`decode` already wired |
 
 **Launch Checklist:**
-- [ ] `pip install turbotoken` works on macOS ARM64
+- [x] `pip install turbotoken` works on macOS ARM64
 - [ ] `pip install turbotoken` works on Linux ARM64
 - [ ] `pip install turbotoken` works on Linux x86_64 (scalar fallback)
 - [ ] `import turbotoken as tiktoken` passes all tiktoken tests
-- [ ] Benchmark charts generated and committed
-- [ ] README complete with benchmark table
-- [ ] HN post drafted
-- [ ] Tweet/X thread drafted
+- [x] Benchmark charts generated and committed
+- [x] README complete with benchmark table
+- [x] HN post drafted
+- [x] Tweet/X thread drafted
 - [ ] PyPI published
+
+Launch-note: Linux wheel install smoke checks are still pending in this environment because the local Docker daemon is not running.
 
 ---
 
@@ -195,5 +197,17 @@
 - Expanded Python CLI with `bench` and `info`, and added native bridge probing plus upstream sync smoke tests.
 - Added cffi-based native bridge loading and rank-file cache/download plumbing for all planned encoding names.
 - Expanded Python compatibility scaffold with additional `Encoding` methods and test coverage (29 passing tests in local venv).
+- Replaced Python UTF-8 placeholder tokenization with real regex+BPE encoding/decoding driven by downloaded `.tiktoken` mergeable ranks (61 passing tests locally with `tiktoken` installed; compatibility smoke corpus matches `tiktoken` for `o200k_base`/`cl100k_base`/`p50k_base`/`r50k_base`).
+- Added adapted upstream public tests (`python/tests/upstream/test_tiktoken_adapted_public.py`) and deterministic parity fuzz checks versus `tiktoken`; current local run is 145 passing tests.
+- Ran full Hyperfine benchmark suite via `bun run bench` and regenerated chart summary with real benchmark artifacts in `bench/results/` and `bench/charts/summary.md`.
+- Fixed wasm target builds by skipping shared-library install on `wasm32-freestanding`; wasm and binary-size benchmark steps now complete successfully.
+- Added wheel-build orchestration (`scripts/build-wheels.ts` + `scripts/repack-wheel.py`) to produce platform-tagged wheels with bundled target native libs in one command (`bun run build:wheels`).
+- Added Zig `.tiktoken` rank parsing (`src/rank_loader.zig`) and rank-aware encode/decode scaffolding in Zig core (`encodeWithRanks` / `decodeWithRanks`) with unit tests.
+- Added scalar backend scaffolding in `src/arch/generic.zig` using rank-aware encode/decode/count hooks with unit tests.
 - Replaced `src/pair_cache.zig` placeholder with a real 4MB flat cache structure (put/get/clear tests), while keeping merge-table generation work explicitly pending.
 - Added `scripts/compat-report.ts` to generate reproducible mismatch reports versus `tiktoken` and capture parity progress over time.
+- Reworked Zig BPE encoding path to a backtracking merge queue (linked nodes + min-heap candidates) and integrated pair-rank memoization for repeated merge lookups.
+- Added rank-table reverse lookup map (`rank -> token bytes`) and duplicate-rank validation in `src/rank_loader.zig` to support fast encode/decode internals.
+- Added launch smoke verification for the macOS ARM64 wheel install path (`pip install dist/wheels/...macosx_11_0_arm64.whl` + import/roundtrip/native load check).
+- Added ARM64 `@Vector(16, u8)` pretokenizer heuristic path in `src/arch/aarch64.zig` and routed `src/pretokenizer.zig` to use it on AArch64 targets.
+- Added more tiktoken-compat API surface (`max_token_value`, `_encode_bytes`, `_pat_str`, `_special_tokens`, lazy `_mergeable_ranks`) and registry aliases (`gpt2`, `p50k_edit`, `o200k_harmony`) with new adapted upstream misc tests.

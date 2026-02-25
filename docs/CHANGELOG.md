@@ -18,19 +18,27 @@
   - ARCHITECTURE.md -- technical decisions and architecture records (10 ADRs)
   - WASM-EXPLORATION.md -- Zig (primary) vs MoonBit vs Emscripten comparison
   - UPSTREAM-SYNC.md -- strategy for syncing tiktoken/rs-bpe/GitHub bpe tests
+  - launch-hn.md and launch-x-thread.md -- launch copy drafts grounded in current project status
   - CHANGELOG.md -- this file
 - Bun automation scaffolding in `scripts/`
   - Executable benchmark scripts with JSON output and manual fallback when Hyperfine is unavailable
   - `scripts/test-all.ts`, `scripts/build-all.ts`, `scripts/ci-benchmark.ts`, `scripts/generate-fixture.ts`, and `scripts/generate-charts.ts`
+  - `scripts/build-wheels.ts` and `scripts/repack-wheel.py` to produce platform-tagged wheels with bundled native libraries
   - `scripts/sync-upstream.ts` to clone/update upstream repos and emit adapted upstream smoke tests
   - `scripts/compat-report.ts` to compare token outputs against `tiktoken` and track parity deltas
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
 - Python CLI coverage for `turbotoken bench` and `turbotoken info`
 - Native bridge probe in `python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
+- Native bridge wrappers for rank-based BPE encode/decode C ABI exports (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) with graceful fallback when symbols are unavailable
 - Shared Zig library artifact installed by `zig build` (`libturbotoken`), with exported placeholder C ABI symbols for count/encode/decode byte paths
 - Rank-file cache/download support in `python/turbotoken/_rank_files.py` (`~/.cache/turbotoken/*.tiktoken`)
+- Optional tiktoken parity smoke tests in `python/tests/test_tiktoken_parity_smoke.py` (auto-skips when `tiktoken` is not installed)
+- Deterministic tiktoken parity fuzz tests in `python/tests/test_tiktoken_parity_fuzz.py`
+- Adapted upstream public test coverage in `python/tests/upstream/test_tiktoken_adapted_public.py`
+- Additional adapted upstream misc/compat coverage in `python/tests/upstream/test_tiktoken_adapted_misc.py`
 - Multi-target build steps in `build.zig` for `aarch64-macos`, `aarch64-linux`, `x86_64-linux`, and `wasm32-freestanding`
 - 4MB flat pair-cache scaffold implementation in Zig (`src/pair_cache.zig`) with `put/get/clear` tests
+- Merge-table-derived pair-cache seeding (`populateFromRankTable`) with coverage for split-derived pair mappings
 
 ### Changed
 - Core language: C + Assembly -> **Zig + Assembly** (ADR-001)
@@ -49,11 +57,28 @@
 - WASM-EXPLORATION.md updated: Zig primary, MoonBit/Emscripten comparison only
 - `package.json` scripts now run real test/bench/build helpers instead of TODO placeholders
 - `js/tests/smoke.test.ts` now uses Bun test assertions instead of side-effect checks
-- Python `Encoding` scaffold expanded with broader tiktoken-like methods (`encode_batch`, `decode_bytes`, `decode_batch`, `encode_to_numpy`, `token_byte_values`, `count_batch`)
-- `Encoding.count()` now has an allocation-free placeholder path with special-token handling and optional native C ABI fast path
+- Python `Encoding` now runs real regex+BPE tokenization using downloaded `.tiktoken` mergeable ranks (including `allowed_special`/`disallowed_special`, batch helpers, decode APIs, numpy export, and token-byte lookup)
+- `Encoding.count()` now shares the BPE path with `encode()` while avoiding token-list allocation by summing per-piece token counts
 - `build.zig` now supports Zig's modern build API shape (`addLibrary` + `root_module`) and local `zig build`/`zig build test` pass on Zig 0.15
 - Updated declared Zig toolchain baseline to `>= 0.15.0` in `build.zig.zon` and `AGENTS.md`
 - `src/encoder.zig`, `src/decoder.zig`, and `src/exports.zig` moved from `NotImplemented` stubs to executable placeholder byte behavior
+- Python package dependencies now include `regex` for Unicode property tokenization patterns used by OpenAI encodings
+- Compatibility smoke report now reaches zero mismatches versus `tiktoken` across `o200k_base`, `cl100k_base`, `p50k_base`, and `r50k_base` for the tracked corpus
+- `Encoding` now includes additional parity helpers (`decode_tokens_bytes`, `decode_with_offsets`) and expanded model-name mapping behavior closer to `tiktoken` expectations
+- Registry now includes `tiktoken`-style encoding aliases (`gpt2`, `p50k_edit`, `o200k_harmony`) and model mappings that resolve to those names
+- Python `Encoding` now exposes extra internal-compat members used by upstream tests (`max_token_value`, `_encode_bytes`, `_pat_str`, `_special_tokens`, lazy `_mergeable_ranks`)
+- Zig core now includes `.tiktoken` rank parsing (`src/rank_loader.zig`) and rank-aware encode/decode scaffolding (`encodeWithRanks`, `decodeWithRanks`) with unit tests
+- Zig rank loader now keeps constant-time reverse rank lookups (`rank -> token bytes`) and validates duplicate ranks during parsing
+- Zig rank-aware encoder now uses a backtracking merge queue (linked token nodes + priority queue candidates) with pair-rank memoization instead of quadratic full-scan merging
+- Zig exports now include rank-driven BPE encode/decode helpers (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) for native integration experiments
+- Scalar architecture fallback now has functional rank-aware backend hooks in `src/arch/generic.zig` (`encode`, `decode`, `count`) with unit tests
+- ARM64 architecture module now includes a real `@Vector(16, u8)` pretokenizer estimation path, and `src/pretokenizer.zig` dispatches to it on AArch64 targets
+- Benchmark scripts now consistently use the repo venv Python interpreter when available
+- Full benchmark suite now runs with real Hyperfine measurements and regenerated chart summaries (`bun run bench`)
+- `build.zig` now skips shared-library installation for `wasm32-freestanding`, fixing wasm cross-target build failures
+- README and benchmark docs now include concrete measured results from latest local runs
+- `.gitignore` now excludes `dist/` wheel output artifacts from local packaging runs
+- Verified macOS ARM64 wheel smoke path via local `pip install` + import/roundtrip/native bridge load checks
 
 ### Research Completed
 - BPE algorithm: O(n) backtracking (GitHub bpe crate, rs-bpe)

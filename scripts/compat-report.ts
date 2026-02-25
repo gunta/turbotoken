@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync } from "node:fs";
-import { resolvePath, runCommand, section, writeJson } from "./_lib";
+import { pythonExecutable, resolvePath, runCommand, section, writeJson } from "./_lib";
 
-const python = existsSync(resolvePath(".venv", "bin", "python"))
-  ? resolvePath(".venv", "bin", "python")
-  : "python3";
+const python = pythonExecutable();
 
 section("Compatibility report");
 

@@ -17,7 +17,7 @@ def test_encode_ordinary_batch_matches_single_encode_ordinary() -> None:
 
 def test_decode_batch_matches_single_decode() -> None:
     enc = get_encoding("o200k_base")
-    batch = [[104, 101, 108, 108, 111], [119, 111, 114, 108, 100]]
+    batch = [enc.encode("hello"), enc.encode("world")]
     assert enc.decode_batch(batch, num_threads=2) == [enc.decode(t) for t in batch]
 
 

@@ -100,8 +100,12 @@ pub fn build(b: *std.Build) void {
 
     const lib = addStaticLibraryCompat(b, target, optimize);
     b.installArtifact(lib);
-    const shared_lib = addSharedLibraryCompat(b, target, optimize);
-    b.installArtifact(shared_lib);
+
+    const is_wasm_freestanding = target.result.cpu.arch == .wasm32 and target.result.os.tag == .freestanding;
+    if (!is_wasm_freestanding) {
+        const shared_lib = addSharedLibraryCompat(b, target, optimize);
+        b.installArtifact(shared_lib);
+    }
 
     const tests = addTestCompat(b, target, optimize);
 

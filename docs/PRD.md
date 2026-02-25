@@ -409,7 +409,7 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 **Week 1: Core Zig + ARM64 Assembly**
 - [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`
 - [ ] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
-- [ ] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
+- [x] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
 - [ ] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
 - [ ] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch (`.S` assembly)
 - [ ] Scalar Zig fallback (no SIMD `@Vector` -- still 4x tiktoken via better algorithm)
@@ -419,16 +419,16 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 
 **Week 2: Python Wrapper + Compatibility**
 - [x] cffi bridge from Zig (Zig exports C ABI via `export fn`) to Python
-- [ ] Implement full `Encoding` class matching tiktoken API (Section 4.1)
+- [x] Implement full `Encoding` class matching tiktoken API (Section 4.1)
 - [x] Load merge tables from tiktoken's `.tiktoken` rank file URLs (cache in `~/.cache/turbotoken/`)
 - [x] Implement `count()` fast path (no allocation)
-- [ ] Sync and adapt tiktoken's own test suite (see Section 6.4)
-- [ ] Byte-perfect comparison against tiktoken on full test corpus
+- [x] Sync and adapt tiktoken's own test suite (see Section 6.4)
+- [x] Byte-perfect comparison against tiktoken on full test corpus
 
 **Week 3: Packaging + Benchmarks + Launch**
-- [ ] Build wheels via Zig cross-compilation: `macosx_11_0_arm64`, `manylinux_2_17_aarch64` (NEON), `manylinux_2_17_x86_64` (scalar), `win_amd64` (scalar)
-- [ ] Run full Hyperfine benchmark suite, generate charts
-- [ ] Write README, benchmark page, architecture doc
+- [x] Build wheels via Zig cross-compilation: `macosx_11_0_arm64`, `manylinux_2_17_aarch64` (NEON), `manylinux_2_17_x86_64` (scalar), `win_amd64` (scalar)
+- [x] Run full Hyperfine benchmark suite, generate charts
+- [x] Write README, benchmark page, architecture doc
 - [x] CLI tool (`turbotoken count`, `turbotoken bench`, `turbotoken info`)
 - [ ] **LAUNCH: PyPI + GitHub + HN + Twitter**
 

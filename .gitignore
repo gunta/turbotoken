@@ -20,6 +20,7 @@ zig-out/
 *.dylib
 *.dll
 *.wasm
+dist/
 
 # Bench outputs
 bench/results/*.json

@@ -12,7 +12,8 @@ license = { text = "MIT" }
 authors = [{ name = "turbotoken contributors" }]
 dependencies = [
   "typing-extensions>=4.0; python_version < '3.11'",
-  "cffi>=1.16"
+  "cffi>=1.16",
+  "regex>=2024.0.0"
 ]
 
 [project.optional-dependencies]

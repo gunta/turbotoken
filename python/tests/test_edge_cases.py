@@ -15,7 +15,7 @@ def test_empty_string() -> None:
 def test_decode_rejects_out_of_range_token() -> None:
     enc = get_encoding("o200k_base")
     with pytest.raises(ValueError):
-        enc.decode([9999])
+        enc.decode([enc.n_vocab + 1])
 
 
 def test_decode_single_token_bytes_for_special_token() -> None:

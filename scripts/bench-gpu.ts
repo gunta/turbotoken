@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { resolvePath, section, writeJson } from "./_lib";
+import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU benchmark");
+const python = pythonExecutable();
 
 const isAvailableResult = Bun.spawnSync({
   cmd: [
-    "python3",
+    python,
     "-c",
     "import sys;sys.path.insert(0,'python');from turbotoken import _gpu; raise SystemExit(0 if _gpu.available() else 1)",
   ],

@@ -12,4 +12,4 @@ def test_cli_bench_smoke(capsys) -> None:
 
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["iterations"] == 3
-    assert payload["status"] == "placeholder-benchmark"
+    assert payload["status"] == "python-bpe-benchmark"

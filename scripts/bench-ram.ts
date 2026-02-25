@@ -1,16 +1,17 @@
 #!/usr/bin/env bun
-import { resolvePath, section, writeJson } from "./_lib";
+import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 import { ensureFixtures } from "./_fixtures";
 
 ensureFixtures();
 section("Memory benchmark");
+const python = pythonExecutable();
 
 const pythonSnippet =
   "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').encode(text)";
 
 const timeFlag = process.platform === "darwin" ? "-l" : "-v";
 const result = Bun.spawnSync({
-  cmd: ["/usr/bin/time", timeFlag, "python3", "-c", pythonSnippet],
+  cmd: ["/usr/bin/time", timeFlag, python, "-c", pythonSnippet],
   cwd: resolvePath(),
   stdout: "pipe",
   stderr: "pipe",
@@ -30,7 +31,7 @@ writeJson(outputPath, {
   platform: process.platform,
   exitCode: result.exitCode,
   maxRssKb,
-  command: `python3 -c <snippet>`,
+  command: `${python} -c <snippet>`,
   stdout,
   stderr,
 });

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { getEncoding } from "../src/index";
 import { encodingForModel } from "../src/index";
 
-test("encoding roundtrip works with placeholder byte tokenizer", () => {
+test("encoding roundtrip works with BPE-backed tokenizer", () => {
   const enc = getEncoding("o200k_base");
   const input = "hello";
   expect(enc.decode(enc.encode(input))).toBe(input);

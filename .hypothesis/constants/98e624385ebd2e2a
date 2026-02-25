@@ -1,0 +1,4 @@
+# file: /Users/a12907/Documents/GitHub/turbotoken/python/turbotoken/core.py
+# hypothesis_version: 6.151.9
+
+[128, 192, 100000, '(?!x)x', 'T', 'U', 'all', 'replace', 'strict', 'surrogatepass', 'utf-16', 'utf-8', '|']

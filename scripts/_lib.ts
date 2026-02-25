@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,6 +23,11 @@ export interface RunResult {
 
 export function resolvePath(...segments: string[]): string {
   return resolve(repoRoot, ...segments);
+}
+
+export function pythonExecutable(): string {
+  const venvPython = resolvePath(".venv", "bin", "python");
+  return existsSync(venvPython) ? venvPython : "python3";
 }
 
 export function ensureDir(path: string): void {

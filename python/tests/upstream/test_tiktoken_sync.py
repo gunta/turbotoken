@@ -18,6 +18,6 @@ import turbotoken
         "",
     ],
 )
-def test_turbotoken_roundtrip_matches_placeholder_contract(text: str) -> None:
+def test_turbotoken_roundtrip_contract(text: str) -> None:
     enc = turbotoken.get_encoding("o200k_base")
     assert enc.decode(enc.encode(text)) == text

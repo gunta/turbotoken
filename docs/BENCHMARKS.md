@@ -42,6 +42,47 @@
 
 ---
 
+## Latest Measured Run (2026-02-24, macOS ARM64)
+
+These values are from the latest `bun run bench` execution and corresponding JSON artifacts:
+
+- `bench/results/bench-startup-20260224-150737.json`
+- `bench/results/bench-count-20260224-150741.json`
+- `bench/results/bench-encode-20260224-150745.json`
+- `bench/results/bench-decode-20260224-150749.json`
+- `bench/results/bench-throughput-20260224-150753.json`
+- `bench/results/bench-bigfile-20260224-150803.json`
+- `bench/results/bench-parallel-20260224-150808.json`
+- `bench/results/bench-comparison-20260224-150829.json`
+- `bench/results/bench-ram-1771945717135.json`
+- `bench/results/bench-binary-size-1771945717172.json`
+- `bench/results/bench-wasm-1771945718011.json`
+
+| Workload | Mean |
+|---|---:|
+| startup (`python-import-and-first-encode`) | 139.3 ms |
+| count 100KB | 144.3 ms |
+| encode 100KB | 148.7 ms |
+| decode 100KB-equivalent token list | 181.9 ms |
+| encode 1MB | 198.8 ms |
+| parallel count (512 items, 4 workers) | 1.570 s |
+
+Comparison (`bench-comparison`):
+- turbotoken encode 100KB: 147.1 ms
+- tiktoken encode 100KB: 195.0 ms
+- turbotoken ran ~1.33x faster on this workload in this run.
+
+Other measured artifacts from the same run:
+- peak RSS for 1MB encode (`bench-ram`): 91,840 KB
+- cross-target static library size (`bench-binary-size`):
+  - `aarch64-macos`: 1,412 bytes
+  - `aarch64-linux`: 1,922 bytes
+  - `x86_64-linux`: 1,890 bytes
+  - `wasm32-freestanding`: 1,030 bytes
+- wasm build artifact (`bench-wasm`): 1,030 bytes (`exitCode=0`)
+
+---
+
 ## Baseline Measurements (Competitors)
 
 > Measured on our M4 Max. These are the numbers to beat.

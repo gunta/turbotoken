@@ -12,6 +12,8 @@ comptime {
     _ = exports.turbotoken_count;
     _ = exports.turbotoken_encode_utf8_bytes;
     _ = exports.turbotoken_decode_utf8_bytes;
+    _ = exports.turbotoken_encode_bpe_from_ranks;
+    _ = exports.turbotoken_decode_bpe_from_ranks;
 }
 
 test "scaffold compiles" {
