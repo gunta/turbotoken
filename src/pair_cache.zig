@@ -25,7 +25,7 @@ pub const PairCache = struct {
 
     extern fn turbotoken_arm64_hash_crc32_u64(key: u64) u64;
 
-    var selected_hash_mode: HashMode = .rapidhash;
+    var selected_hash_mode: HashMode = defaultHashMode();
     var selected_hash_mode_once = std.once(initHashMode);
 
     entries: [entry_count]Entry align(64),
@@ -149,9 +149,13 @@ pub const PairCache = struct {
         return selected_hash_mode;
     }
 
+    fn defaultHashMode() HashMode {
+        return if (comptime aarch64_crc_supported) .crc32 else .rapidhash;
+    }
+
     fn initHashMode() void {
         const mode = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_PAIR_CACHE_HASH") catch {
-            selected_hash_mode = .rapidhash;
+            selected_hash_mode = defaultHashMode();
             return;
         };
         defer std.heap.page_allocator.free(mode);
@@ -164,7 +168,7 @@ pub const PairCache = struct {
             selected_hash_mode = if (comptime aarch64_crc_supported) .crc32 else .rapidhash;
             return;
         }
-        selected_hash_mode = .rapidhash;
+        selected_hash_mode = defaultHashMode();
     }
 
     fn rankTableFingerprint(table: *const rank_loader.RankTable, limit: u32) u64 {
@@ -247,6 +251,11 @@ test "pair cache known seed metadata is present" {
     inline for (generated_seeds.seed_sets) |seed_set| {
         try std.testing.expect(seed_set.pairs.len > 0);
     }
+}
+
+test "pair cache default hash mode follows target capability" {
+    const expected: PairCache.HashMode = if (comptime PairCache.aarch64_crc_supported) .crc32 else .rapidhash;
+    try std.testing.expectEqual(expected, PairCache.defaultHashMode());
 }
 
 test "pair cache known seed matching is no-op for unknown tables" {

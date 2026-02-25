@@ -17,7 +17,7 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 
 | ID | Area | Idea | Status |
 |---|---|---|---|
-| CPU-001 | Pair-cache hashing | `rapidhash` default with ARM64 `crc32` optional for `slotIndex` | `DONE (second pass)` |
+| CPU-001 | Pair-cache hashing | `crc32` default on AArch64+CRC with `rapidhash` fallback elsewhere | `DONE (second pass)` |
 | CPU-002 | Merge algorithm | Queue strategy experiment toward O(N)-leaning merge scheduling | `DONE (first pass)` |
 | CPU-003 | Pretokenizer | NEON-like ASCII boundary classification (`packed classes`) | `DONE (first pass)` |
 | GPU-001 | Metal BPE | SIMD-group min-rank reduction in BPE merge loop | `DONE (first pass, reverted)` |
@@ -34,8 +34,9 @@ Evaluate pair-cache slot hash choices (`rapidhash`, ARM64 `crc32`) and promote a
 
 - Added ARM64 CRC32 helper: `asm/arm64/hash_crc32.S` (`turbotoken_arm64_hash_crc32_u64`).
 - Added runtime hash selector in `src/pair_cache.zig`:
-  - `TURBOTOKEN_PAIR_CACHE_HASH=rapidhash` (default)
-  - `TURBOTOKEN_PAIR_CACHE_HASH=crc32` (opt-in on AArch64+CRC builds)
+  - default: `crc32` on AArch64+CRC, `rapidhash` otherwise
+  - `TURBOTOKEN_PAIR_CACHE_HASH=rapidhash` (force software hash)
+  - `TURBOTOKEN_PAIR_CACHE_HASH=crc32` (force CRC32 on supported AArch64; falls back to `rapidhash` elsewhere)
 - Ported `rapidhash` v3 into `src/hash.zig` and switched rank-payload cache hashing in `src/exports.zig` to the same function.
 - Added dedicated benchmark runner: `scripts/bench-pair-cache-hash.ts`.
 
@@ -62,8 +63,8 @@ bun run scripts/bench-pair-cache-hash.ts
 | `rapidhash-encode-bpe-100kb` | `1.463 s` |
 | `crc32-encode-bpe-100kb` | `1.429 s` |
 
-Decision: `adopt` (`rapidhash` default) and `keep optional` (`crc32`).
-Reason: `rapidhash` is now the only generic software hash mode; ARM64 `crc32` remains an architecture-specific optional mode for direct A/B checks.
+Decision: `adopt` (`crc32` default on supported AArch64; `rapidhash` otherwise).
+Reason: larger-file A/B runs showed repeatable wins for ARM64 `crc32` in this environment while preserving `rapidhash` as the portable fallback.
 
 ## Experiment CPU-002 (2026-02-25)
 

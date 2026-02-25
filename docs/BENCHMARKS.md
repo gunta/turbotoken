@@ -85,8 +85,8 @@ Direct hash strategy comparison from:
 | native encode BPE 100KB | 1.463 s | 1.429 s | crc32 ~2.3% faster in this run |
 
 Decision for now:
-- use `rapidhash` as default.
-- keep ARM64 `crc32` as an opt-in mode for direct A/B checks (`TURBOTOKEN_PAIR_CACHE_HASH=crc32`).
+- default to `crc32` on AArch64+CRC and `rapidhash` on other targets.
+- keep both explicit overrides for A/B checks (`TURBOTOKEN_PAIR_CACHE_HASH=rapidhash|crc32`).
 
 ---
 
