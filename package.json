@@ -18,6 +18,8 @@
     "bench:native-pretokenizer:sme-auto": "bun run scripts/bench-native-pretokenizer.ts --mode=sme-auto",
     "bench:native-bytes": "bun run scripts/bench-native-byte-path.ts",
     "bench:gpu-crossover": "bun run scripts/bench-gpu-crossover.ts",
+    "bench:competitors": "bun run scripts/bench-competitors.ts",
+    "deps:token-dagger": "bun run scripts/install-token-dagger.ts",
     "bench:ci": "bun run scripts/ci-benchmark.ts",
     "compat:report": "bun run scripts/compat-report.ts",
     "build:all": "bun run scripts/build-all.ts",

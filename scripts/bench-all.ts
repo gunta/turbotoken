@@ -11,6 +11,7 @@ const scripts = [
   "scripts/bench-bigfile.ts",
   "scripts/bench-parallel.ts",
   "scripts/bench-comparison.ts",
+  "scripts/bench-competitors.ts",
   "scripts/bench-scalar-fallback.ts",
   "scripts/bench-pair-cache-hash.ts",
   "scripts/bench-encoder-queue.ts",

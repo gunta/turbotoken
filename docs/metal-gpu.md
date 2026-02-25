@@ -26,14 +26,15 @@ This backend should be treated as a high-throughput building block for the futur
 - Pipelines are compiled once and cached per process.
 - Shared `MTLBuffer` pools are reused and grown geometrically to avoid per-call allocations.
 
-## Latest Kernel Tuning Pass (2026-02-25, `metal-byte-path-v4`)
+## Latest Kernel Tuning Pass (2026-02-25, `metal-byte-path-v6`)
 
 Implemented optimizations from the current research backlog:
 - Encode kernel now processes `512` bytes per thread (previously `256`) to further reduce dispatch overhead.
-- Encode kernel widened inner-loop writes with unrolled `uchar4 -> uint4` vector loads/stores (`32` bytes/iteration main loop).
+- Encode kernel uses a `uchar4 -> uint4` unrolled path in the 64-byte loop (replacing the previous `uchar8` pointer pattern that failed to compile on current toolchains).
 - Count kernel keeps SIMD-group reduction (`simd_sum`) and now adds 8x unrolled strided accumulation in the hot loop.
 - Count kernel has an early single-simdgroup fast path to skip threadgroup memory/barrier work on small lane counts.
 - Host bridge now uses lower-pressure encode occupancy (`threadExecutionWidth * 2`) and segment-size-based lane selection that favors fewer lanes for mid-size segments.
+- Host command-buffer creation now prefers `commandBufferWithUnretainedReferences` when available to reduce per-dispatch overhead in synchronous call sites.
 - Autoroute cache schema bumped to `v4` so updated kernels trigger fresh crossover calibration.
 
 ## Why This Shape on M4 Max
@@ -61,19 +62,19 @@ Results are written to:
 ## Latest Snapshot (2026-02-25, macOS ARM64 M4 Max)
 
 Source artifact:
-- `bench/results/bench-gpu-20260225-160631.json`
+- `bench/results/bench-gpu-20260225-191259.json`
 
 Measured means:
-- Metal encode UTF-8 bytes (`1MB x 128`): `158.1 ms`
-- Native NEON encode UTF-8 bytes (`1MB x 128`): `101.8 ms`
-- Metal count non-zero batch (`4096 x 1KB`, 512 loops): `221.1 ms`
-- Python CPU count non-zero batch (`4096 x 1KB`, 512 loops): `732.0 ms`
+- Metal encode UTF-8 bytes (`1MB x 128`): `151.0 ms`
+- Native NEON encode UTF-8 bytes (`1MB x 128`): `97.5 ms`
+- Metal count non-zero batch (`4096 x 1KB`, 512 loops): `205.5 ms`
+- Python CPU count non-zero batch (`4096 x 1KB`, 512 loops): `709.4 ms`
 
 Interpretation:
 - For this simple byte->u32 widening workload, native NEON remains faster than Metal.
 - Metal already provides a clear win for large batch counting versus pure-Python counting logic.
 - Full GPU BPE merge support is still needed before making end-to-end tokenizer speed claims for Metal.
-- Versus the previous same-day v3 artifact (`bench-gpu-20260225-155245.json`), this v4 pass improved measured Metal means by `~0.37%` (encode) and `~2.72%` (batch count).
+- Versus the previous documented snapshot (`bench-gpu-20260225-160631.json`), this v6 pass improved measured Metal means by `~4.49%` (encode) and `~7.06%` (batch count) in this run.
 
 ## Crossover + Profiling
 
@@ -82,7 +83,7 @@ Interpretation:
   - default: `TURBOTOKEN_BENCH_LONG=0` (long mode disabled)
   - optional long-run row (adds `10,485,760` bytes/chars): `TURBOTOKEN_BENCH_LONG=1 bun run scripts/bench-gpu-crossover.ts`
 - Latest matrix artifacts:
-  - standard: `bench/results/bench-gpu-crossover-1772035615674.json`
+  - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
 - Auto-route cache:
   - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `4`)

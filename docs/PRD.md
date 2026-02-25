@@ -665,7 +665,7 @@ Every benchmark compares **all available implementations** side by side:
 |-----------|----------|-------------------|
 | **tiktoken** (baseline) | Rust+Python | `pip install tiktoken`, Python subprocess |
 | **rs-bpe** | Rust+Python | `pip install rs-bpe`, Python subprocess |
-| **TokenDagger** | Rust+Python | `pip install token-dagger`, Python subprocess |
+| **TokenDagger** | Rust+Python | `pip install tokendagger`, Python subprocess |
 | **HuggingFace tokenizers** | Rust+Python | `pip install tokenizers`, Python subprocess |
 | **gpt-tokenizer** (JS) | TypeScript | `bun run` / `node` |
 | **tiktoken.js** (JS/WASM) | JS+WASM | `bun run` / `node` |

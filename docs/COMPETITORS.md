@@ -141,7 +141,7 @@ then add platform-specific SIMD, GPU, and WASM on top. We cite them in our docs.
 | **Repo** | https://github.com/SuperpoweredAI/token-dagger |
 | **Language** | Python + Rust |
 | **License** | MIT |
-| **PyPI** | `token-dagger` |
+| **PyPI** | `tokendagger` (repo name: token-dagger) |
 | **Key claim** | Drop-in tiktoken replacement, 2-4x faster |
 
 ### Strengths
@@ -334,7 +334,7 @@ of their ideas in our Metal and CUDA backends.
 |---------|---------------|-------------|---------------|
 | tiktoken | | | https://pypi.org/project/tiktoken/ |
 | rs-bpe | | | https://pypi.org/project/rs-bpe/ |
-| token-dagger | | | https://pypi.org/project/token-dagger/ |
+| tokendagger | | | https://pypi.org/project/tokendagger/ |
 | tokenizers (HF) | | | https://pypi.org/project/tokenizers/ |
 | gpt-tokenizer | | | https://www.npmjs.com/package/gpt-tokenizer |
 | wasm-tokenizer | | | https://www.npmjs.com/package/wasm-tokenizer |

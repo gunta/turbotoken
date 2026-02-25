@@ -35,7 +35,7 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
     add v4.8h, v4.8h, v6.8h
     add v31.8h, v31.8h, v4.8h
     add x4, x4, #1
-    and x5, x4, #3
+    and x5, x4, #255
     cbnz x5, .Lloop64_skip_flush
     uaddlv s8, v31.8h
     umov w3, v8.s[0]
@@ -48,7 +48,7 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
     b .Lloop64
 
 .Lflush64:
-    and x5, x4, #3
+    and x5, x4, #255
     cbz x5, .Lloop16
     uaddlv s8, v31.8h
     umov w3, v8.s[0]

@@ -259,35 +259,47 @@ Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 ## Baseline Measurements (Competitors)
 
 > Measured on our M4 Max. These are the numbers to beat.
-> Status: `PENDING` -- will be filled when we run initial baselines.
+> Status: `PARTIAL` -- Python competitor baseline rows are now measured; JS/WASM rows remain pending.
+
+Artifacts for this pass:
+- `bench/results/bench-competitors-python-encode-20260225-190050.json`
+- `bench/results/bench-competitors-python-decode-20260225-190145.json`
+- `bench/results/bench-competitors-python-count-20260225-190216.json`
+- command: `TURBOTOKEN_BENCH_PYTHON=./.venv-py312/bin/python bun run scripts/bench-competitors.ts`
+Token-dagger rebuild pass artifacts:
+- `bench/results/bench-competitors-python-encode-20260225-215610.json`
+- `bench/results/bench-competitors-python-decode-20260225-215714.json`
+- `bench/results/bench-competitors-python-count-20260225-215754.json`
+- command: `bun run deps:token-dagger && bun run scripts/bench-competitors.ts`
 
 ### Python Tokenizers (encode, o200k_base)
 
 | Competitor | 1KB | 10KB | 100KB | 1MB | Source |
 |-----------|-----|------|-------|-----|--------|
-| tiktoken (latest) | PENDING | PENDING | PENDING | PENDING | `pip install tiktoken` |
-| rs-bpe | PENDING | PENDING | PENDING | PENDING | `pip install rs-bpe` |
-| TokenDagger | PENDING | PENDING | PENDING | PENDING | `pip install token-dagger` |
-| HuggingFace tokenizers | PENDING | PENDING | PENDING | PENDING | `pip install tokenizers` |
-| turbotoken (scalar) | PENDING | PENDING | PENDING | PENDING | Our Zig scalar fallback |
-| turbotoken (NEON) | PENDING | PENDING | PENDING | PENDING | Our ARM64 NEON |
-| turbotoken (Metal GPU) | PENDING | PENDING | PENDING | PENDING | Phase 2 |
+| tiktoken (latest) | 183.7 ms | 183.6 ms | 189.1 ms | 245.9 ms | `pip install tiktoken` |
+| rs-bpe | 66.3 ms | 66.9 ms | 70.0 ms | 85.7 ms | `pip install rs-bpe` |
+| TokenDagger (`tokendagger`) | 415.8 ms | 424.1 ms | 438.3 ms | 451.7 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| HuggingFace tokenizers | PENDING | PENDING | PENDING | PENDING | `tokenizers` package installed, but no stable built-in `o200k_base` entry-point |
+| turbotoken (default CPU path) | 141.5 ms | 138.0 ms | 141.9 ms | 206.5 ms | local editable package (`python/`) |
+| turbotoken (Metal GPU route) | 142.2 ms | 138.1 ms | 145.0 ms | 209.6 ms | `Encoding.encode_gpu(device="metal", strict_verify=False)` |
 
 ### Python Tokenizers (decode, o200k_base)
 
 | Competitor | 1K tok | 10K tok | 128K tok | Source |
 |-----------|--------|---------|----------|--------|
-| tiktoken | PENDING | PENDING | PENDING | |
-| rs-bpe | PENDING | PENDING | PENDING | |
-| TokenDagger | PENDING | PENDING | PENDING | |
-| turbotoken (NEON) | PENDING | PENDING | PENDING | |
+| tiktoken | 182.5 ms | 187.7 ms | 186.5 ms | `tiktoken.get_encoding("o200k_base").decode(...)` |
+| rs-bpe | 75.4 ms | 73.7 ms | 76.9 ms | `openai.o200k_base().decode(...)` |
+| TokenDagger (`tokendagger`) | 445.4 ms | 439.6 ms | 455.7 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| turbotoken (default CPU path) | 183.4 ms | 184.5 ms | 189.6 ms | `turbotoken.get_encoding("o200k_base").decode(...)` |
 
 ### Python Tokenizers (count-only, o200k_base)
 
 | Competitor | 1KB | 100KB | 673K tok equiv | Source |
 |-----------|-----|-------|----------------|--------|
-| tiktoken (via `len(encode())`) | PENDING | PENDING | PENDING | |
-| turbotoken `count()` | PENDING | PENDING | PENDING | No-alloc fast path |
+| tiktoken (via `len(encode())`) | 183.4 ms | 188.3 ms | 240.7 ms | `len(encode())` |
+| rs-bpe `count()` | 67.4 ms | 67.6 ms | 81.0 ms | `openai.o200k_base().count(...)` |
+| TokenDagger (`tokendagger`, via `len(encode())`) | 437.6 ms | 436.0 ms | 454.9 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| turbotoken `count()` | 139.8 ms | 148.8 ms | 206.7 ms | No-alloc fast path |
 
 ### JavaScript/WASM Tokenizers (encode, o200k_base)
 

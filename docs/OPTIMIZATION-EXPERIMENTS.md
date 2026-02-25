@@ -160,3 +160,81 @@ Test practical GPU-side merge and dispatch/memory optimizations without changing
 - BPE autoroute threshold regressed back to "never Metal" in the combined GPU-001/002/003 pass.
 
 Decision: `revert` all three GPU trials as-is for now; keep benchmark evidence and revisit with tighter isolated kernels.
+
+## Experiment CPU-004 (2026-02-25)
+
+### Goal
+
+Reduce overhead in the ARM64 NEON non-ASCII byte counter without changing correctness.
+
+### Implementation
+
+- Updated `asm/arm64/neon_pretokenizer.S` in `turbotoken_arm64_count_non_ascii`:
+  - increased accumulator flush interval from every 4x64B blocks to every 256x64B blocks (`#3` -> `#255` loop mask).
+  - kept the same vector math and final tail behavior.
+
+### Commands
+
+```bash
+bun run bench:native-pretokenizer
+```
+
+### Artifacts
+
+- pre-change reference: `bench/results/bench-native-pretokenizer-20260225-185042.json`
+- post-change run: `bench/results/bench-native-pretokenizer-20260225-190912.json`
+
+### Result Summary
+
+Representative means:
+
+| Command | Before | After | Delta |
+|---|---:|---:|---:|
+| `english-1mb-neon` | `124.6 ms` | `118.1 ms` | `~5.2% faster` |
+| `unicode-1mb-neon` | `126.4 ms` | `121.3 ms` | `~4.0% faster` |
+| `english-1mb-auto` | `126.2 ms` | `118.9 ms` | `~5.8% faster` |
+| `unicode-1mb-auto` | `125.7 ms` | `115.6 ms` | `~8.0% faster` |
+
+Decision: `adopt`.
+
+## Experiment GPU-004 (2026-02-25)
+
+### Goal
+
+Restore Metal bridge compile reliability on current toolchains and reduce command-buffer overhead in byte-path kernels.
+
+### Implementation
+
+- Updated `gpu/metal/metal_bridge.m`:
+  - replaced the failing `uchar8*` encode-kernel pointer pattern with a `uchar4 -> uint4` unrolled path.
+  - added `create_command_buffer_locked()` and routed dispatches through `commandBufferWithUnretainedReferences` when available.
+  - bumped reported bridge version string to `metal-byte-path-v6`.
+
+### Commands
+
+```bash
+bun run scripts/bench-gpu.ts
+bun run scripts/bench-gpu-crossover.ts
+```
+
+### Artifacts
+
+- reference snapshot: `bench/results/bench-gpu-20260225-174823.json`
+- post-change snapshot: `bench/results/bench-gpu-20260225-191259.json`
+- post-change crossover: `bench/results/bench-gpu-crossover-1772046799515.json`
+
+### Result Summary
+
+Representative means:
+
+| Command | Before | After | Delta |
+|---|---:|---:|---:|
+| `metal-encode-utf8-bytes-1mb` | `168.6 ms` | `151.0 ms` | `~10.4% faster` |
+| `metal-count-nonzero-batch-4096x1kb` | `222.5 ms` | `205.5 ms` | `~7.6% faster` |
+| `python-cpu-count-nonzero-batch-4096x1kb` | `736.2 ms` | `709.4 ms` | baseline moved with run noise |
+
+Crossover/autoroute note:
+- BPE exactness remained intact in sampled rows.
+- Autoroute thresholds still calibrate to sentinel (`2^60`) for encode/count/BPE in this environment, so auto stays CPU-first.
+
+Decision: `adopt` for compile reliability + measured byte-path wins; keep autoroute conservative.

@@ -1,0 +1,261 @@
+#!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { runBench, type BenchCommand } from "./_bench";
+import { ensureFixtures } from "./_fixtures";
+import { pythonExecutable, resolvePath, runShell, section } from "./_lib";
+
+ensureFixtures();
+const python = process.env.TURBOTOKEN_BENCH_PYTHON?.trim() || pythonExecutable();
+
+const textFixtures = [
+  { id: "1kb", path: "bench/fixtures/english-1kb.txt", bytes: 1_024 },
+  { id: "10kb", path: "bench/fixtures/english-10kb.txt", bytes: 10_240 },
+  { id: "100kb", path: "bench/fixtures/english-100kb.txt", bytes: 102_400 },
+  { id: "1mb", path: "bench/fixtures/english-1mb.txt", bytes: 1_048_576 },
+] as const;
+
+const decodeTokenSizes = [1_000, 10_000, 128_000];
+const decodeFixturePath = "bench/fixtures/english-1mb.tokens.json";
+
+function hasPythonModule(name: string): boolean {
+  const result = runShell(
+    `${python} -c "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec('${name}') else 1)"`,
+    { allowFailure: true },
+  );
+  return result.code === 0;
+}
+
+const availability = {
+  tiktoken: hasPythonModule("tiktoken"),
+  rs_bpe: hasPythonModule("rs_bpe"),
+  token_dagger: hasPythonModule("token_dagger") || hasPythonModule("tokendagger"),
+  tokenizers: hasPythonModule("tokenizers"),
+};
+
+const metalProbe = runShell(
+  `${python} -c "import sys;sys.path.insert(0,'python');from turbotoken import _gpu;raise SystemExit(0 if _gpu.backend_info().get('available') else 1)"`,
+  { allowFailure: true },
+);
+const metalAvailable = metalProbe.code === 0;
+
+if (availability.tokenizers) {
+  console.warn(
+    "python tokenizers package is installed, but o200k_base is not directly exposed via a stable built-in API; skipping tokenizers rows for this benchmark matrix.",
+  );
+}
+
+function ensureDecodeFixture() {
+  const absPath = resolvePath(decodeFixturePath);
+  if (existsSync(absPath)) {
+    return;
+  }
+
+  section(`Generating decode fixture: ${decodeFixturePath}`);
+  runShell(
+    `${python} -c "import importlib.util,json,pathlib,sys;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text()\nif importlib.util.find_spec('tiktoken'):\n import tiktoken;enc=tiktoken.get_encoding('o200k_base')\nelse:\n sys.path.insert(0,'python');from turbotoken import get_encoding;enc=get_encoding('o200k_base')\ntokens=enc.encode(text);pathlib.Path('${decodeFixturePath}').write_text(json.dumps(tokens),encoding='utf-8')"`,
+  );
+}
+
+function decodeFixtureTokenCount(): number {
+  const result = runShell(
+    `${python} -c "import json,pathlib;tokens=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'));print(len(tokens))"`,
+  );
+  return Number.parseInt(result.stdout.trim(), 10);
+}
+
+function encodeCommandForTurbotoken(path: string): string {
+  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode(text)"`;
+}
+
+function encodeCommandForTurbotokenMetal(path: string): string {
+  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode_gpu([text],device='metal',strict_verify=False)[0]"`;
+}
+
+function encodeCommandForTiktoken(path: string): string {
+  return `${python} -c "import pathlib,tiktoken;text=pathlib.Path('${path}').read_text();tiktoken.get_encoding('o200k_base').encode(text)"`;
+}
+
+function encodeCommandForRsBpe(path: string): string {
+  return `${python} -c "import pathlib;from rs_bpe.bpe import openai;text=pathlib.Path('${path}').read_text();openai.o200k_base().encode(text)"`;
+}
+
+function encodeCommandForTokenDagger(path: string): string {
+  return `${python} -c "import importlib.util,pathlib;text=pathlib.Path('${path}').read_text()\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nenc.encode(text)"`;
+}
+
+function decodeCommandForTurbotoken(tokens: number): string {
+  return `${python} -c "import json,pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];get_encoding('o200k_base').decode(vals)"`;
+}
+
+function decodeCommandForTiktoken(tokens: number): string {
+  return `${python} -c "import json,pathlib,tiktoken;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];tiktoken.get_encoding('o200k_base').decode(vals)"`;
+}
+
+function decodeCommandForRsBpe(tokens: number): string {
+  return `${python} -c "import json,pathlib;from rs_bpe.bpe import openai;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];openai.o200k_base().decode(vals)"`;
+}
+
+function decodeCommandForTokenDagger(tokens: number): string {
+  return `${python} -c "import importlib.util,json,pathlib;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}]\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nenc.decode(vals)"`;
+}
+
+function countCommandForTurbotoken(path: string): string {
+  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').count(text)"`;
+}
+
+function countCommandForTiktoken(path: string): string {
+  return `${python} -c "import pathlib,tiktoken;text=pathlib.Path('${path}').read_text();len(tiktoken.get_encoding('o200k_base').encode(text))"`;
+}
+
+function countCommandForRsBpe(path: string): string {
+  return `${python} -c "import pathlib;from rs_bpe.bpe import openai;text=pathlib.Path('${path}').read_text();openai.o200k_base().count(text)"`;
+}
+
+function countCommandForTokenDagger(path: string): string {
+  return `${python} -c "import importlib.util,pathlib;text=pathlib.Path('${path}').read_text()\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nlen(enc.encode(text))"`;
+}
+
+const encodeCommands: BenchCommand[] = [];
+for (const fixture of textFixtures) {
+  encodeCommands.push({
+    name: `python-encode-${fixture.id}-turbotoken`,
+    command: encodeCommandForTurbotoken(fixture.path),
+  });
+  if (metalAvailable) {
+    encodeCommands.push({
+      name: `python-encode-${fixture.id}-turbotoken-metal`,
+      command: encodeCommandForTurbotokenMetal(fixture.path),
+    });
+  }
+  if (availability.tiktoken) {
+    encodeCommands.push({
+      name: `python-encode-${fixture.id}-tiktoken`,
+      command: encodeCommandForTiktoken(fixture.path),
+    });
+  }
+  if (availability.rs_bpe) {
+    encodeCommands.push({
+      name: `python-encode-${fixture.id}-rs-bpe`,
+      command: encodeCommandForRsBpe(fixture.path),
+    });
+  }
+  if (availability.token_dagger) {
+    encodeCommands.push({
+      name: `python-encode-${fixture.id}-token-dagger`,
+      command: encodeCommandForTokenDagger(fixture.path),
+    });
+  }
+}
+
+ensureDecodeFixture();
+const tokenCount = decodeFixtureTokenCount();
+const decodeCommands: BenchCommand[] = [];
+for (const size of decodeTokenSizes) {
+  if (tokenCount < size) {
+    console.warn(
+      `decode fixture has ${tokenCount.toLocaleString()} tokens; skipping ${size.toLocaleString()} token decode row.`,
+    );
+    continue;
+  }
+  decodeCommands.push({
+    name: `python-decode-${size}-tok-turbotoken`,
+    command: decodeCommandForTurbotoken(size),
+  });
+  if (availability.tiktoken) {
+    decodeCommands.push({
+      name: `python-decode-${size}-tok-tiktoken`,
+      command: decodeCommandForTiktoken(size),
+    });
+  }
+  if (availability.rs_bpe) {
+    decodeCommands.push({
+      name: `python-decode-${size}-tok-rs-bpe`,
+      command: decodeCommandForRsBpe(size),
+    });
+  }
+  if (availability.token_dagger) {
+    decodeCommands.push({
+      name: `python-decode-${size}-tok-token-dagger`,
+      command: decodeCommandForTokenDagger(size),
+    });
+  }
+}
+
+const countFixtures = [
+  textFixtures[0], // 1kb
+  textFixtures[2], // 100kb
+  textFixtures[3], // 1mb
+];
+const countCommands: BenchCommand[] = [];
+for (const fixture of countFixtures) {
+  countCommands.push({
+    name: `python-count-${fixture.id}-turbotoken`,
+    command: countCommandForTurbotoken(fixture.path),
+  });
+  if (availability.tiktoken) {
+    countCommands.push({
+      name: `python-count-${fixture.id}-tiktoken-via-len-encode`,
+      command: countCommandForTiktoken(fixture.path),
+    });
+  }
+  if (availability.rs_bpe) {
+    countCommands.push({
+      name: `python-count-${fixture.id}-rs-bpe`,
+      command: countCommandForRsBpe(fixture.path),
+    });
+  }
+  if (availability.token_dagger) {
+    countCommands.push({
+      name: `python-count-${fixture.id}-token-dagger-via-len-encode`,
+      command: countCommandForTokenDagger(fixture.path),
+    });
+  }
+}
+
+let failures = 0;
+if (encodeCommands.length > 0) {
+  failures += runBench({
+    name: "bench-competitors-python-encode",
+    commands: encodeCommands,
+    metadata: {
+      operation: "encode",
+      encoding: "o200k_base",
+      fixtures: textFixtures,
+      availability,
+      metalAvailable,
+      note: "Competitor matrix uses Python package APIs on o200k_base where available; this repository remains in scaffold/early implementation stage.",
+    },
+  });
+}
+
+if (decodeCommands.length > 0) {
+  failures += runBench({
+    name: "bench-competitors-python-decode",
+    commands: decodeCommands,
+    metadata: {
+      operation: "decode",
+      encoding: "o200k_base",
+      decodeFixture: decodeFixturePath,
+      decodeTokenSizes,
+      decodeFixtureTokenCount: tokenCount,
+      availability,
+      note: "Decode rows use first-N tokens from a 1MB fixture tokenized with o200k_base.",
+    },
+  });
+}
+
+if (countCommands.length > 0) {
+  failures += runBench({
+    name: "bench-competitors-python-count",
+    commands: countCommands,
+    metadata: {
+      operation: "count",
+      encoding: "o200k_base",
+      fixtures: countFixtures,
+      availability,
+      note: "tiktoken and token-dagger count rows use len(encode(text)) to keep API behavior comparable.",
+    },
+  });
+}
+
+process.exit(failures === 0 ? 0 : 1);

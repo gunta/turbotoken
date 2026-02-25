@@ -26,34 +26,24 @@ static NSString *const kKernelSource =
     @"    uint end = min(base + TT_ENCODE_BYTES_PER_THREAD, total_len);\n"
     @"    uint idx = base;\n"
     @"    for (; idx + 64 <= end; idx += 64) {\n"
-    @"        const device uchar8 *in8 = (const device uchar8 *)(input + idx);\n"
+    @"        const device uchar4 *in4 = (const device uchar4 *)(input + idx);\n"
     @"        device uint4 *out4 = (device uint4 *)(output + idx);\n"
-    @"\n"
-    @"        const uchar8 v0 = in8[0];\n"
-    @"        const uchar8 v1 = in8[1];\n"
-    @"        const uchar8 v2 = in8[2];\n"
-    @"        const uchar8 v3 = in8[3];\n"
-    @"        const uchar8 v4 = in8[4];\n"
-    @"        const uchar8 v5 = in8[5];\n"
-    @"        const uchar8 v6 = in8[6];\n"
-    @"        const uchar8 v7 = in8[7];\n"
-    @"\n"
-    @"        out4[0] = uint4(v0[0], v0[1], v0[2], v0[3]);\n"
-    @"        out4[1] = uint4(v0[4], v0[5], v0[6], v0[7]);\n"
-    @"        out4[2] = uint4(v1[0], v1[1], v1[2], v1[3]);\n"
-    @"        out4[3] = uint4(v1[4], v1[5], v1[6], v1[7]);\n"
-    @"        out4[4] = uint4(v2[0], v2[1], v2[2], v2[3]);\n"
-    @"        out4[5] = uint4(v2[4], v2[5], v2[6], v2[7]);\n"
-    @"        out4[6] = uint4(v3[0], v3[1], v3[2], v3[3]);\n"
-    @"        out4[7] = uint4(v3[4], v3[5], v3[6], v3[7]);\n"
-    @"        out4[8] = uint4(v4[0], v4[1], v4[2], v4[3]);\n"
-    @"        out4[9] = uint4(v4[4], v4[5], v4[6], v4[7]);\n"
-    @"        out4[10] = uint4(v5[0], v5[1], v5[2], v5[3]);\n"
-    @"        out4[11] = uint4(v5[4], v5[5], v5[6], v5[7]);\n"
-    @"        out4[12] = uint4(v6[0], v6[1], v6[2], v6[3]);\n"
-    @"        out4[13] = uint4(v6[4], v6[5], v6[6], v6[7]);\n"
-    @"        out4[14] = uint4(v7[0], v7[1], v7[2], v7[3]);\n"
-    @"        out4[15] = uint4(v7[4], v7[5], v7[6], v7[7]);\n"
+    @"        out4[0] = uint4(in4[0]);\n"
+    @"        out4[1] = uint4(in4[1]);\n"
+    @"        out4[2] = uint4(in4[2]);\n"
+    @"        out4[3] = uint4(in4[3]);\n"
+    @"        out4[4] = uint4(in4[4]);\n"
+    @"        out4[5] = uint4(in4[5]);\n"
+    @"        out4[6] = uint4(in4[6]);\n"
+    @"        out4[7] = uint4(in4[7]);\n"
+    @"        out4[8] = uint4(in4[8]);\n"
+    @"        out4[9] = uint4(in4[9]);\n"
+    @"        out4[10] = uint4(in4[10]);\n"
+    @"        out4[11] = uint4(in4[11]);\n"
+    @"        out4[12] = uint4(in4[12]);\n"
+    @"        out4[13] = uint4(in4[13]);\n"
+    @"        out4[14] = uint4(in4[14]);\n"
+    @"        out4[15] = uint4(in4[15]);\n"
     @"    }\n"
     @"    for (; idx + 4 <= end; idx += 4) {\n"
     @"        const device uchar4 *in4 = (const device uchar4 *)(input + idx);\n"
@@ -700,8 +690,18 @@ static bool wait_for_completion_locked(id<MTLCommandBuffer> command_buffer, cons
     return true;
 }
 
+static id<MTLCommandBuffer> create_command_buffer_locked(void) {
+    if (g_queue == nil) {
+        return nil;
+    }
+    if ([g_queue respondsToSelector:@selector(commandBufferWithUnretainedReferences)]) {
+        return [g_queue commandBufferWithUnretainedReferences];
+    }
+    return [g_queue commandBuffer];
+}
+
 const char *turbotoken_metal_version(void) {
-    return "metal-byte-path-v5";
+    return "metal-byte-path-v6";
 }
 
 const char *turbotoken_metal_last_error(void) {
@@ -910,7 +910,7 @@ long turbotoken_metal_encode_utf8_bytes(
         needs_output_copy = true;
     }
 
-    id<MTLCommandBuffer> command_buffer = [g_queue commandBuffer];
+    id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
     if (command_buffer == nil) {
         set_error_locked("failed to create command buffer");
         pthread_mutex_unlock(&g_state_lock);
@@ -1054,7 +1054,7 @@ long turbotoken_metal_count_nonzero_segments(
         needs_output_copy = true;
     }
 
-    id<MTLCommandBuffer> command_buffer = [g_queue commandBuffer];
+    id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
     if (command_buffer == nil) {
         set_error_locked("failed to create command buffer");
         pthread_mutex_unlock(&g_state_lock);
@@ -1204,7 +1204,7 @@ long turbotoken_metal_chunk_owner_flags(
         needs_output_copy = true;
     }
 
-    id<MTLCommandBuffer> command_buffer = [g_queue commandBuffer];
+    id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
     if (command_buffer == nil) {
         set_error_locked("failed to create command buffer");
         pthread_mutex_unlock(&g_state_lock);
@@ -1378,7 +1378,7 @@ long turbotoken_metal_bpe_encode_from_bytes(
         *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
         *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0;
 
-        id<MTLCommandBuffer> command_buffer = [g_queue commandBuffer];
+        id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
         if (command_buffer == nil) {
             set_error_locked("failed to create bpe command buffer");
             pthread_mutex_unlock(&g_state_lock);
