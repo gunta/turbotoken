@@ -42,6 +42,36 @@ def test_native_bridge_utf8_scalar_wrappers_roundtrip_when_available() -> None:
     assert bridge.decode_utf8_bytes_scalar([65, 66, 300, 67]) is None
 
 
+def test_native_bridge_non_ascii_count_wrappers_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    data = "ascii-🚀-κόσμε".encode("utf-8")
+    expected = sum(1 for byte in data if byte & 0x80)
+
+    auto = bridge.count_non_ascii_utf8(data)
+    scalar = bridge.count_non_ascii_utf8_scalar(data)
+    if auto is None or scalar is None:
+        pytest.skip("native library does not expose non-ascii count symbols")
+
+    assert auto == expected
+    assert scalar == expected
+
+    neon = bridge.count_non_ascii_utf8_neon(data)
+    if neon is not None:
+        assert neon == expected
+
+    dotprod = bridge.count_non_ascii_utf8_dotprod(data)
+    if dotprod is not None:
+        assert dotprod == expected
+
+    mask = bridge.arm64_feature_mask()
+    kernel_id = bridge.count_non_ascii_kernel_id()
+    if mask is not None and kernel_id is not None and mask != 0:
+        assert kernel_id in (1, 2)
+
+
 def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:
@@ -57,3 +87,55 @@ def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     assert encoded == [2, 1]
     assert counted == 2
     assert bridge.decode_bpe_from_ranks(ranks, encoded) == b"abb"
+
+
+def test_native_bridge_bpe_batch_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    batch = bridge.encode_bpe_batch_from_ranks(ranks, b"abbabb", [0, 3, 6])
+    if batch is None:
+        pytest.skip("native library does not expose rank-based BPE batch symbol")
+
+    tokens, token_offsets = batch
+    assert tokens == [2, 1, 2, 1]
+    assert token_offsets == [0, 2, 4]
+
+
+def test_native_bridge_bpe_ranges_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    batch = bridge.encode_bpe_ranges_from_ranks(ranks, b"abbabb", [(0, 3), (0, 3)])
+    if batch is None:
+        pytest.skip("native library does not expose rank-based BPE ranges symbol")
+
+    tokens, token_offsets = batch
+    assert tokens == [2, 1, 2, 1]
+    assert token_offsets == [0, 2, 4]
+
+
+def test_native_bridge_chunked_stitch_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYw== 2\n"
+    data = b"abcabcabcabc"
+    exact = bridge.encode_bpe_from_ranks(ranks, data)
+    if exact is None:
+        pytest.skip("native library does not expose rank-based BPE symbols")
+
+    chunked = bridge.encode_bpe_chunked_stitched_from_ranks(
+        ranks,
+        data,
+        chunk_bytes=4,
+        overlap_bytes=4,
+    )
+    if chunked is None:
+        pytest.skip("native library does not expose chunked stitch symbol")
+    assert chunked == exact

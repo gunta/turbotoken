@@ -28,13 +28,18 @@
 - `scripts/compat-report.ts` to compare token outputs against `tiktoken` and track parity deltas
 - `scripts/test-upstream-alias.ts` to run upstream public `tiktoken` tests against a `turbotoken` alias shim
 - `scripts/bench-native-byte-path.ts` to benchmark native C ABI UTF-8 byte encode/decode paths independently of scalar BPE
+- `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd)
+- `scripts/bench-gpu-crossover.ts` now includes long-piece BPE crossover rows (`encode_gpu(auto)` vs forced `encode_gpu(metal)`) with baseline correctness checks
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
 - Python CLI coverage for `turbotoken bench` and `turbotoken info`
 - Native bridge probe in `python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
 - Native bridge wrappers for rank-based BPE encode/decode C ABI exports (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) with graceful fallback when symbols are unavailable
+- Native bridge wrappers for rank-based BPE batch/range/chunk-stitch C ABI exports (`turbotoken_encode_bpe_batch_from_ranks`, `turbotoken_encode_bpe_ranges_from_ranks`, `turbotoken_encode_bpe_chunked_stitched_from_ranks`)
+- Native bridge wrappers for Metal stitch owner-mask C ABI export (`turbotoken_metal_chunk_owner_flags`) plus stitch profiling counters
 - Native bridge wrappers for UTF-8 byte C ABI exports (`turbotoken_encode_utf8_bytes`, `turbotoken_decode_utf8_bytes`)
+- Native bridge wrappers for ARM64 feature/kernel introspection and non-ASCII count variants (`auto`/`scalar`/`neon`/`dotprod`)
 - Shared Zig library artifact installed by `zig build` (`libturbotoken`), with exported placeholder C ABI symbols for count/encode/decode byte paths
 - Rank-file cache/download support in `python/turbotoken/_rank_files.py` (`~/.cache/turbotoken/*.tiktoken`)
 - Optional tiktoken parity smoke tests in `python/tests/test_tiktoken_parity_smoke.py` (auto-skips when `tiktoken` is not installed)
@@ -82,6 +87,7 @@
 - Zig exports now include rank-driven BPE encode/decode helpers (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) for native integration experiments
 - Rank-driven C ABI exports now route through `src/arch/generic.zig` scalar backend wrappers for consistent fallback behavior
 - Rank-driven C ABI exports now include `turbotoken_count_bpe_from_ranks`, and rank-table loading in exports reuses a cached parsed table across repeated calls when the input rank payload pointer/length are unchanged
+- Rank-driven C ABI exports now also include multi-segment helpers for chunk workflows (`turbotoken_encode_bpe_batch_from_ranks`, `turbotoken_encode_bpe_ranges_from_ranks`) plus experimental native chunk-owner stitching (`turbotoken_encode_bpe_chunked_stitched_from_ranks`)
 - Rank loader now keeps a dense rank-to-token index for faster `tokenForRank` lookups on the merge hot path, while preserving existing map-backed behavior
 - Encoder pair-rank lookup now uses a stack buffer for short merged-token probes to reduce scratch-buffer overhead in the scalar path
 - Scalar architecture fallback now has functional rank-aware backend hooks in `src/arch/generic.zig` (`encode`, `decode`, `count`) with unit tests
@@ -90,8 +96,15 @@
 - ARM64 NEON assembly hot loops now include load/store prefetch hints (`prfm pldl1keep` + `prfm pstl1keep`), non-ASCII counting now uses reduced horizontal reductions per 64-byte chunk, and decode/encode stay unrolled to 64-byte blocks before 16-byte/tail fallback
 - ARM64 decode fused validate+pack assembly path (`turbotoken_arm64_validate_and_decode_u32_to_u8`) now includes a 64-byte unrolled fast loop and uses vector-max accumulation for low-overhead validity checks before one final compare
 - ARM64 encode 64-byte loop now batches source loads (`ld1` of four vectors) before widening/storing, reducing load overhead in the widening hot path
+- ARM64 pretokenizer now has a DotProd kernel (`turbotoken_arm64_count_non_ascii_dotprod`) and runtime auto-selection between NEON and DotProd via one-time microbenchmark gating
+- C ABI now exports ARM64 feature mask and selected pretokenizer kernel id (`turbotoken_arm64_feature_mask`, `turbotoken_count_non_ascii_kernel_id`) plus explicit non-ASCII counters (`auto`, `scalar`, `neon`, `dotprod`)
+- Current M4 Max tuning data selects NEON (kernel id `1`) over DotProd for non-ASCII counting (`bench/results/bench-native-pretokenizer-20260225-134405.json`)
+- `Encoding.encode_gpu()` routing now distinguishes exact and experimental paths: `device="auto"` keeps exact CPU/native rank-BPE behavior, while `device="metal"` enables experimental chunked stitch kernels
+- Experimental chunked stitch path now prefers a Metal owner-mask kernel stage when requested, then falls back to native/Python stitch implementations when unavailable
+- Metal auto-route calibration cache moved to schema v2 with BPE crossover rows and `bpe_use_metal_min_piece_bytes` threshold gating
 - UTF-8 byte C ABI now also exports explicit scalar-only variants (`turbotoken_encode_utf8_bytes_scalar`, `turbotoken_decode_utf8_bytes_scalar`) to allow apples-to-apples NEON-vs-scalar benchmarking
-- Native byte-path benchmark now includes direct NEON-vs-scalar comparison (latest artifact: `bench/results/bench-native-byte-path-20260225-133026.json`)
+- Native byte-path benchmark now includes direct NEON-vs-scalar comparison (latest artifact: `bench/results/bench-native-byte-path-20260225-134436.json`)
+- Native pretokenizer benchmark now measures auto/scalar/NEON/DotProd paths with kernel-selection visibility (`bench/results/bench-native-pretokenizer-20260225-134405.json`)
 - `docs/PROGRESS.md` now tracks rolled-back optimization trials with benchmark artifact references to avoid re-running known regressions blindly
 - Recorded and rolled back an ARM64 `aes/pmull` pair-cache hash experiment after no stable scalar-BPE win across reruns (`bench/results/bench-scalar-fallback-20260225-132701.json`, `bench/results/bench-scalar-fallback-20260225-132746.json`)
 - Launch bundle milestone is now explicitly marked postponed in planning docs (`LAUNCH: PyPI + GitHub + HN + Twitter`)

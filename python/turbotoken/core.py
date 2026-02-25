@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, AbstractSet, Callable, Collection, Literal, TypeVar
 
+from . import _gpu
 from ._native import get_native_bridge
 from ._rank_files import ensure_rank_file, parse_rank_file_bytes, rank_file_path
 from ._registry import EncodingSpec, get_encoding_spec
@@ -209,6 +210,67 @@ class Encoding:
             out.extend(self._bpe_tokenize_piece(piece.encode("utf-8")))
         return out
 
+    def _encode_ordinary_gpu_impl(
+        self,
+        text: str,
+        *,
+        device: str,
+        chunk_bytes: int,
+        overlap_bytes: int,
+        strict_verify: bool,
+    ) -> list[int]:
+        if not text:
+            return []
+
+        self.load_mergeable_ranks()
+        rank_payload = self._rank_payload_cache
+        native_bridge = get_native_bridge() if rank_payload is not None else None
+        piece_regex = self._ensure_piece_regex()
+        out: list[int] = []
+        for piece in piece_regex.findall(text):
+            if not piece:
+                continue
+
+            piece_bytes = piece.encode("utf-8")
+            if rank_payload is None:
+                out.extend(self._bpe_tokenize_piece(piece_bytes))
+                continue
+
+            if strict_verify:
+                # Exact mode: keep the fast single-pass native encode and skip
+                # chunked stitch work that would be verified and discarded anyway.
+                if len(piece_bytes) >= 2048 and native_bridge is not None:
+                    native_tokens = native_bridge.encode_bpe_from_ranks(rank_payload, piece_bytes)
+                    if native_tokens is not None:
+                        out.extend(native_tokens)
+                        continue
+                out.extend(self._bpe_tokenize_piece(piece_bytes))
+                continue
+
+            route_backend = "metal" if device == "metal" else _gpu.bpe_route_backend(len(piece_bytes))
+            if route_backend != "metal":
+                out.extend(self._bpe_tokenize_piece(piece_bytes))
+                continue
+
+            if len(piece_bytes) < (chunk_bytes * 2):
+                out.extend(self._bpe_tokenize_piece(piece_bytes))
+                continue
+
+            chunked = _gpu.encode_bpe_chunked_stitched(
+                rank_payload,
+                piece_bytes,
+                chunk_bytes=chunk_bytes,
+                overlap_bytes=overlap_bytes,
+                strict_verify=strict_verify,
+                prefer_metal_stitch=True,
+            )
+            if chunked is None:
+                out.extend(self._bpe_tokenize_piece(piece_bytes))
+                continue
+            out.extend(chunked)
+
+        return out
+
     def _count_ordinary_impl(self, text: str) -> int:
         if not text:
             return 0
@@ -230,6 +292,56 @@ class Encoding:
 
             count += len(self._bpe_tokenize_piece(piece_bytes))
         return count
+
+    def _encode_with_allowed_special_gpu(
+        self,
+        text: str,
+        allowed_special: set[str],
+        *,
+        device: str,
+        chunk_bytes: int,
+        overlap_bytes: int,
+        strict_verify: bool,
+    ) -> list[int]:
+        if not allowed_special:
+            return self._encode_ordinary_gpu_impl(
+                text,
+                device=device,
+                chunk_bytes=chunk_bytes,
+                overlap_bytes=overlap_bytes,
+                strict_verify=strict_verify,
+            )
+
+        special_regex = _special_token_regex(frozenset(allowed_special))
+        out: list[int] = []
+        start = 0
+        for match in special_regex.finditer(text):
+            match_start, match_end = match.span()
+            if match_start > start:
+                out.extend(
+                    self._encode_ordinary_gpu_impl(
+                        text[start:match_start],
+                        device=device,
+                        chunk_bytes=chunk_bytes,
+                        overlap_bytes=overlap_bytes,
+                        strict_verify=strict_verify,
+                    )
+                )
+            out.append(self._special_token_to_id(match.group()))
+            start = match_end
+
+        if start < len(text):
+            out.extend(
+                self._encode_ordinary_gpu_impl(
+                    text[start:],
+                    device=device,
+                    chunk_bytes=chunk_bytes,
+                    overlap_bytes=overlap_bytes,
+                    strict_verify=strict_verify,
+                )
+            )
+
+        return out
 
     def _encode_with_allowed_special(self, text: str, allowed_special: set[str]) -> list[int]:
         if not allowed_special:
@@ -332,6 +444,75 @@ class Encoding:
             )
 
         return self._map_batch(text, _encode_one, num_threads=num_threads)
+
+    def encode_gpu(
+        self,
+        texts: list[str],
+        *,
+        device: str = "auto",
+        chunk_bytes: int = 16_384,
+        overlap_bytes: int = 512,
+        strict_verify: bool = True,
+        num_threads: int = 1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> list[list[int]]:
+        if device not in {"auto", "metal"}:
+            raise ValueError("encode_gpu currently supports device='auto' or device='metal'")
+        if chunk_bytes <= 0:
+            raise ValueError("chunk_bytes must be > 0")
+        if overlap_bytes <= 0:
+            raise ValueError("overlap_bytes must be > 0")
+
+        allowed_set = self._allowed_special_set(allowed_special)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+
+        def _encode_one(item: str) -> list[int]:
+            self._raise_if_disallowed_special(item, disallowed_set)
+            try:
+                return self._encode_with_allowed_special_gpu(
+                    item,
+                    allowed_set,
+                    device=device,
+                    chunk_bytes=chunk_bytes,
+                    overlap_bytes=overlap_bytes,
+                    strict_verify=strict_verify,
+                )
+            except UnicodeEncodeError:
+                return self._encode_with_allowed_special_gpu(
+                    _sanitize_text(item),
+                    allowed_set,
+                    device=device,
+                    chunk_bytes=chunk_bytes,
+                    overlap_bytes=overlap_bytes,
+                    strict_verify=strict_verify,
+                )
+
+        return self._map_batch(texts, _encode_one, num_threads=num_threads)
+
+    def count_gpu(
+        self,
+        texts: list[str],
+        *,
+        device: str = "auto",
+        chunk_bytes: int = 16_384,
+        overlap_bytes: int = 512,
+        strict_verify: bool = True,
+        num_threads: int = 1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> list[int]:
+        encoded = self.encode_gpu(
+            texts,
+            device=device,
+            chunk_bytes=chunk_bytes,
+            overlap_bytes=overlap_bytes,
+            strict_verify=strict_verify,
+            num_threads=num_threads,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
+        )
+        return [len(tokens) for tokens in encoded]
 
     def decode_bytes(self, tokens: list[int]) -> bytes:
         self._ensure_vocab_tables()

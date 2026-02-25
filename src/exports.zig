@@ -4,6 +4,8 @@ const aarch64 = @import("arch/aarch64.zig");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const rank_loader = @import("rank_loader.zig");
 
+const rank_cache_allocator = std.heap.page_allocator;
+
 const RankTableCache = struct {
     hash: u64 = 0,
     payload: ?[]u8 = null,
@@ -20,7 +22,7 @@ fn clearRankTableCache() void {
         rank_table_cache.table = null;
     }
     if (rank_table_cache.payload) |payload| {
-        std.heap.c_allocator.free(payload);
+        rank_cache_allocator.free(payload);
         rank_table_cache.payload = null;
     }
     rank_table_cache.hash = 0;
@@ -51,11 +53,11 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
 
     clearRankTableCache();
 
-    const payload_copy = try std.heap.c_allocator.alloc(u8, rank_slice.len);
-    errdefer std.heap.c_allocator.free(payload_copy);
+    const payload_copy = try rank_cache_allocator.alloc(u8, rank_slice.len);
+    errdefer rank_cache_allocator.free(payload_copy);
     @memcpy(payload_copy, rank_slice);
 
-    var table = try rank_loader.loadFromBytes(std.heap.c_allocator, rank_slice);
+    var table = try rank_loader.loadFromBytes(rank_cache_allocator, rank_slice);
     errdefer table.deinit();
 
     rank_table_cache.hash = hash;
@@ -77,6 +79,14 @@ pub export fn turbotoken_count(_: [*c]const u8, text_len: usize) isize {
     return @as(isize, @intCast(text_len));
 }
 
+fn countNonAsciiScalar(in_slice: []const u8) usize {
+    var count: usize = 0;
+    for (in_slice) |byte| {
+        count += @intFromBool((byte & 0x80) != 0);
+    }
+    return count;
+}
+
 fn encodeUtf8BytesScalar(in_slice: []const u8, out_slice: []u32) void {
     for (in_slice, 0..) |byte, idx| {
         out_slice[idx] = byte;
@@ -91,6 +101,103 @@ fn decodeUtf8BytesScalar(in_slice: []const u32, out_slice: []u8) bool {
         out_slice[idx] = @as(u8, @intCast(token));
     }
     return true;
+}
+
+pub export fn turbotoken_arm64_feature_mask() u64 {
+    if (builtin.cpu.arch != .aarch64 or !aarch64.available()) {
+        return 0;
+    }
+    return aarch64.featureMask();
+}
+
+pub export fn turbotoken_count_non_ascii_kernel_id() u32 {
+    if (builtin.cpu.arch != .aarch64 or !aarch64.available()) {
+        return 0;
+    }
+    return @intFromEnum(aarch64.selectedCountNonAsciiKernel());
+}
+
+pub export fn turbotoken_count_non_ascii_utf8(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const in_slice = text[0..text_len];
+    const count = if (builtin.cpu.arch == .aarch64 and aarch64.available())
+        aarch64.countNonAscii(in_slice)
+    else
+        countNonAsciiScalar(in_slice);
+
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_non_ascii_utf8_scalar(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const count = countNonAsciiScalar(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_non_ascii_utf8_neon(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+    if (builtin.cpu.arch != .aarch64 or !aarch64.available()) {
+        return -1;
+    }
+
+    const count = aarch64.countNonAsciiNeon(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
+}
+
+pub export fn turbotoken_count_non_ascii_utf8_dotprod(
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+    if (builtin.cpu.arch != .aarch64 or !aarch64.dotprodAvailable()) {
+        return -1;
+    }
+
+    const count = aarch64.countNonAsciiDotProd(text[0..text_len]);
+    if (count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(count));
 }
 
 pub export fn turbotoken_encode_utf8_bytes(
@@ -240,6 +347,248 @@ pub export fn turbotoken_encode_bpe_from_ranks(
     return @as(isize, @intCast(tokens.len));
 }
 
+pub export fn turbotoken_encode_bpe_batch_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    offsets: [*c]const u32,
+    offsets_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+    out_token_offsets: [*c]u32,
+    out_token_offsets_len: usize,
+) isize {
+    if (rank_bytes == null or offsets == null) {
+        return -1;
+    }
+    if (text_len > 0 and text == null) {
+        return -1;
+    }
+    if (offsets_len == 0) {
+        return -1;
+    }
+    if (out_token_offsets != null and out_token_offsets_len < offsets_len) {
+        return -1;
+    }
+
+    const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
+    const offset_slice = offsets[0..offsets_len];
+
+    if (offset_slice[0] != 0) {
+        return -1;
+    }
+    var prev = offset_slice[0];
+    for (offset_slice[1..]) |next| {
+        if (next < prev or next > text_len) {
+            return -1;
+        }
+        prev = next;
+    }
+
+    const segment_count = offsets_len - 1;
+    if (out_token_offsets != null) {
+        out_token_offsets[0] = 0;
+    }
+    if (segment_count == 0) {
+        return 0;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+
+    var total_tokens: usize = 0;
+    for (0..segment_count) |idx| {
+        const start = offset_slice[idx];
+        const end = offset_slice[idx + 1];
+        const segment = in_slice[start..end];
+
+        if (out_tokens == null) {
+            const counted = backend.count(allocator, segment, table) catch return -1;
+            if (counted > std.math.maxInt(usize) - total_tokens) {
+                return -1;
+            }
+            total_tokens += counted;
+        } else {
+            const tokens = backend.encode(allocator, segment, table) catch return -1;
+            defer allocator.free(tokens);
+            if (tokens.len > out_cap -| total_tokens) {
+                return -1;
+            }
+            @memcpy(out_tokens[total_tokens .. total_tokens + tokens.len], tokens);
+            total_tokens += tokens.len;
+        }
+
+        if (out_token_offsets != null) {
+            if (total_tokens > std.math.maxInt(u32)) {
+                return -1;
+            }
+            out_token_offsets[idx + 1] = @as(u32, @intCast(total_tokens));
+        }
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
+}
+
+pub export fn turbotoken_encode_bpe_ranges_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    range_starts: [*c]const u32,
+    range_ends: [*c]const u32,
+    ranges_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+    out_token_offsets: [*c]u32,
+    out_token_offsets_len: usize,
+) isize {
+    if (rank_bytes == null or range_starts == null or range_ends == null) {
+        return -1;
+    }
+    if (text_len > 0 and text == null) {
+        return -1;
+    }
+    if (out_token_offsets != null and out_token_offsets_len < ranges_len + 1) {
+        return -1;
+    }
+
+    const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
+    const starts = range_starts[0..ranges_len];
+    const ends = range_ends[0..ranges_len];
+
+    if (out_token_offsets != null) {
+        out_token_offsets[0] = 0;
+    }
+    if (ranges_len == 0) {
+        return 0;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+
+    var total_tokens: usize = 0;
+    for (0..ranges_len) |idx| {
+        const start = starts[idx];
+        const end = ends[idx];
+        if (start > end or end > text_len) {
+            return -1;
+        }
+        const segment = in_slice[start..end];
+
+        if (out_tokens == null) {
+            const counted = backend.count(allocator, segment, table) catch return -1;
+            if (counted > std.math.maxInt(usize) - total_tokens) {
+                return -1;
+            }
+            total_tokens += counted;
+        } else {
+            const tokens = backend.encode(allocator, segment, table) catch return -1;
+            defer allocator.free(tokens);
+            if (tokens.len > out_cap -| total_tokens) {
+                return -1;
+            }
+            @memcpy(out_tokens[total_tokens .. total_tokens + tokens.len], tokens);
+            total_tokens += tokens.len;
+        }
+
+        if (out_token_offsets != null) {
+            if (total_tokens > std.math.maxInt(u32)) {
+                return -1;
+            }
+            out_token_offsets[idx + 1] = @as(u32, @intCast(total_tokens));
+        }
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
+}
+
+pub export fn turbotoken_encode_bpe_chunked_stitched_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    chunk_bytes: usize,
+    overlap_bytes: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null) {
+        return -1;
+    }
+    if (chunk_bytes == 0 or overlap_bytes == 0) {
+        return -1;
+    }
+    if (text_len > 0 and text == null) {
+        return -1;
+    }
+
+    const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
+    if (in_slice.len == 0) {
+        return 0;
+    }
+
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+    const allocator = std.heap.page_allocator;
+
+    const num_chunks = (in_slice.len + chunk_bytes - 1) / chunk_bytes;
+    var total_tokens: usize = 0;
+
+    for (0..num_chunks) |chunk_idx| {
+        const start = chunk_idx * chunk_bytes;
+        const end = @min(in_slice.len, start + chunk_bytes);
+        const ext_start = start -| overlap_bytes;
+        const ext_end = @min(in_slice.len, end + overlap_bytes);
+        const ext = in_slice[ext_start..ext_end];
+
+        const ext_tokens = backend.encode(allocator, ext, table) catch return -1;
+        defer allocator.free(ext_tokens);
+
+        var cursor: usize = 0;
+        for (ext_tokens) |token| {
+            const token_bytes = table.tokenForRank(token) orelse return -1;
+            const token_len = token_bytes.len;
+            if (token_len > ext.len -| cursor) {
+                return -1;
+            }
+
+            const global_start = ext_start + cursor;
+            const owner = @min(global_start / chunk_bytes, num_chunks - 1);
+            if (owner == chunk_idx) {
+                if (out_tokens != null) {
+                    if (total_tokens >= out_cap) {
+                        return -1;
+                    }
+                    out_tokens[total_tokens] = token;
+                }
+                total_tokens += 1;
+            }
+            cursor += token_len;
+        }
+
+        if (cursor != ext.len) {
+            return -1;
+        }
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
+}
+
 pub export fn turbotoken_count_bpe_from_ranks(
     rank_bytes: [*c]const u8,
     rank_len: usize,
@@ -360,6 +709,31 @@ test "scalar utf8 byte exports match placeholder behavior" {
     try std.testing.expectEqual(@as(isize, -1), invalid);
 }
 
+test "count non-ascii exports agree with scalar baseline" {
+    const text = "a🚀b";
+    const expected = countNonAsciiScalar(text);
+
+    try std.testing.expectEqual(@as(isize, @intCast(expected)), turbotoken_count_non_ascii_utf8(text.ptr, text.len));
+    try std.testing.expectEqual(@as(isize, @intCast(expected)), turbotoken_count_non_ascii_utf8_scalar(text.ptr, text.len));
+
+    const feature_mask = turbotoken_arm64_feature_mask();
+    const kernel_id = turbotoken_count_non_ascii_kernel_id();
+    if (builtin.cpu.arch == .aarch64 and aarch64.available()) {
+        try std.testing.expect((feature_mask & aarch64.FeatureBit.advsimd) != 0);
+        try std.testing.expect(kernel_id == @intFromEnum(aarch64.CountKernel.neon) or kernel_id == @intFromEnum(aarch64.CountKernel.dotprod));
+        try std.testing.expectEqual(@as(isize, @intCast(expected)), turbotoken_count_non_ascii_utf8_neon(text.ptr, text.len));
+        const dotprod = turbotoken_count_non_ascii_utf8_dotprod(text.ptr, text.len);
+        if (dotprod >= 0) {
+            try std.testing.expectEqual(@as(isize, @intCast(expected)), dotprod);
+        }
+    } else {
+        try std.testing.expectEqual(@as(u64, 0), feature_mask);
+        try std.testing.expectEqual(@as(u32, 0), kernel_id);
+        try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_neon(text.ptr, text.len));
+        try std.testing.expectEqual(@as(isize, -1), turbotoken_count_non_ascii_utf8_dotprod(text.ptr, text.len));
+    }
+}
+
 test "encode/decode bpe path using provided ranks" {
     const ranks =
         \\YQ== 0
@@ -386,6 +760,118 @@ test "encode/decode bpe path using provided ranks" {
     const decoded = turbotoken_decode_bpe_from_ranks(ranks.ptr, ranks.len, &tokens, tokens.len, &out, out.len);
     try std.testing.expectEqual(@as(isize, 3), decoded);
     try std.testing.expectEqualSlices(u8, "abb", &out);
+}
+
+test "batch bpe encode from ranks returns flattened tokens and token offsets" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const text = "abbabb";
+    const offsets = [_]u32{ 0, 3, 6 };
+
+    var token_offsets: [3]u32 = undefined;
+    const needed = turbotoken_encode_bpe_batch_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &offsets,
+        offsets.len,
+        null,
+        0,
+        &token_offsets,
+        token_offsets.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), needed);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+
+    var tokens: [4]u32 = undefined;
+    const written = turbotoken_encode_bpe_batch_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &offsets,
+        offsets.len,
+        &tokens,
+        tokens.len,
+        &token_offsets,
+        token_offsets.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1, 2, 1 }, &tokens);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+}
+
+test "range bpe encode from ranks handles overlapping windows" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const text = "abbabb";
+    const starts = [_]u32{ 0, 0 };
+    const ends = [_]u32{ 3, 3 };
+
+    var token_offsets: [3]u32 = undefined;
+    var tokens: [4]u32 = undefined;
+    const written = turbotoken_encode_bpe_ranges_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+        &tokens,
+        tokens.len,
+        &token_offsets,
+        token_offsets.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1, 2, 1 }, &tokens);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+}
+
+test "chunked stitched bpe export matches direct encode on byte-level ranks" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\Yw== 2
+        \\
+    ;
+    const text = "abcabcabcabc";
+
+    var direct_tokens: [text.len]u32 = undefined;
+    const direct_written = turbotoken_encode_bpe_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &direct_tokens,
+        direct_tokens.len,
+    );
+    try std.testing.expectEqual(@as(isize, text.len), direct_written);
+
+    var stitched_tokens: [16]u32 = undefined;
+    const stitched_written = turbotoken_encode_bpe_chunked_stitched_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        4,
+        4,
+        &stitched_tokens,
+        stitched_tokens.len,
+    );
+    try std.testing.expectEqual(@as(isize, text.len), stitched_written);
+    try std.testing.expectEqualSlices(u32, &direct_tokens, stitched_tokens[0..text.len]);
 }
 
 test "rank-table cache reuses parsed table for same input pointer" {

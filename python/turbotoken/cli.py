@@ -38,6 +38,7 @@ def _cmd_info(_: argparse.Namespace) -> int:
     native = get_native_bridge()
     encodings = list_encoding_names()
     rank_files = {name: rank_file_path(name).exists() for name in encodings}
+    gpu_info = _gpu.backend_info()
     payload = {
         "package_version": __version__,
         "python_version": platform.python_version(),
@@ -49,9 +50,10 @@ def _cmd_info(_: argparse.Namespace) -> int:
             "version": native.version(),
             "error": native.error,
         },
-        "gpu_backend_available": _gpu.available(),
+        "gpu_backend_available": gpu_info["available"],
+        "gpu_backend": gpu_info,
         "status": "scaffold",
-        "note": "Python uses regex+BPE merge logic with cached .tiktoken ranks; Zig NEON/assembly acceleration is still pending.",
+        "note": "Python uses regex+BPE merge logic with cached .tiktoken ranks; native CPU acceleration is present, while Metal GPU is experimental byte-path acceleration (full GPU BPE is pending).",
     }
     print(json.dumps(payload, ensure_ascii=True))
     return 0

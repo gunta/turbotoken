@@ -10,7 +10,7 @@
 | Phase | Name | Status | Progress | Target | Actual |
 |-------|------|--------|----------|--------|--------|
 | 1 | ARM64 NEON + Python | `IN PROGRESS` | 18/19 | Weeks 1-3 | -- |
-| 2 | Apple Metal GPU | `NOT STARTED` | 0/5 | Weeks 4-5 | -- |
+| 2 | Apple Metal GPU | `IN PROGRESS` | 3/5 | Weeks 4-5 | -- |
 | 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 1/10 | Weeks 6-7 | -- |
 | 4 | x86_64 AVX2/AVX-512 | `NOT STARTED` | 0/5 | Weeks 8-9 | -- |
 | 5 | NVIDIA CUDA | `NOT STARTED` | 0/4 | Weeks 10-11 | -- |
@@ -32,7 +32,7 @@
 | 1.1 | Scaffold project structure (`src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`) | `DONE` | Scaffold committed with working directory layout |
 | 1.2 | Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) | `DONE` | Added generated pair-cache seed sets from `.tiktoken` merge files (`scripts/generate-pair-cache-seeds.ts` -> `src/generated/pair_cache_seeds.zig`) and runtime fingerprint matching (`populateFromKnownSeedSets`) |
 | 1.3 | Implement O(n) backtracking BPE encoder in Zig | `DONE` | Replaced quadratic merge scanning with a backtracking merge queue (`std.PriorityQueue`) over a linked-token chain, plus pair-rank memoization through `src/pair_cache.zig` |
-| 1.4 | Write NEON pre-tokenizer: Zig `@Vector(16, u8)` + hand-written ARM64 `.S` | `DONE` | Added ARM64 NEON `.S` pretokenizer routine (`turbotoken_arm64_count_non_ascii`) and wired it via `src/arch/aarch64.zig`/`src/pretokenizer.zig` |
+| 1.4 | Write NEON pre-tokenizer: Zig `@Vector(16, u8)` + hand-written ARM64 `.S` | `DONE` | Added ARM64 NEON `.S` pretokenizer routine (`turbotoken_arm64_count_non_ascii`), optional DotProd variant (`turbotoken_arm64_count_non_ascii_dotprod`), and runtime kernel auto-selection in `src/arch/aarch64.zig`/`src/pretokenizer.zig` |
 | 1.5 | Write NEON decoder (`ld1`/`st1` + `prfm` prefetch) in ARM64 assembly | `DONE` | Added ARM64 NEON `.S` decoder routine (`turbotoken_arm64_decode_u32_to_u8`) with `ld1`/`st1` + `prfm`, matching ARM64 NEON byte->u32 widening routine (`turbotoken_arm64_encode_u8_to_u32`), fused validate+decode (`turbotoken_arm64_validate_and_decode_u32_to_u8`), and 64-byte unrolled loops wired into Zig decode/encode and UTF-8 C ABI helpers |
 | 1.6 | Scalar Zig fallback (no SIMD `@Vector`) | `POSTPONED` | Scalar backend routes encode/decode/count through rank-aware Zig paths, exposes rank-based C ABI count (`turbotoken_count_bpe_from_ranks`), caches parsed rank tables in native exports, and uses dense rank-token lookup + stack-buffer pair probing; further scalar tuning is deferred while ARM64 NEON path remains priority (`bench/results/bench-scalar-fallback-20260225-124745.json`) |
 | 1.7 | Set up Hyperfine benchmark scripts (Bun Shell TS) | `DONE` | `scripts/bench-*.ts` now run benchmarks with JSON output + manual fallback |
@@ -72,7 +72,8 @@
 - [ ] PyPI published
 
 Launch-note: Launch bundle is intentionally postponed; Linux wheel checks were run via Docker (`python:3.11-slim`, both `linux/arm64` and `linux/amd64`) against wheels in `dist/wheels/`; upstream public tiktoken tests were run via `bun run test:upstream-alias` (`bench/results/upstream-alias-1772024333077.json`, `32 passed, 1 deselected`).
-Benchmark-note: Added dedicated native C ABI byte-path benchmark (`bun run bench:native-bytes`) to track ARM64 NEON encode/decode kernels independently from scalar BPE; latest NEON vs scalar artifact is `bench/results/bench-native-byte-path-20260225-133026.json` (encode: 104.2 ms vs 423.2 ms, 4.06x faster; decode: 103.7 ms vs 454.7 ms, 4.38x faster).
+Benchmark-note: Added dedicated native C ABI byte-path benchmark (`bun run bench:native-bytes`) to track ARM64 NEON encode/decode kernels independently from scalar BPE; latest NEON vs scalar artifact is `bench/results/bench-native-byte-path-20260225-134436.json` (encode: 117.5 ms vs 435.7 ms, 3.71x faster; decode: 106.8 ms vs 467.9 ms, 4.38x faster).
+Benchmark-note: Added native pretokenizer kernel benchmark (`bun run bench:native-pretokenizer`) with runtime auto-selection over NEON/DotProd variants; latest artifact is `bench/results/bench-native-pretokenizer-20260225-134405.json` (auto: 133.6 ms, scalar: 515.7 ms, 3.86x faster; auto selected kernel id `1` = NEON on this M4 Max build).
 
 ---
 
@@ -80,10 +81,10 @@ Benchmark-note: Added dedicated native C ABI byte-path benchmark (`bun run bench
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 2.1 | Metal 4 compute shader for batch pre-tokenization | `TODO` | `gpu/metal/batch_encode.metal` |
-| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `TODO` | Independent chunks |
-| 2.3 | `encode_gpu()` / `count_gpu()` Python methods | `TODO` | |
-| 2.4 | Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken | `TODO` | |
+| 2.1 | Metal 4 compute shader for batch pre-tokenization | `DONE` | Replaced placeholder kernels with `tt_encode_u8_to_u32` and `tt_count_nonzero_segments`, plus Objective-C Metal host bridge (`gpu/metal/metal_bridge.m`) with pipeline + buffer caching |
+| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `IN PROGRESS` | Added experimental chunked BPE stitch prototype, native batch/range/chunked C ABI helpers for rank-based stitching (`turbotoken_encode_bpe_batch_from_ranks`, `..._ranges_...`, `..._chunked_stitched_...`), and a Metal owner-mask stitch kernel (`tt_chunk_owner_flags`); true on-GPU merge kernels still pending |
+| 2.3 | `encode_gpu()` / `count_gpu()` Python methods | `DONE` | Added public experimental `Encoding.encode_gpu()` / `count_gpu()`, auto-route calibration v2 cache (encode/count/BPE thresholds), and route split where `device=\"auto\"` stays exact/native unless calibrated metal thresholds are met while `device=\"metal\"` opts into experimental chunked stitch mode |
+| 2.4 | Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken | `DONE` | `scripts/bench-gpu.ts` runs real Metal/NEON byte-path benchmarks; added crossover matrix bench (`scripts/bench-gpu-crossover.ts`) with auto-route + profiling output |
 | 2.5 | Blog post: Metal GPU tokenization | `TODO` | `docs/metal-gpu.md` |
 
 ---
@@ -172,6 +173,7 @@ Benchmark-note: Added dedicated native C ABI byte-path benchmark (`bun run bench
 | 2026-02-25 | Lightweight byte-rank fast map in rank loader + fallback lookup in node init | No stable win; kept reverting to plain lookup for now | `bench/results/bench-scalar-fallback-20260225-123036.json`, `bench/results/bench-scalar-fallback-20260225-123104.json` |
 | 2026-02-25 | NEON encode 64-byte loop rewrite to remove `mov` staging (direct `uxtl/uxtl2` from source vectors) | Regressed measured throughput on M4 Max; reverted to staged variant | `bench/results/bench-native-byte-path-20260225-131605.json` |
 | 2026-02-25 | ARM64 `aes/pmull` pair-cache slot hash (`slotIndex`) via new crypto asm helper | No stable scalar-BPE win across reruns (one run regressed; second was mixed/near-noise); reverted | `bench/results/bench-scalar-fallback-20260225-132701.json`, `bench/results/bench-scalar-fallback-20260225-132746.json` |
+| 2026-02-25 | Force ARM64 DotProd non-ASCII count kernel as default pretokenizer path | Slower than NEON on this M4 Max workload; kept DotProd as an optional auto-tune candidate only | `bench/results/bench-native-pretokenizer-20260225-134405.json` |
 
 ---
 
@@ -233,7 +235,12 @@ Benchmark-note: Added dedicated native C ABI byte-path benchmark (`bun run bench
 - Verified upstream `tiktoken` public tests under aliasing (`import turbotoken as tiktoken` behavior): `32 passed, 1 deselected` with `TIKTOKEN_MAX_EXAMPLES=20` (`bench/results/upstream-alias-1772024333077.json`).
 - Replaced ARM64 assembly stubs with real NEON routines in `asm/arm64/neon_pretokenizer.S` and `asm/arm64/neon_decoder.S`, and wired them through `build.zig`, `src/arch/aarch64.zig`, and `src/decoder.zig`.
 - Added NEON prefetch hints (`prfm pldl1keep`) in ARM64 assembly hot loops and validated via `zig build test`.
-- Added 64-byte unrolled fused validate+decode in ARM64 NEON assembly, then reduced validation overhead by switching to vector max accumulation with final compare and by widening the encode loop's 64-byte load block; latest native byte-path artifact is `bench/results/bench-native-byte-path-20260225-133026.json`.
+- Added 64-byte unrolled fused validate+decode in ARM64 NEON assembly, then reduced validation overhead by switching to vector max accumulation with final compare and by widening the encode loop's 64-byte load block; latest native byte-path artifact is `bench/results/bench-native-byte-path-20260225-134436.json`.
+- Added ARM64 DotProd non-ASCII count kernel plus runtime kernel auto-selection (`NEON` vs `DotProd`) in `src/arch/aarch64.zig`, with exported feature-mask/kernel-id introspection and native pretokenizer benchmarks (`bench/results/bench-native-pretokenizer-20260225-134405.json`).
 - Refactored encoder merge internals to share a reusable merged-node path and added `Encoder.countWithRanks` to avoid output token-slice allocation during scalar counting.
 - Updated C ABI rank-based encode/decode exports to call through the scalar backend wrapper instead of direct encoder/decoder calls.
 - Added Zig executable resolution in Bun scripts (`scripts/_lib.ts`) to prefer a real toolchain binary over broken shims in local environments.
+- Started Phase 2 Metal implementation: added Objective-C host bridge (`gpu/metal/metal_bridge.m`) with cached compute pipelines/reusable buffers, experimental Python GPU bridge APIs in `python/turbotoken/_gpu.py`, and real `bench-gpu` measurements (`bench/results/bench-gpu-20260225-145052.json`) showing early large-batch count wins over pure Python while NEON remains faster for byte-path encode.
+- Tuned Metal kernel launch strategy on M4 Max: encode kernel now processes larger byte chunks per thread and count kernel uses threadgroup reduction, with added per-run profiling counters (CPU/GPU ns, bytes, dispatch threads/lanes) exported through `_gpu.profile_last()`.
+- Added GPU crossover matrix benchmark (`bench/results/bench-gpu-crossover-1772030955226.json`) and auto-route calibration cache (`~/.cache/turbotoken/metal/autoroute-v1.json`) to choose backend thresholds from measured data.
+- Added rank-BPE batch/range/chunk-stitch native exports and Python bridge bindings, then split `encode_gpu` routing so `device="auto"` stays exact/native while `device="metal"` enables experimental chunked stitching with a Metal owner-mask stage; updated crossover artifact with BPE rows (`bench/results/bench-gpu-crossover-1772030955226.json`).

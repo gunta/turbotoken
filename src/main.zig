@@ -10,9 +10,18 @@ pub const exports = @import("exports.zig");
 comptime {
     _ = exports.turbotoken_version;
     _ = exports.turbotoken_count;
+    _ = exports.turbotoken_arm64_feature_mask;
+    _ = exports.turbotoken_count_non_ascii_kernel_id;
+    _ = exports.turbotoken_count_non_ascii_utf8;
+    _ = exports.turbotoken_count_non_ascii_utf8_scalar;
+    _ = exports.turbotoken_count_non_ascii_utf8_neon;
+    _ = exports.turbotoken_count_non_ascii_utf8_dotprod;
     _ = exports.turbotoken_encode_utf8_bytes;
     _ = exports.turbotoken_decode_utf8_bytes;
     _ = exports.turbotoken_encode_bpe_from_ranks;
+    _ = exports.turbotoken_encode_bpe_batch_from_ranks;
+    _ = exports.turbotoken_encode_bpe_ranges_from_ranks;
+    _ = exports.turbotoken_encode_bpe_chunked_stitched_from_ranks;
     _ = exports.turbotoken_count_bpe_from_ranks;
     _ = exports.turbotoken_decode_bpe_from_ranks;
 }

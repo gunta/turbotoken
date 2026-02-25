@@ -9,7 +9,8 @@ SIMD backends, and a compatibility-focused Python API.
 
 - Early implementation, actively under development.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
-- Native Zig acceleration paths (NEON/AVX/GPU) are still in progress.
+- Native Zig CPU acceleration is available for key byte-path primitives; broader backend work (AVX/GPU full BPE) is still in progress.
+- Apple Metal backend is now wired as an experimental UTF-8 byte-path accelerator (full GPU BPE merge path is still pending).
 - Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`
   on the tracked compatibility corpus.
 
