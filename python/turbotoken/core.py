@@ -6,6 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, AbstractSet, Callable, Collection, Literal, TypeVar
 
+from ._native import get_native_bridge
 from ._rank_files import ensure_rank_file, parse_rank_file_bytes, rank_file_path
 from ._registry import EncodingSpec, get_encoding_spec
 from ._registry import list_encoding_names as _list_encoding_names
@@ -33,7 +34,7 @@ def _special_token_regex(tokens: frozenset[str]):
     return regex.compile(pattern)
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, init=False)
 class Encoding:
     name: str
     _spec: EncodingSpec
@@ -42,6 +43,52 @@ class Encoding:
     _token_byte_values_cache: list[bytes] | None = field(default=None, init=False, repr=False)
     _piece_regex: Any | None = field(default=None, init=False, repr=False)
     _bpe_cache: dict[bytes, tuple[int, ...]] = field(default_factory=dict, init=False, repr=False)
+    _rank_payload_cache: bytes | None = field(default=None, init=False, repr=False)
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        _spec: EncodingSpec | None = None,
+        pat_str: str | None = None,
+        mergeable_ranks: dict[bytes, int] | None = None,
+        special_tokens: dict[str, int] | None = None,
+    ) -> None:
+        self.name = name
+        self._decoder = None
+        self._token_byte_values_cache = None
+        self._piece_regex = None
+        self._bpe_cache = {}
+        self._rank_payload_cache = None
+
+        if _spec is not None:
+            self._spec = _spec
+            self._mergeable_ranks_cache = None
+            return
+
+        if pat_str is None or mergeable_ranks is None or special_tokens is None:
+            raise TypeError(
+                "Encoding() requires either _spec=... or "
+                "pat_str=..., mergeable_ranks=..., special_tokens=..."
+            )
+
+        mergeable = dict(mergeable_ranks)
+        specials = dict(special_tokens)
+
+        max_token = -1
+        if mergeable:
+            max_token = max(max_token, max(mergeable.values()))
+        if specials:
+            max_token = max(max_token, max(specials.values()))
+
+        self._spec = EncodingSpec(
+            name=name,
+            rank_file_url="",
+            pat_str=pat_str,
+            special_tokens=specials,
+            explicit_n_vocab=max_token + 1,
+        )
+        self._mergeable_ranks_cache = mergeable
 
     @property
     def n_vocab(self) -> int:
@@ -120,6 +167,12 @@ class Encoding:
                 self._bpe_cache[piece] = result
             return result
 
+        # Large repeated segments are expensive in pure-Python BPE; use native Zig path when available.
+        if len(piece) >= 2048 and self._rank_payload_cache is not None:
+            native_tokens = get_native_bridge().encode_bpe_from_ranks(self._rank_payload_cache, piece)
+            if native_tokens is not None:
+                return tuple(native_tokens)
+
         parts = [bytes([byte]) for byte in piece]
         while len(parts) > 1:
             best_idx = -1
@@ -159,12 +212,23 @@ class Encoding:
     def _count_ordinary_impl(self, text: str) -> int:
         if not text:
             return 0
+        self.load_mergeable_ranks()
+        native_bridge = get_native_bridge() if self._rank_payload_cache is not None else None
         piece_regex = self._ensure_piece_regex()
         count = 0
         for piece in piece_regex.findall(text):
             if not piece:
                 continue
-            count += len(self._bpe_tokenize_piece(piece.encode("utf-8")))
+            piece_bytes = piece.encode("utf-8")
+
+            # Keep count() allocation-free for large pieces by using the native scalar fast path.
+            if len(piece_bytes) >= 2048 and native_bridge is not None and self._rank_payload_cache is not None:
+                native_count = native_bridge.count_bpe_from_ranks(self._rank_payload_cache, piece_bytes)
+                if native_count is not None:
+                    count += native_count
+                    continue
+
+            count += len(self._bpe_tokenize_piece(piece_bytes))
         return count
 
     def _encode_with_allowed_special(self, text: str, allowed_special: set[str]) -> list[int]:
@@ -233,6 +297,9 @@ class Encoding:
             token_bytes = text_or_bytes.encode("utf-8")
         else:
             token_bytes = text_or_bytes
+            for special_text, special_token in self._spec.special_tokens.items():
+                if token_bytes == special_text.encode("utf-8"):
+                    return special_token
 
         token = self.load_mergeable_ranks().get(token_bytes)
         if token is None:
@@ -283,7 +350,7 @@ class Encoding:
         assert self._decoder is not None
         token_bytes = self._decoder.get(token)
         if token_bytes is None:
-            raise ValueError(f"Unknown token id: {token}")
+            raise KeyError(f"Unknown token id: {token}")
         return token_bytes
 
     def decode_tokens_bytes(self, tokens: list[int]) -> list[bytes]:
@@ -369,7 +436,8 @@ class Encoding:
             return self._mergeable_ranks_cache
 
         rank_path = self.ensure_rank_file(cache_dir=cache_dir, force=force)
-        self._mergeable_ranks_cache = parse_rank_file_bytes(rank_path.read_bytes())
+        self._rank_payload_cache = rank_path.read_bytes()
+        self._mergeable_ranks_cache = parse_rank_file_bytes(self._rank_payload_cache)
         self._decoder = None
         self._token_byte_values_cache = None
         self._bpe_cache.clear()

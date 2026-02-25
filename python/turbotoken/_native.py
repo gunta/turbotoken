@@ -81,6 +81,12 @@ class NativeBridge:
                 uint32_t *out_tokens,
                 size_t out_cap
             );
+            long turbotoken_count_bpe_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *text,
+                size_t text_len
+            );
             long turbotoken_decode_bpe_from_ranks(
                 const char *rank_bytes,
                 size_t rank_len,
@@ -175,6 +181,26 @@ class NativeBridge:
         if written < 0:
             return None
         return [int(out[idx]) for idx in range(written)]
+
+    def count_bpe_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
+        self.load()
+        if self._lib is None:
+            return None
+
+        try:
+            result = int(
+                self._lib.turbotoken_count_bpe_from_ranks(
+                    rank_payload,
+                    len(rank_payload),
+                    data,
+                    len(data),
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
 
     def decode_bpe_from_ranks(self, rank_payload: bytes, tokens: list[int]) -> bytes | None:
         self.load()

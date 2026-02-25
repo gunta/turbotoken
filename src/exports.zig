@@ -1,6 +1,5 @@
 const std = @import("std");
-const Encoder = @import("encoder.zig").Encoder;
-const Decoder = @import("decoder.zig").Decoder;
+const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const rank_loader = @import("rank_loader.zig");
 
 pub export fn turbotoken_version() [*c]const u8 {
@@ -84,8 +83,8 @@ pub export fn turbotoken_encode_bpe_from_ranks(
     var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
     defer table.deinit();
 
-    const enc = Encoder.init();
-    const tokens = enc.encodeWithRanks(allocator, text[0..text_len], &table) catch return -1;
+    const backend = ScalarBackend.init();
+    const tokens = backend.encode(allocator, text[0..text_len], &table) catch return -1;
     defer allocator.free(tokens);
 
     if (out_tokens == null) {
@@ -101,6 +100,29 @@ pub export fn turbotoken_encode_bpe_from_ranks(
 
     @memcpy(out_tokens[0..tokens.len], tokens);
     return @as(isize, @intCast(tokens.len));
+}
+
+pub export fn turbotoken_count_bpe_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = std.heap.page_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
+    defer table.deinit();
+
+    const backend = ScalarBackend.init();
+    const token_count = backend.count(allocator, text[0..text_len], &table) catch return -1;
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
 }
 
 pub export fn turbotoken_decode_bpe_from_ranks(
@@ -120,8 +142,8 @@ pub export fn turbotoken_decode_bpe_from_ranks(
     var table = rank_loader.loadFromBytes(allocator, rank_slice) catch return -1;
     defer table.deinit();
 
-    const dec = Decoder.init();
-    const bytes = dec.decodeWithRanks(allocator, tokens[0..token_len], &table) catch return -1;
+    const backend = ScalarBackend.init();
+    const bytes = backend.decode(allocator, tokens[0..token_len], &table) catch return -1;
     defer allocator.free(bytes);
 
     if (out_bytes == null) {
@@ -168,6 +190,9 @@ test "encode/decode bpe path using provided ranks" {
 
     const needed = turbotoken_encode_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3, null, 0);
     try std.testing.expectEqual(@as(isize, 2), needed);
+
+    const count = turbotoken_count_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3);
+    try std.testing.expectEqual(@as(isize, 2), count);
 
     var tokens: [2]u32 = undefined;
     const written = turbotoken_encode_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3, &tokens, tokens.len);

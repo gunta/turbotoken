@@ -1,23 +1,24 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from "node:fs";
-import { commandExists, resolvePath, runCommand, section, writeJson } from "./_lib";
+import { commandExists, resolvePath, runCommand, section, writeJson, zigExecutable } from "./_lib";
 
 section("WASM benchmark");
 
 const outputPath = resolvePath("bench", "results", `bench-wasm-${Date.now()}.json`);
+const zig = zigExecutable();
 
-if (!commandExists("zig")) {
+if (!commandExists(zig)) {
   writeJson(outputPath, {
     generatedAt: new Date().toISOString(),
     status: "skipped",
-    reason: "zig not found on PATH",
+    reason: "zig executable not found",
   });
-  console.warn("zig not found; wrote skipped benchmark record.");
+  console.warn("zig executable not found; wrote skipped benchmark record.");
   process.exit(0);
 }
 
 const buildResult = runCommand(
-  "zig",
+  zig,
   ["build", "-Dtarget=wasm32-freestanding", "-Doptimize=ReleaseSmall"],
   { allowFailure: true },
 );

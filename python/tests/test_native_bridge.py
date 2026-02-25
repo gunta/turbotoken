@@ -14,5 +14,9 @@ def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     encoded = bridge.encode_bpe_from_ranks(ranks, b"abb")
     if encoded is None:
         pytest.skip("native library does not expose rank-based BPE symbols")
+    counted = bridge.count_bpe_from_ranks(ranks, b"abb")
+    if counted is None:
+        pytest.skip("native library does not expose rank-based BPE count symbol")
     assert encoded == [2, 1]
+    assert counted == 2
     assert bridge.decode_bpe_from_ranks(ranks, encoded) == b"abb"

@@ -27,3 +27,4 @@ bench/results/*.json
 bench/results/*.md
 bench/charts/*.png
 bench/charts/*.svg
+.dmux/

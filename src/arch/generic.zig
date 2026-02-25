@@ -42,9 +42,7 @@ pub const ScalarBackend = struct {
         text: []const u8,
         table: *const rank_loader.RankTable,
     ) !usize {
-        const tokens = try self.encode(allocator, text, table);
-        defer allocator.free(tokens);
-        return tokens.len;
+        return self.encoder.countWithRanks(allocator, text, table);
     }
 };
 

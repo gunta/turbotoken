@@ -23,6 +23,7 @@ zig build
 zig build test
 python3 -m pytest -q
 bun run test
+bun run test:upstream-alias
 bun run build:wheels
 ```
 

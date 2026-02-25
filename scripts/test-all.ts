@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { commandExists, pythonExecutable, runCommand, section } from "./_lib";
+import { commandExists, pythonExecutable, runCommand, section, zigExecutable } from "./_lib";
 
 interface Task {
   name: string;
@@ -23,7 +23,7 @@ const tasks: Task[] = [
   },
   {
     name: "zig-tests",
-    command: "zig",
+    command: zigExecutable(),
     args: ["build", "test"],
     required: true,
   },

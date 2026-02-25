@@ -1,8 +1,19 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
+extern fn turbotoken_arm64_count_non_ascii(bytes: [*]const u8, len: usize) usize;
+extern fn turbotoken_arm64_decode_u32_to_u8(tokens: [*]const u32, len: usize, out: [*]u8) void;
+
 pub fn available() bool {
     return builtin.cpu.arch == .aarch64;
+}
+
+pub fn decodeU32ToU8(tokens: []const u32, out: []u8) void {
+    std.debug.assert(tokens.len == out.len);
+    if (tokens.len == 0) {
+        return;
+    }
+    turbotoken_arm64_decode_u32_to_u8(tokens.ptr, tokens.len, out.ptr);
 }
 
 pub fn estimateTokenBound(text: []const u8) usize {
@@ -10,27 +21,7 @@ pub fn estimateTokenBound(text: []const u8) usize {
         return 0;
     }
 
-    var non_ascii: usize = 0;
-    var idx: usize = 0;
-
-    const threshold: @Vector(16, u8) = @splat(0x80);
-    while (idx + 16 <= text.len) : (idx += 16) {
-        const chunk_bytes: [16]u8 = text[idx..][0..16].*;
-        const chunk: @Vector(16, u8) = @bitCast(chunk_bytes);
-        const mask = chunk >= threshold;
-        inline for (0..16) |lane| {
-            if (mask[lane]) {
-                non_ascii += 1;
-            }
-        }
-    }
-
-    while (idx < text.len) : (idx += 1) {
-        if (text[idx] & 0x80 != 0) {
-            non_ascii += 1;
-        }
-    }
-
+    const non_ascii = turbotoken_arm64_count_non_ascii(text.ptr, text.len);
     const ascii = text.len - non_ascii;
     return ((ascii + 3) / 4) + non_ascii;
 }
@@ -42,4 +33,10 @@ test "aarch64 estimate token bound handles ascii and utf8 bytes" {
     // "🚀" is four non-ASCII bytes in UTF-8, so this heuristic returns 4.
     try std.testing.expectEqual(@as(usize, 4), estimateTokenBound("🚀"));
     try std.testing.expectEqual(@as(usize, 5), estimateTokenBound("a🚀b"));
+}
+
+test "aarch64 decoder packs u32 bytes" {
+    var out: [4]u8 = undefined;
+    decodeU32ToU8(&[_]u32{ 65, 66, 67, 68 }, &out);
+    try std.testing.expectEqualSlices(u8, "ABCD", &out);
 }

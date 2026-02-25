@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,9 +40,33 @@ export function section(title: string): void {
 }
 
 export function commandExists(command: string): boolean {
+  if (command.includes("/") || command.includes("\\")) {
+    return existsSync(command);
+  }
   const checker = process.platform === "win32" ? "where" : "which";
   const result = spawnSync(checker, [command], { stdio: "ignore" });
   return result.status === 0;
+}
+
+export function zigExecutable(): string {
+  const envZig = process.env.ZIG_EXE;
+  if (envZig && existsSync(envZig)) {
+    return envZig;
+  }
+
+  const protoRoot = resolve(homedir(), ".proto", "tools", "zig");
+  if (existsSync(protoRoot)) {
+    const candidates = readdirSync(protoRoot)
+      .map((version) => resolve(protoRoot, version, "zig"))
+      .filter((path) => existsSync(path));
+
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
+      return candidates[0];
+    }
+  }
+
+  return "zig";
 }
 
 export function runCommand(command: string, args: string[], options: RunOptions = {}): RunResult {

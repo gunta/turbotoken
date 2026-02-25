@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { commandExists, ensureDir, pythonExecutable, resolvePath, runCommand, section, writeJson } from "./_lib";
+import { commandExists, ensureDir, pythonExecutable, resolvePath, runCommand, section, writeJson, zigExecutable } from "./_lib";
 
 interface TargetSpec {
   target: string;
@@ -44,6 +44,7 @@ function findBaseWheel(baseDir: string): string {
 section("Wheel build");
 
 const python = pythonExecutable();
+const zig = zigExecutable();
 const outDir = resolvePath("dist", "wheels");
 const baseDir = resolvePath("dist", "wheels", "base");
 const nativeDir = resolvePath("dist", "wheels", "native");
@@ -58,7 +59,7 @@ const targets: TargetSpec[] = [
   { target: "x86_64-windows", wheelTag: "win_amd64", libRelativePath: "bin/turbotoken.dll" },
 ];
 
-if (!commandExists("zig")) {
+if (!commandExists(zig)) {
   console.error("zig is required for cross-target native builds");
   process.exit(1);
 }
@@ -84,7 +85,7 @@ for (const item of targets) {
   section(`Cross-target native build: ${item.target}`);
   const prefix = resolvePath("dist", "wheels", "native", item.target);
   ensureDir(prefix);
-  const crossBuild = runCommand("zig", ["build", `-Dtarget=${item.target}`, "--prefix", prefix], {
+  const crossBuild = runCommand(zig, ["build", `-Dtarget=${item.target}`, "--prefix", prefix], {
     allowFailure: true,
   });
 
@@ -156,6 +157,7 @@ const metadataPath = resolvePath("dist", "wheels", `build-wheels-${Date.now()}.j
 writeJson(metadataPath, {
   generatedAt: new Date().toISOString(),
   python,
+  zig,
   baseWheel,
   targets: results,
   note: "Platform-tagged wheels are repacked from the base wheel with per-target native libraries under turbotoken/.libs.",

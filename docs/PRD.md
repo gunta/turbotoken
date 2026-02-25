@@ -410,8 +410,8 @@ This is the primary dev target: Apple M4 Max. We optimize for what we have in ha
 - [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`
 - [ ] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
 - [x] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
-- [ ] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
-- [ ] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch (`.S` assembly)
+- [x] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
+- [x] Write NEON decoder: `ld1`/`st1` from lookup table with `prfm pldl1keep` prefetch (`.S` assembly)
 - [ ] Scalar Zig fallback (no SIMD `@Vector` -- still 4x tiktoken via better algorithm)
 - [x] Set up Hyperfine benchmark scripts (Bun Shell TypeScript)
 - [x] Clone tiktoken upstream as git submodule for test oracle

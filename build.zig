@@ -17,20 +17,26 @@ fn addStaticLibraryCompat(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
-    if (@hasDecl(std.Build, "addStaticLibrary")) {
-        return b.addStaticLibrary(.{
+    const lib = if (@hasDecl(std.Build, "addStaticLibrary"))
+        b.addStaticLibrary(.{
             .name = "turbotoken",
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+        })
+    else
+        b.addLibrary(.{
+            .name = "turbotoken",
+            .linkage = .static,
+            .root_module = createRootModule(b, target, optimize),
         });
+
+    if (target.result.cpu.arch == .aarch64) {
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
     }
 
-    return b.addLibrary(.{
-        .name = "turbotoken",
-        .linkage = .static,
-        .root_module = createRootModule(b, target, optimize),
-    });
+    return lib;
 }
 
 fn addSharedLibraryCompat(
@@ -38,20 +44,26 @@ fn addSharedLibraryCompat(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
-    if (@hasDecl(std.Build, "addSharedLibrary")) {
-        return b.addSharedLibrary(.{
+    const lib = if (@hasDecl(std.Build, "addSharedLibrary"))
+        b.addSharedLibrary(.{
             .name = "turbotoken",
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+        })
+    else
+        b.addLibrary(.{
+            .name = "turbotoken",
+            .linkage = .dynamic,
+            .root_module = createRootModule(b, target, optimize),
         });
+
+    if (target.result.cpu.arch == .aarch64) {
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
+        lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
     }
 
-    return b.addLibrary(.{
-        .name = "turbotoken",
-        .linkage = .dynamic,
-        .root_module = createRootModule(b, target, optimize),
-    });
+    return lib;
 }
 
 fn addTestCompat(
@@ -59,17 +71,23 @@ fn addTestCompat(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
-    if (@hasField(std.Build.TestOptions, "root_source_file")) {
-        return b.addTest(.{
+    const tests = if (@hasField(std.Build.TestOptions, "root_source_file"))
+        b.addTest(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+        })
+    else
+        b.addTest(.{
+            .root_module = createRootModule(b, target, optimize),
         });
+
+    if (target.result.cpu.arch == .aarch64) {
+        tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
+        tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
     }
 
-    return b.addTest(.{
-        .root_module = createRootModule(b, target, optimize),
-    });
+    return tests;
 }
 
 const BuildTargetSpec = struct {

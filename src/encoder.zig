@@ -23,6 +23,10 @@ pub const Encoder = struct {
 
     const CandidateQueue = std.PriorityQueue(Candidate, void, compareCandidate);
     const cache_miss = std.math.maxInt(u32);
+    const MergeResult = struct {
+        nodes: []Node,
+        head_idx: usize,
+    };
 
     fn compareCandidate(_: void, a: Candidate, b: Candidate) std.math.Order {
         const rank_order = std.math.order(a.rank, b.rank);
@@ -97,33 +101,13 @@ pub const Encoder = struct {
         });
     }
 
-    pub fn init() Encoder {
-        return .{};
-    }
-
-    pub fn encode(self: *const Encoder, allocator: std.mem.Allocator, text: []const u8) ![]u32 {
-        _ = self;
-        var out = try allocator.alloc(u32, text.len);
-        for (text, 0..) |byte, idx| {
-            out[idx] = byte;
-        }
-        return out;
-    }
-
-    pub fn encodeWithRanks(
-        self: *const Encoder,
+    fn buildMergedNodes(
         allocator: std.mem.Allocator,
         text: []const u8,
         table: *const rank_loader.RankTable,
-    ) ![]u32 {
-        _ = self;
-
-        if (text.len == 0) {
-            return allocator.alloc(u32, 0);
-        }
-
+    ) !MergeResult {
         const nodes = try allocator.alloc(Node, text.len);
-        defer allocator.free(nodes);
+        errdefer allocator.free(nodes);
 
         for (text, 0..) |_, idx| {
             const byte_token = table.get(text[idx .. idx + 1]) orelse return error.UnknownToken;
@@ -139,6 +123,7 @@ pub const Encoder = struct {
         }
 
         var cache = pair_cache.PairCache.init();
+        _ = cache.populateFromKnownSeedSets(table);
         var scratch = std.ArrayListUnmanaged(u8){};
         defer scratch.deinit(allocator);
 
@@ -206,10 +191,45 @@ pub const Encoder = struct {
             }
         }
 
+        return .{
+            .nodes = nodes,
+            .head_idx = head_idx orelse return error.InvalidTokenizerState,
+        };
+    }
+
+    pub fn init() Encoder {
+        return .{};
+    }
+
+    pub fn encode(self: *const Encoder, allocator: std.mem.Allocator, text: []const u8) ![]u32 {
+        _ = self;
+        var out = try allocator.alloc(u32, text.len);
+        for (text, 0..) |byte, idx| {
+            out[idx] = byte;
+        }
+        return out;
+    }
+
+    pub fn encodeWithRanks(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+    ) ![]u32 {
+        _ = self;
+
+        if (text.len == 0) {
+            return allocator.alloc(u32, 0);
+        }
+
+        const merged = try buildMergedNodes(allocator, text, table);
+        defer allocator.free(merged.nodes);
+        const nodes = merged.nodes;
+
         var out = std.ArrayListUnmanaged(u32){};
         errdefer out.deinit(allocator);
 
-        var cursor = head_idx;
+        var cursor: ?usize = merged.head_idx;
         while (cursor) |idx| : (cursor = nodes[idx].next) {
             if (!nodes[idx].alive) {
                 return error.InvalidTokenizerState;
@@ -218,6 +238,33 @@ pub const Encoder = struct {
         }
 
         return out.toOwnedSlice(allocator);
+    }
+
+    pub fn countWithRanks(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+    ) !usize {
+        _ = self;
+
+        if (text.len == 0) {
+            return 0;
+        }
+
+        const merged = try buildMergedNodes(allocator, text, table);
+        defer allocator.free(merged.nodes);
+
+        var count: usize = 0;
+        var cursor: ?usize = merged.head_idx;
+        while (cursor) |idx| : (cursor = merged.nodes[idx].next) {
+            if (!merged.nodes[idx].alive) {
+                return error.InvalidTokenizerState;
+            }
+            count += 1;
+        }
+
+        return count;
     }
 };
 
@@ -284,4 +331,20 @@ test "encodeWithRanks errors when token is missing from rank table" {
 
     const enc = Encoder.init();
     try std.testing.expectError(error.UnknownToken, enc.encodeWithRanks(allocator, "ab", &table));
+}
+
+test "countWithRanks counts final tokenized segments without output allocation" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\Yw== 2
+        \\YWI= 3
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    try std.testing.expectEqual(@as(usize, 2), try enc.countWithRanks(allocator, "abc", &table));
 }

@@ -1,18 +1,19 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from "node:fs";
-import { resolvePath, runCommand, section, writeJson, commandExists } from "./_lib";
+import { resolvePath, runCommand, section, writeJson, commandExists, zigExecutable } from "./_lib";
 
 section("Binary size benchmark");
 
 const outputPath = resolvePath("bench", "results", `bench-binary-size-${Date.now()}.json`);
+const zig = zigExecutable();
 
-if (!commandExists("zig")) {
+if (!commandExists(zig)) {
   writeJson(outputPath, {
     generatedAt: new Date().toISOString(),
     status: "skipped",
-    reason: "zig not found on PATH",
+    reason: "zig executable not found",
   });
-  console.warn("zig not found; wrote skipped benchmark record.");
+  console.warn("zig executable not found; wrote skipped benchmark record.");
   process.exit(0);
 }
 
@@ -27,7 +28,7 @@ const measurements: Array<{
 
 for (const target of targets) {
   console.log(`Building target: ${target}`);
-  const result = runCommand("zig", ["build", `-Dtarget=${target}`, "-Doptimize=ReleaseSmall"], {
+  const result = runCommand(zig, ["build", `-Dtarget=${target}`, "-Doptimize=ReleaseSmall"], {
     allowFailure: true,
   });
 
