@@ -97,6 +97,11 @@ def mean_ms(fn, loops):
         fn()
     return (time.perf_counter()-start)*1000.0/max(1,loops)
 
+def mib_per_s(total_bytes, mean_ms):
+    if mean_ms <= 0:
+        return None
+    return (total_bytes / (1024.0 * 1024.0)) / (mean_ms / 1000.0)
+
 encode_sizes=${JSON.stringify(encodeSizes)}
 encode_rows=[]
 for size in encode_sizes:
@@ -112,7 +117,9 @@ for size in encode_sizes:
         "bytes":size,
         "loops":loops,
         "metal_mean_ms":metal_ms,
+        "metal_mib_per_s":mib_per_s(size, metal_ms),
         "native_mean_ms":native_ms,
+        "native_mib_per_s":mib_per_s(size, native_ms) if native_ms is not None else None,
         "auto_backend":auto_backend,
         "auto_tokens_len":len(auto_tokens) if auto_tokens is not None else None,
         "last_profile":profile,
@@ -134,7 +141,9 @@ for batch_size in count_batches:
         "total_bytes":batch_size*len(segment),
         "loops":loops,
         "metal_mean_ms":metal_ms,
+        "metal_mib_per_s":mib_per_s(batch_size*len(segment), metal_ms),
         "python_mean_ms":py_ms,
+        "python_mib_per_s":mib_per_s(batch_size*len(segment), py_ms),
         "auto_backend":auto_backend,
         "auto_counts_head":auto_counts[:2] if auto_counts is not None else None,
         "last_profile":profile,
@@ -185,11 +194,15 @@ for size in bpe_sizes:
     )
     bpe_rows.append({
         "chars":size,
+        "bytes":size,
         "route_backend":route_backend,
         "loops":loops,
         "cpu_encode_ms":cpu_ms,
+        "cpu_encode_mib_per_s":mib_per_s(size, cpu_ms),
         "auto_gpu_ms":auto_ms,
+        "auto_gpu_mib_per_s":mib_per_s(size, auto_ms),
         "metal_gpu_ms":metal_ms,
+        "metal_gpu_mib_per_s":mib_per_s(size, metal_ms),
         "auto_matches_baseline":auto_tokens==baseline,
         "metal_matches_baseline":metal_tokens==baseline,
         "auto_tokens_len":len(auto_tokens),

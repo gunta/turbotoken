@@ -593,7 +593,6 @@ pub const Encoder = struct {
             if (next_next_idx != null_index and next_next_idx != dead_index) {
                 const next_idx = @as(usize, next_next_idx);
                 arena.prev[next_idx] = candidate.left;
-                arena.version[next_idx] +%= 1;
             }
 
             arena.prev[actual_right_usize] = dead_index;

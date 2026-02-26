@@ -24,6 +24,188 @@ fn isAsciiLetter(byte: u8) bool {
     return (byte >= 'a' and byte <= 'z') or (byte >= 'A' and byte <= 'Z');
 }
 
+fn isAsciiUpper(byte: u8) bool {
+    return byte >= 'A' and byte <= 'Z';
+}
+
+fn isAsciiLower(byte: u8) bool {
+    return byte >= 'a' and byte <= 'z';
+}
+
+fn isAsciiDigit(byte: u8) bool {
+    return byte >= '0' and byte <= '9';
+}
+
+fn isAsciiWhitespace(byte: u8) bool {
+    return switch (byte) {
+        ' ', '\t', '\n', '\r', 0x0B, 0x0C => true,
+        else => false,
+    };
+}
+
+fn isAsciiNewline(byte: u8) bool {
+    return byte == '\n' or byte == '\r';
+}
+
+fn toAsciiLower(byte: u8) u8 {
+    if (byte >= 'A' and byte <= 'Z') {
+        return byte + 32;
+    }
+    return byte;
+}
+
+fn isAlt12Prefix(byte: u8) bool {
+    return byte != '\r' and byte != '\n' and !isAsciiLetter(byte) and !isAsciiDigit(byte);
+}
+
+fn contractionSuffixLen(text: []const u8, start: usize) usize {
+    if (start + 1 >= text.len) {
+        return 0;
+    }
+    if (text[start] != '\'') {
+        return 0;
+    }
+
+    const c1 = toAsciiLower(text[start + 1]);
+    if (c1 == 's' or c1 == 't' or c1 == 'm' or c1 == 'd') {
+        return 2;
+    }
+    if (start + 2 >= text.len) {
+        return 0;
+    }
+    const c2 = toAsciiLower(text[start + 2]);
+    if (c1 == 'r' and c2 == 'e') {
+        return 3;
+    }
+    if (c1 == 'v' and c2 == 'e') {
+        return 3;
+    }
+    if (c1 == 'l' and c2 == 'l') {
+        return 3;
+    }
+    return 0;
+}
+
+fn parseAlt1Core(text: []const u8, start: usize) ?usize {
+    var idx = start;
+    while (idx < text.len and isAsciiUpper(text[idx])) : (idx += 1) {}
+    const lower_start = idx;
+    while (idx < text.len and isAsciiLower(text[idx])) : (idx += 1) {}
+    if (idx == lower_start) {
+        return null;
+    }
+    idx += contractionSuffixLen(text, idx);
+    return idx;
+}
+
+fn parseAlt2Core(text: []const u8, start: usize) ?usize {
+    var idx = start;
+    const upper_start = idx;
+    while (idx < text.len and isAsciiUpper(text[idx])) : (idx += 1) {}
+    if (idx == upper_start) {
+        return null;
+    }
+    while (idx < text.len and isAsciiLower(text[idx])) : (idx += 1) {}
+    idx += contractionSuffixLen(text, idx);
+    return idx;
+}
+
+fn matchAlt1Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len) {
+        return null;
+    }
+    if (isAlt12Prefix(text[start]) and start + 1 < text.len) {
+        if (parseAlt1Core(text, start + 1)) |end| {
+            return end;
+        }
+    }
+    return parseAlt1Core(text, start);
+}
+
+fn matchAlt2Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len) {
+        return null;
+    }
+    if (isAlt12Prefix(text[start]) and start + 1 < text.len) {
+        if (parseAlt2Core(text, start + 1)) |end| {
+            return end;
+        }
+    }
+    return parseAlt2Core(text, start);
+}
+
+fn isAlt4Core(byte: u8) bool {
+    return !isAsciiWhitespace(byte) and !isAsciiLetter(byte) and !isAsciiDigit(byte);
+}
+
+fn matchAlt4Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len) {
+        return null;
+    }
+    var idx = start;
+    if (text[idx] == ' ' and idx + 1 < text.len and isAlt4Core(text[idx + 1])) {
+        idx += 1;
+    }
+    if (!isAlt4Core(text[idx])) {
+        return null;
+    }
+    idx += 1;
+    while (idx < text.len and isAlt4Core(text[idx])) : (idx += 1) {}
+    while (idx < text.len and (text[idx] == '\r' or text[idx] == '\n' or text[idx] == '/')) : (idx += 1) {}
+    return idx;
+}
+
+fn matchAlt5Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len or !isAsciiWhitespace(text[start])) {
+        return null;
+    }
+    var idx = start;
+    var last_newline: ?usize = null;
+    while (idx < text.len and isAsciiWhitespace(text[idx])) : (idx += 1) {
+        if (isAsciiNewline(text[idx])) {
+            last_newline = idx;
+        }
+    }
+    if (last_newline) |pos| {
+        return pos + 1;
+    }
+    return null;
+}
+
+fn matchAlt6Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len or !isAsciiWhitespace(text[start])) {
+        return null;
+    }
+
+    var run_end = start;
+    while (run_end < text.len and isAsciiWhitespace(text[run_end])) : (run_end += 1) {}
+    const run_len = run_end - start;
+    if (run_len == 0) {
+        return null;
+    }
+
+    // \s+(?!\S): greedy \s+ will backtrack until the next char is not non-whitespace.
+    // For runs that end at EOF, consume the full run.
+    if (run_end == text.len) {
+        return run_end;
+    }
+
+    // For runs followed by non-whitespace, consume all but the final whitespace byte.
+    if (run_len >= 2) {
+        return run_end - 1;
+    }
+    return null;
+}
+
+fn matchAlt7Ascii(text: []const u8, start: usize) ?usize {
+    if (start >= text.len or !isAsciiWhitespace(text[start])) {
+        return null;
+    }
+    var idx = start;
+    while (idx < text.len and isAsciiWhitespace(text[idx])) : (idx += 1) {}
+    return idx;
+}
+
 fn classifyAsciiByte(byte: u8) u8 {
     if (byte == ' ') {
         return 0;
@@ -214,6 +396,106 @@ pub fn splitAsciiLetterSpaceRanges(
     return range_count;
 }
 
+pub fn splitAsciiO200kRanges(
+    text: []const u8,
+    out_starts_opt: ?[]u32,
+    out_ends_opt: ?[]u32,
+) SplitError!usize {
+    if ((out_starts_opt == null) != (out_ends_opt == null)) {
+        return error.OutputTooSmall;
+    }
+
+    var range_count: usize = 0;
+    var idx: usize = 0;
+    while (try nextAsciiO200kRange(text, &idx)) |range| {
+        try emitRange(out_starts_opt, out_ends_opt, range_count, range.start, range.end);
+        range_count += 1;
+    }
+    return range_count;
+}
+
+pub const AsciiRange = struct {
+    start: usize,
+    end: usize,
+};
+
+pub fn nextAsciiO200kRange(text: []const u8, idx: *usize) SplitError!?AsciiRange {
+    if (idx.* >= text.len) {
+        return null;
+    }
+
+    const start = idx.*;
+    const byte = text[start];
+    if (byte >= 0x80) {
+        return error.UnsupportedInput;
+    }
+
+    if (isAlt12Prefix(byte) and start + 1 < text.len and isAsciiLetter(text[start + 1])) {
+        if (parseAlt1Core(text, start + 1)) |core_end| {
+            idx.* = core_end;
+            return AsciiRange{ .start = start, .end = core_end };
+        }
+        if (parseAlt2Core(text, start + 1)) |core_end| {
+            idx.* = core_end;
+            return AsciiRange{ .start = start, .end = core_end };
+        }
+    }
+
+    if (isAsciiWhitespace(byte)) {
+        if (matchAlt5Ascii(text, start)) |end| {
+            if (end > start) {
+                idx.* = end;
+                return AsciiRange{ .start = start, .end = end };
+            }
+        }
+        if (matchAlt6Ascii(text, start)) |end| {
+            if (end > start) {
+                idx.* = end;
+                return AsciiRange{ .start = start, .end = end };
+            }
+        }
+        if (matchAlt7Ascii(text, start)) |end| {
+            if (end > start) {
+                idx.* = end;
+                return AsciiRange{ .start = start, .end = end };
+            }
+        }
+        return error.UnsupportedInput;
+    }
+
+    if (isAsciiDigit(byte)) {
+        var end = start + 1;
+        var digits: usize = 1;
+        while (end < text.len and digits < 3 and isAsciiDigit(text[end])) : ({
+            end += 1;
+            digits += 1;
+        }) {}
+        idx.* = end;
+        return AsciiRange{ .start = start, .end = end };
+    }
+
+    if (isAsciiLetter(byte)) {
+        if (parseAlt1Core(text, start)) |end| {
+            idx.* = end;
+            return AsciiRange{ .start = start, .end = end };
+        }
+        if (parseAlt2Core(text, start)) |end| {
+            idx.* = end;
+            return AsciiRange{ .start = start, .end = end };
+        }
+        return error.UnsupportedInput;
+    }
+
+    if (matchAlt4Ascii(text, start)) |end| {
+        if (end > start) {
+            idx.* = end;
+            return AsciiRange{ .start = start, .end = end };
+        }
+    }
+
+    return error.UnsupportedInput;
+}
+
 test "generic token bound heuristic remains stable on non-aarch64 paths" {
     try std.testing.expectEqual(@as(usize, 0), estimateTokenBound(""));
     try std.testing.expectEqual(@as(usize, 2), estimateTokenBound("hello"));
@@ -248,6 +530,49 @@ test "split ascii letter/space ranges rejects unsupported bytes" {
         error.UnsupportedInput,
         splitAsciiLetterSpaceRanges("hello, world", &starts, &ends),
     );
+}
+
+test "split ascii o200k ranges handles words punctuation and newlines" {
+    const input = "Tokenizer matters, for coding agents.\n";
+    var starts: [32]u32 = undefined;
+    var ends: [32]u32 = undefined;
+
+    const written = try splitAsciiO200kRanges(input, &starts, &ends);
+    const expected = [_][]const u8{
+        "Tokenizer",
+        " matters",
+        ",",
+        " for",
+        " coding",
+        " agents",
+        ".\n",
+    };
+    try std.testing.expectEqual(expected.len, written);
+    for (expected, 0..) |piece, idx| {
+        const start = @as(usize, starts[idx]);
+        const end = @as(usize, ends[idx]);
+        try std.testing.expectEqualSlices(u8, piece, input[start..end]);
+    }
+}
+
+test "split ascii o200k ranges supports apostrophe contractions" {
+    const input = "we're I'M he'll she'd";
+    var starts: [16]u32 = undefined;
+    var ends: [16]u32 = undefined;
+
+    const written = try splitAsciiO200kRanges(input, &starts, &ends);
+    const expected = [_][]const u8{
+        "we're",
+        " I'M",
+        " he'll",
+        " she'd",
+    };
+    try std.testing.expectEqual(expected.len, written);
+    for (expected, 0..) |piece, idx| {
+        const start = @as(usize, starts[idx]);
+        const end = @as(usize, ends[idx]);
+        try std.testing.expectEqualSlices(u8, piece, input[start..end]);
+    }
 }
 
 test "ascii class boundary counter matches scalar baseline" {

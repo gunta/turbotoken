@@ -72,9 +72,55 @@ def test_native_ascii_pretokenizer_fast_path_matches_regex_fallback(monkeypatch:
     enc = get_encoding("cl100k_base")
     text = ("hello world " * 256).strip()
 
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_PRETOKENIZER_ENABLE", "1")
     monkeypatch.delenv("TURBOTOKEN_NATIVE_PRETOKENIZER_DISABLE", raising=False)
     fast = enc.encode_ordinary(text)
 
     monkeypatch.setenv("TURBOTOKEN_NATIVE_PRETOKENIZER_DISABLE", "1")
     slow = enc.encode_ordinary(text)
     assert fast == slow
+
+
+def test_o200k_native_ascii_pretokenizer_fast_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer matters, for coding agents.\n" * 64).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_PRETOKENIZER_ENABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_PRETOKENIZER_DISABLE", raising=False)
+    fast = enc.encode_ordinary(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_PRETOKENIZER_DISABLE", "1")
+    slow = enc.encode_ordinary(text)
+    assert fast == slow
+    assert enc.count(text) == len(fast)
+
+
+def test_o200k_ascii_regex_fast_path_matches_regex_module_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("A MIX of UPPER and lower CASE plus 123 numbers.\n" * 64).strip()
+
+    # Isolate regex path by disabling native o200k pretokenizer.
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_PRETOKENIZER_DISABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_ASCII_REGEX_FASTPATH_DISABLE", raising=False)
+    fast = enc.encode_ordinary(text)
+
+    monkeypatch.setenv("TURBOTOKEN_ASCII_REGEX_FASTPATH_DISABLE", "1")
+    slow = enc.encode_ordinary(text)
+    assert fast == slow
+
+
+def test_o200k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer speed matters for large ASCII corpora. " * 2048).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", raising=False)
+    fast = enc.encode_ordinary(text)
+    fast_count = enc.count(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
+    slow = enc.encode_ordinary(text)
+    slow_count = enc.count(text)
+
+    assert fast == slow
+    assert fast_count == slow_count == len(slow)

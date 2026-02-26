@@ -11,8 +11,36 @@ SIMD backends, and a compatibility-focused Python API.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
 - Native Zig CPU acceleration is available for key byte-path primitives; broader backend work (AVX/GPU full BPE) is still in progress.
 - Apple Metal backend is now wired as an experimental UTF-8 byte-path accelerator (full GPU BPE merge path is still pending).
+- First-pass Python training APIs are available (`train_mergeable_ranks_from_iterator`, `train_encoding_from_iterator`) for custom regex+BPE vocab training (CPU path only).
 - Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`
   on the tracked compatibility corpus.
+
+## Training API (First Pass)
+
+```python
+from turbotoken import train_encoding_from_iterator
+
+with open("corpus.txt", "r", encoding="utf-8") as handle:
+    enc = train_encoding_from_iterator(
+        handle,
+        vocab_size=4096,
+        name="custom_bpe",
+    )
+
+ids = enc.encode("hello world")
+text = enc.decode(ids)
+```
+
+Notes:
+- This path is currently CPU-only.
+- Backend routing:
+  - `TURBOTOKEN_TRAINING_BACKEND=auto` (default, currently prefers Python training loop for throughput in this environment)
+  - `TURBOTOKEN_TRAINING_BACKEND=native` (Zig training backend prototype via C ABI)
+  - `TURBOTOKEN_TRAINING_BACKEND=python` (force Python training loop)
+- Optional native experiments (off by default):
+  - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1` enables native ASCII O200K pretokenization before chunk counting
+  - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1` enables direct native ASCII O200K single-text training route
+- Latest local training benchmarks show the Python training path beating both `rustbpe` and `minbpe` on the tracked 100KB/1MB fixtures; the Zig-native training prototype still trails the Python fallback path in this environment.
 
 ## Quick Start
 

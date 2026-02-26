@@ -19,6 +19,8 @@
     "bench:native-bytes": "bun run scripts/bench-native-byte-path.ts",
     "bench:gpu-crossover": "bun run scripts/bench-gpu-crossover.ts",
     "bench:competitors": "bun run scripts/bench-competitors.ts",
+    "bench:competitors:stable": "bun run scripts/bench-competitors-stable.ts",
+    "bench:training": "bun run scripts/bench-training.ts",
     "deps:token-dagger": "bun run scripts/install-token-dagger.ts",
     "bench:ci": "bun run scripts/ci-benchmark.ts",
     "compat:report": "bun run scripts/compat-report.ts",

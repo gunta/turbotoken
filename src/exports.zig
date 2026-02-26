@@ -5,8 +5,9 @@ const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const hash = @import("hash.zig");
 const rank_loader = @import("rank_loader.zig");
 const pretokenizer = @import("pretokenizer.zig");
+const trainer = @import("trainer.zig");
 
-const rank_cache_allocator = std.heap.page_allocator;
+const rank_cache_allocator = std.heap.c_allocator;
 
 const RankTableCache = struct {
     hash: u64 = 0,
@@ -17,6 +18,15 @@ const RankTableCache = struct {
 };
 
 var rank_table_cache: RankTableCache = .{};
+
+const BpeParallelMode = enum {
+    auto,
+    on,
+    off,
+};
+
+var bpe_parallel_mode: BpeParallelMode = .auto;
+var bpe_parallel_once = std.once(initBpeParallelMode);
 
 fn clearRankTableCache() void {
     if (rank_table_cache.table) |*table| {
@@ -70,6 +80,360 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
     return &(rank_table_cache.table.?);
 }
 
+fn isTruthyEnvValue(value: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(value, "1") or
+        std.ascii.eqlIgnoreCase(value, "true") or
+        std.ascii.eqlIgnoreCase(value, "yes") or
+        std.ascii.eqlIgnoreCase(value, "on");
+}
+
+fn initBpeParallelMode() void {
+    const disable = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_NATIVE_BPE_PARALLEL_DISABLE") catch {
+        const enable = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_NATIVE_BPE_PARALLEL_ENABLE") catch {
+            bpe_parallel_mode = .auto;
+            return;
+        };
+        defer std.heap.page_allocator.free(enable);
+        bpe_parallel_mode = if (isTruthyEnvValue(enable)) .on else .auto;
+        return;
+    };
+    defer std.heap.page_allocator.free(disable);
+    if (isTruthyEnvValue(disable)) {
+        bpe_parallel_mode = .off;
+        return;
+    }
+
+    const enable = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_NATIVE_BPE_PARALLEL_ENABLE") catch {
+        bpe_parallel_mode = .auto;
+        return;
+    };
+    defer std.heap.page_allocator.free(enable);
+    bpe_parallel_mode = if (isTruthyEnvValue(enable)) .on else .auto;
+}
+
+fn selectedBpeParallelMode() BpeParallelMode {
+    bpe_parallel_once.call();
+    return bpe_parallel_mode;
+}
+
+fn rangeTotalBytes(starts: []const u32, ends: []const u32) usize {
+    var total: usize = 0;
+    for (starts, ends) |start, end| {
+        if (end < start) {
+            continue;
+        }
+        total +|= @as(usize, @intCast(end - start));
+    }
+    return total;
+}
+
+fn chooseBpeWorkerCount(segment_count: usize, total_bytes: usize) usize {
+    if (segment_count <= 1) {
+        return 1;
+    }
+    if (comptime builtin.single_threaded or builtin.os.tag == .freestanding) {
+        return 1;
+    }
+
+    const mode = selectedBpeParallelMode();
+    if (mode == .off) {
+        return 1;
+    }
+
+    if (mode == .auto) {
+        if (total_bytes < 512 * 1024) {
+            return 1;
+        }
+        if (segment_count < 64) {
+            return 1;
+        }
+    }
+
+    const cpu_count = @as(usize, std.Thread.getCpuCount() catch 1);
+    if (cpu_count <= 1) {
+        return 1;
+    }
+
+    var worker_count = @min(cpu_count, @as(usize, 16));
+    if (mode == .auto) {
+        const max_by_ranges = @max(@as(usize, 1), segment_count / 8);
+        worker_count = @min(worker_count, max_by_ranges);
+    }
+    if (worker_count <= 1) {
+        return 1;
+    }
+    return @min(worker_count, segment_count);
+}
+
+const CountRangesContext = struct {
+    in_slice: []const u8,
+    starts: []const u32,
+    ends: []const u32,
+    table: *const rank_loader.RankTable,
+    counts: []usize,
+    failed: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
+};
+
+const EncodeRangesContext = struct {
+    in_slice: []const u8,
+    starts: []const u32,
+    ends: []const u32,
+    table: *const rank_loader.RankTable,
+    token_prefix: []const usize,
+    out_tokens: []u32,
+    failed: std.atomic.Value(u8) = std.atomic.Value(u8).init(0),
+};
+
+fn markWorkerFailed(flag: *std.atomic.Value(u8)) void {
+    _ = flag.cmpxchgStrong(0, 1, .acq_rel, .acquire);
+}
+
+fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
+    const allocator = std.heap.c_allocator;
+    const backend = ScalarBackend.init();
+
+    for (begin..end) |idx| {
+        if (ctx.failed.load(.acquire) != 0) {
+            return;
+        }
+
+        const start = @as(usize, @intCast(ctx.starts[idx]));
+        const finish = @as(usize, @intCast(ctx.ends[idx]));
+        if (finish < start or finish > ctx.in_slice.len) {
+            markWorkerFailed(&ctx.failed);
+            return;
+        }
+
+        const counted = backend.count(allocator, ctx.in_slice[start..finish], ctx.table) catch {
+            markWorkerFailed(&ctx.failed);
+            return;
+        };
+        ctx.counts[idx] = counted;
+    }
+}
+
+fn encodeRangesWorker(ctx: *EncodeRangesContext, begin: usize, end: usize) void {
+    const allocator = std.heap.c_allocator;
+    const backend = ScalarBackend.init();
+
+    for (begin..end) |idx| {
+        if (ctx.failed.load(.acquire) != 0) {
+            return;
+        }
+
+        const start = @as(usize, @intCast(ctx.starts[idx]));
+        const finish = @as(usize, @intCast(ctx.ends[idx]));
+        if (finish < start or finish > ctx.in_slice.len) {
+            markWorkerFailed(&ctx.failed);
+            return;
+        }
+
+        const out_start = ctx.token_prefix[idx];
+        const out_end = ctx.token_prefix[idx + 1];
+        if (out_end < out_start or out_end > ctx.out_tokens.len) {
+            markWorkerFailed(&ctx.failed);
+            return;
+        }
+
+        if (out_start == out_end) {
+            continue;
+        }
+
+        const encoded = backend.encode(allocator, ctx.in_slice[start..finish], ctx.table) catch {
+            markWorkerFailed(&ctx.failed);
+            return;
+        };
+        defer allocator.free(encoded);
+
+        if (encoded.len != out_end - out_start) {
+            markWorkerFailed(&ctx.failed);
+            return;
+        }
+
+        @memcpy(ctx.out_tokens[out_start..out_end], encoded);
+    }
+}
+
+fn runCountRangesParallel(
+    allocator: std.mem.Allocator,
+    ctx: *CountRangesContext,
+    worker_count: usize,
+) bool {
+    if (ctx.starts.len == 0) {
+        return true;
+    }
+    if (worker_count <= 1 or comptime builtin.single_threaded or builtin.os.tag == .freestanding) {
+        countRangesWorker(ctx, 0, ctx.starts.len);
+        return ctx.failed.load(.acquire) == 0;
+    }
+
+    var threads = allocator.alloc(std.Thread, worker_count - 1) catch {
+        countRangesWorker(ctx, 0, ctx.starts.len);
+        return ctx.failed.load(.acquire) == 0;
+    };
+    defer allocator.free(threads);
+
+    const chunk = (ctx.starts.len + worker_count - 1) / worker_count;
+    var spawned: usize = 0;
+    var worker_idx: usize = 1;
+    while (worker_idx < worker_count) : (worker_idx += 1) {
+        const begin = worker_idx * chunk;
+        if (begin >= ctx.starts.len) {
+            break;
+        }
+        const end = @min(ctx.starts.len, begin + chunk);
+        threads[spawned] = std.Thread.spawn(.{}, countRangesWorker, .{ ctx, begin, end }) catch {
+            for (threads[0..spawned]) |*thread| {
+                thread.join();
+            }
+            ctx.failed.store(0, .release);
+            countRangesWorker(ctx, 0, ctx.starts.len);
+            return ctx.failed.load(.acquire) == 0;
+        };
+        spawned += 1;
+    }
+
+    countRangesWorker(ctx, 0, @min(ctx.starts.len, chunk));
+    for (threads[0..spawned]) |*thread| {
+        thread.join();
+    }
+    return ctx.failed.load(.acquire) == 0;
+}
+
+fn runEncodeRangesParallel(
+    allocator: std.mem.Allocator,
+    ctx: *EncodeRangesContext,
+    worker_count: usize,
+) bool {
+    if (ctx.starts.len == 0) {
+        return true;
+    }
+    if (worker_count <= 1 or comptime builtin.single_threaded or builtin.os.tag == .freestanding) {
+        encodeRangesWorker(ctx, 0, ctx.starts.len);
+        return ctx.failed.load(.acquire) == 0;
+    }
+
+    var threads = allocator.alloc(std.Thread, worker_count - 1) catch {
+        encodeRangesWorker(ctx, 0, ctx.starts.len);
+        return ctx.failed.load(.acquire) == 0;
+    };
+    defer allocator.free(threads);
+
+    const chunk = (ctx.starts.len + worker_count - 1) / worker_count;
+    var spawned: usize = 0;
+    var worker_idx: usize = 1;
+    while (worker_idx < worker_count) : (worker_idx += 1) {
+        const begin = worker_idx * chunk;
+        if (begin >= ctx.starts.len) {
+            break;
+        }
+        const end = @min(ctx.starts.len, begin + chunk);
+        threads[spawned] = std.Thread.spawn(.{}, encodeRangesWorker, .{ ctx, begin, end }) catch {
+            for (threads[0..spawned]) |*thread| {
+                thread.join();
+            }
+            ctx.failed.store(0, .release);
+            encodeRangesWorker(ctx, 0, ctx.starts.len);
+            return ctx.failed.load(.acquire) == 0;
+        };
+        spawned += 1;
+    }
+
+    encodeRangesWorker(ctx, 0, @min(ctx.starts.len, chunk));
+    for (threads[0..spawned]) |*thread| {
+        thread.join();
+    }
+    return ctx.failed.load(.acquire) == 0;
+}
+
+fn encodeBpeRangesFromTable(
+    allocator: std.mem.Allocator,
+    in_slice: []const u8,
+    starts: []const u32,
+    ends: []const u32,
+    table: *const rank_loader.RankTable,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+    out_token_offsets: [*c]u32,
+) isize {
+    if (starts.len != ends.len) {
+        return -1;
+    }
+
+    if (out_token_offsets != null) {
+        out_token_offsets[0] = 0;
+    }
+    if (starts.len == 0) {
+        return 0;
+    }
+
+    for (starts, ends) |start, finish| {
+        if (finish < start or finish > in_slice.len) {
+            return -1;
+        }
+    }
+
+    const counts = allocator.alloc(usize, starts.len) catch return -1;
+    defer allocator.free(counts);
+    @memset(counts, 0);
+
+    const total_bytes = rangeTotalBytes(starts, ends);
+    const worker_count = chooseBpeWorkerCount(starts.len, total_bytes);
+    var count_ctx = CountRangesContext{
+        .in_slice = in_slice,
+        .starts = starts,
+        .ends = ends,
+        .table = table,
+        .counts = counts,
+    };
+
+    if (!runCountRangesParallel(allocator, &count_ctx, worker_count)) {
+        return -1;
+    }
+
+    var token_prefix = allocator.alloc(usize, starts.len + 1) catch return -1;
+    defer allocator.free(token_prefix);
+    token_prefix[0] = 0;
+    for (counts, 0..) |count, idx| {
+        if (count > std.math.maxInt(usize) - token_prefix[idx]) {
+            return -1;
+        }
+        const next = token_prefix[idx] + count;
+        token_prefix[idx + 1] = next;
+        if (out_token_offsets != null) {
+            if (next > std.math.maxInt(u32)) {
+                return -1;
+            }
+            out_token_offsets[idx + 1] = @as(u32, @intCast(next));
+        }
+    }
+
+    const total_tokens = token_prefix[token_prefix.len - 1];
+    if (out_tokens != null) {
+        if (out_cap < total_tokens) {
+            return -1;
+        }
+
+        var encode_ctx = EncodeRangesContext{
+            .in_slice = in_slice,
+            .starts = starts,
+            .ends = ends,
+            .table = table,
+            .token_prefix = token_prefix,
+            .out_tokens = out_tokens[0..total_tokens],
+        };
+
+        if (!runEncodeRangesParallel(allocator, &encode_ctx, worker_count)) {
+            return -1;
+        }
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
+}
+
 pub export fn turbotoken_version() [*c]const u8 {
     return "0.1.0-dev";
 }
@@ -108,6 +472,39 @@ pub export fn turbotoken_pretokenize_ascii_letter_space_ranges(
     const starts = out_starts[0..out_cap];
     const ends = out_ends[0..out_cap];
     const written = pretokenizer.splitAsciiLetterSpaceRanges(in_slice, starts, ends) catch return -1;
+    if (written > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(written));
+}
+
+pub export fn turbotoken_pretokenize_ascii_o200k_ranges(
+    text: [*c]const u8,
+    text_len: usize,
+    out_starts: [*c]u32,
+    out_ends: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (text_len == 0) {
+        return 0;
+    }
+    if (text == null) {
+        return -1;
+    }
+
+    const in_slice = text[0..text_len];
+
+    if (out_starts == null or out_ends == null) {
+        const needed = pretokenizer.splitAsciiO200kRanges(in_slice, null, null) catch return -1;
+        if (needed > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(needed));
+    }
+
+    const starts = out_starts[0..out_cap];
+    const ends = out_ends[0..out_cap];
+    const written = pretokenizer.splitAsciiO200kRanges(in_slice, starts, ends) catch return -1;
     if (written > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
@@ -437,12 +834,13 @@ pub export fn turbotoken_encode_bpe_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
 
     const backend = ScalarBackend.init();
-    const tokens = backend.encode(allocator, text[0..text_len], table) catch return -1;
+    const tokens = backend.encode(allocator, in_slice, table) catch return -1;
     defer allocator.free(tokens);
 
     if (out_tokens == null) {
@@ -458,6 +856,272 @@ pub export fn turbotoken_encode_bpe_from_ranks(
 
     @memcpy(out_tokens[0..tokens.len], tokens);
     return @as(isize, @intCast(tokens.len));
+}
+
+pub export fn turbotoken_train_bpe_from_chunk_counts(
+    chunks: [*c]const u8,
+    chunks_len: usize,
+    chunk_offsets: [*c]const u32,
+    chunk_offsets_len: usize,
+    chunk_counts: [*c]const u32,
+    chunk_counts_len: usize,
+    vocab_size: u32,
+    min_frequency: u32,
+    out_merges: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (chunk_offsets == null or chunk_counts == null) {
+        return -1;
+    }
+    if (chunks_len > 0 and chunks == null) {
+        return -1;
+    }
+    if (chunk_offsets_len == 0 or chunk_counts_len + 1 != chunk_offsets_len) {
+        return -1;
+    }
+    if (vocab_size < 256 or min_frequency == 0) {
+        return -1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const chunk_slice: []const u8 = if (chunks_len == 0) &[_]u8{} else chunks[0..chunks_len];
+    const offsets = chunk_offsets[0..chunk_offsets_len];
+    const counts = chunk_counts[0..chunk_counts_len];
+
+    const merges = trainer.trainMergesFromChunkCounts(
+        allocator,
+        chunk_slice,
+        offsets,
+        counts,
+        vocab_size,
+        min_frequency,
+    ) catch return -1;
+    defer allocator.free(merges);
+
+    if (out_merges == null) {
+        if (merges.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(merges.len));
+    }
+
+    const needed_u32 = merges.len * 3;
+    if (out_cap < needed_u32) {
+        return -1;
+    }
+
+    var out_idx: usize = 0;
+    for (merges) |merge| {
+        out_merges[out_idx] = merge.left;
+        out_merges[out_idx + 1] = merge.right;
+        out_merges[out_idx + 2] = merge.new_id;
+        out_idx += 3;
+    }
+    if (merges.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(merges.len));
+}
+
+const AsciiChunkEntry = struct {
+    start: u32,
+    end: u32,
+    count: u32,
+};
+
+fn encodeMergeOutput(
+    merges: []const trainer.Merge,
+    out_merges: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (out_merges == null) {
+        if (merges.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(merges.len));
+    }
+
+    const needed_u32 = merges.len * 3;
+    if (out_cap < needed_u32) {
+        return -1;
+    }
+
+    var out_idx: usize = 0;
+    for (merges) |merge| {
+        out_merges[out_idx] = merge.left;
+        out_merges[out_idx + 1] = merge.right;
+        out_merges[out_idx + 2] = merge.new_id;
+        out_idx += 3;
+    }
+    if (merges.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(merges.len));
+}
+
+fn trainAsciiO200kFromTextSlices(
+    allocator: std.mem.Allocator,
+    all_text: []const u8,
+    text_offsets: []const u32,
+    vocab_size: u32,
+    min_frequency: u32,
+) ![]trainer.Merge {
+    if (text_offsets.len == 0) {
+        return error.InvalidInput;
+    }
+    if (text_offsets[0] != 0) {
+        return error.InvalidInput;
+    }
+    if (text_offsets[text_offsets.len - 1] != all_text.len) {
+        return error.InvalidInput;
+    }
+
+    var prev_offset: u32 = text_offsets[0];
+    for (text_offsets[1..]) |next_offset| {
+        if (next_offset < prev_offset or next_offset > all_text.len) {
+            return error.InvalidInput;
+        }
+        prev_offset = next_offset;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const work_allocator = arena_state.allocator();
+
+    var chunk_index: std.StringHashMapUnmanaged(u32) = .{};
+    var chunk_entries = std.ArrayListUnmanaged(AsciiChunkEntry){};
+
+    for (0..text_offsets.len - 1) |text_idx| {
+        const text_start = @as(usize, @intCast(text_offsets[text_idx]));
+        const text_end = @as(usize, @intCast(text_offsets[text_idx + 1]));
+        const text_slice = all_text[text_start..text_end];
+
+        var local_idx: usize = 0;
+        while (try pretokenizer.nextAsciiO200kRange(text_slice, &local_idx)) |range| {
+            const abs_start = text_start + range.start;
+            const abs_end = text_start + range.end;
+            if (abs_end > std.math.maxInt(u32)) {
+                return error.InvalidInput;
+            }
+
+            const piece = text_slice[range.start..range.end];
+            const idx_entry = try chunk_index.getOrPut(work_allocator, piece);
+            if (!idx_entry.found_existing) {
+                idx_entry.value_ptr.* = @as(u32, @intCast(chunk_entries.items.len));
+                try chunk_entries.append(work_allocator, .{
+                    .start = @as(u32, @intCast(abs_start)),
+                    .end = @as(u32, @intCast(abs_end)),
+                    .count = 1,
+                });
+            } else {
+                const entry_idx = @as(usize, @intCast(idx_entry.value_ptr.*));
+                const current = chunk_entries.items[entry_idx].count;
+                const next = current + 1;
+                if (next < current) {
+                    return error.InvalidInput;
+                }
+                chunk_entries.items[entry_idx].count = next;
+            }
+        }
+    }
+
+    var flat_chunks = std.ArrayListUnmanaged(u8){};
+    const offsets = try work_allocator.alloc(u32, chunk_entries.items.len + 1);
+    const counts = try work_allocator.alloc(u32, chunk_entries.items.len);
+
+    offsets[0] = 0;
+    for (chunk_entries.items, 0..) |entry, idx| {
+        const start_usize = @as(usize, @intCast(entry.start));
+        const end_usize = @as(usize, @intCast(entry.end));
+        try flat_chunks.appendSlice(work_allocator, all_text[start_usize..end_usize]);
+        if (flat_chunks.items.len > std.math.maxInt(u32)) {
+            return error.InvalidInput;
+        }
+        offsets[idx + 1] = @as(u32, @intCast(flat_chunks.items.len));
+        counts[idx] = entry.count;
+    }
+
+    return trainer.trainMergesFromChunkCounts(
+        allocator,
+        flat_chunks.items,
+        offsets,
+        counts,
+        vocab_size,
+        min_frequency,
+    );
+}
+
+pub export fn turbotoken_train_bpe_ascii_o200k(
+    text: [*c]const u8,
+    text_len: usize,
+    vocab_size: u32,
+    min_frequency: u32,
+    out_merges: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (text_len > 0 and text == null) {
+        return -1;
+    }
+    if (vocab_size < 256 or min_frequency == 0) {
+        return -1;
+    }
+    if (text_len > std.math.maxInt(u32)) {
+        return -1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
+    const offsets = [_]u32{ 0, @as(u32, @intCast(text_len)) };
+
+    const merges = trainAsciiO200kFromTextSlices(
+        allocator,
+        in_slice,
+        &offsets,
+        vocab_size,
+        min_frequency,
+    ) catch return -1;
+    defer allocator.free(merges);
+
+    return encodeMergeOutput(merges, out_merges, out_cap);
+}
+
+pub export fn turbotoken_train_bpe_ascii_o200k_multi(
+    texts: [*c]const u8,
+    texts_len: usize,
+    text_offsets: [*c]const u32,
+    text_offsets_len: usize,
+    vocab_size: u32,
+    min_frequency: u32,
+    out_merges: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (text_offsets == null) {
+        return -1;
+    }
+    if (texts_len > 0 and texts == null) {
+        return -1;
+    }
+    if (text_offsets_len == 0) {
+        return -1;
+    }
+    if (vocab_size < 256 or min_frequency == 0) {
+        return -1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const all_text: []const u8 = if (texts_len == 0) &[_]u8{} else texts[0..texts_len];
+    const offsets = text_offsets[0..text_offsets_len];
+
+    const merges = trainAsciiO200kFromTextSlices(
+        allocator,
+        all_text,
+        offsets,
+        vocab_size,
+        min_frequency,
+    ) catch return -1;
+    defer allocator.free(merges);
+
+    return encodeMergeOutput(merges, out_merges, out_cap);
 }
 
 pub export fn turbotoken_encode_bpe_batch_from_ranks(
@@ -500,52 +1164,22 @@ pub export fn turbotoken_encode_bpe_batch_from_ranks(
     }
 
     const segment_count = offsets_len - 1;
-    if (out_token_offsets != null) {
-        out_token_offsets[0] = 0;
-    }
-    if (segment_count == 0) {
-        return 0;
-    }
+    const starts = offset_slice[0..segment_count];
+    const ends = offset_slice[1..offsets_len];
 
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
-    const backend = ScalarBackend.init();
-
-    var total_tokens: usize = 0;
-    for (0..segment_count) |idx| {
-        const start = offset_slice[idx];
-        const end = offset_slice[idx + 1];
-        const segment = in_slice[start..end];
-
-        if (out_tokens == null) {
-            const counted = backend.count(allocator, segment, table) catch return -1;
-            if (counted > std.math.maxInt(usize) - total_tokens) {
-                return -1;
-            }
-            total_tokens += counted;
-        } else {
-            const tokens = backend.encode(allocator, segment, table) catch return -1;
-            defer allocator.free(tokens);
-            if (tokens.len > out_cap -| total_tokens) {
-                return -1;
-            }
-            @memcpy(out_tokens[total_tokens .. total_tokens + tokens.len], tokens);
-            total_tokens += tokens.len;
-        }
-
-        if (out_token_offsets != null) {
-            if (total_tokens > std.math.maxInt(u32)) {
-                return -1;
-            }
-            out_token_offsets[idx + 1] = @as(u32, @intCast(total_tokens));
-        }
-    }
-
-    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
-        return -1;
-    }
-    return @as(isize, @intCast(total_tokens));
+    return encodeBpeRangesFromTable(
+        allocator,
+        in_slice,
+        starts,
+        ends,
+        table,
+        out_tokens,
+        out_cap,
+        out_token_offsets,
+    );
 }
 
 pub export fn turbotoken_encode_bpe_ranges_from_ranks(
@@ -575,55 +1209,177 @@ pub export fn turbotoken_encode_bpe_ranges_from_ranks(
     const starts = range_starts[0..ranges_len];
     const ends = range_ends[0..ranges_len];
 
-    if (out_token_offsets != null) {
-        out_token_offsets[0] = 0;
-    }
-    if (ranges_len == 0) {
-        return 0;
-    }
-
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
-    const backend = ScalarBackend.init();
+    return encodeBpeRangesFromTable(
+        allocator,
+        in_slice,
+        starts,
+        ends,
+        table,
+        out_tokens,
+        out_cap,
+        out_token_offsets,
+    );
+}
 
-    var total_tokens: usize = 0;
-    for (0..ranges_len) |idx| {
-        const start = starts[idx];
-        const end = ends[idx];
-        if (start > end or end > text_len) {
-            return -1;
-        }
-        const segment = in_slice[start..end];
-
-        if (out_tokens == null) {
-            const counted = backend.count(allocator, segment, table) catch return -1;
-            if (counted > std.math.maxInt(usize) - total_tokens) {
-                return -1;
-            }
-            total_tokens += counted;
-        } else {
-            const tokens = backend.encode(allocator, segment, table) catch return -1;
-            defer allocator.free(tokens);
-            if (tokens.len > out_cap -| total_tokens) {
-                return -1;
-            }
-            @memcpy(out_tokens[total_tokens .. total_tokens + tokens.len], tokens);
-            total_tokens += tokens.len;
-        }
-
-        if (out_token_offsets != null) {
-            if (total_tokens > std.math.maxInt(u32)) {
-                return -1;
-            }
-            out_token_offsets[idx + 1] = @as(u32, @intCast(total_tokens));
-        }
-    }
-
-    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+pub export fn turbotoken_bpe_ranges_token_layout_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    input_len: usize,
+    range_starts: [*c]const u32,
+    range_ends: [*c]const u32,
+    ranges_len: usize,
+    tokens: [*c]const u32,
+    token_len: usize,
+    token_offsets: [*c]const u32,
+    token_offsets_len: usize,
+    source_chunk_base: u32,
+    chunk_bytes: u32,
+    num_chunks: u32,
+    out_token_starts: [*c]u32,
+    out_source_chunks: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or range_starts == null or range_ends == null or token_offsets == null) {
         return -1;
     }
-    return @as(isize, @intCast(total_tokens));
+    if (chunk_bytes == 0 or num_chunks == 0) {
+        return -1;
+    }
+    if (token_offsets_len != ranges_len + 1) {
+        return -1;
+    }
+    if (token_len > 0 and tokens == null) {
+        return -1;
+    }
+
+    if (out_token_starts == null or out_source_chunks == null or out_cap == 0) {
+        if (token_len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_len));
+    }
+    if (out_cap < token_len) {
+        return -1;
+    }
+
+    const starts = range_starts[0..ranges_len];
+    const ends = range_ends[0..ranges_len];
+    const offsets = token_offsets[0..token_offsets_len];
+    const token_slice: []const u32 = if (token_len == 0) &[_]u32{} else tokens[0..token_len];
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+
+    if (offsets[0] != 0) {
+        return -1;
+    }
+    if (offsets[offsets.len - 1] != token_len) {
+        return -1;
+    }
+    var prev_offset = offsets[0];
+    for (offsets[1..]) |next_offset| {
+        if (next_offset < prev_offset or next_offset > token_len) {
+            return -1;
+        }
+        prev_offset = next_offset;
+    }
+
+    var written: usize = 0;
+    for (0..ranges_len) |idx| {
+        const ext_start = starts[idx];
+        const ext_end = ends[idx];
+        if (ext_start > ext_end or ext_end > input_len) {
+            return -1;
+        }
+        const ext_len = ext_end - ext_start;
+        const token_start = offsets[idx];
+        const token_end = offsets[idx + 1];
+        if (token_end < token_start or token_end > token_len) {
+            return -1;
+        }
+
+        const source_chunk = source_chunk_base + @as(u32, @intCast(idx));
+        if (source_chunk >= num_chunks) {
+            return -1;
+        }
+
+        var cursor: usize = 0;
+        for (token_start..token_end) |token_idx| {
+            const token = token_slice[token_idx];
+            const token_bytes = table.tokenForRank(token) orelse return -1;
+            const token_bytes_len = token_bytes.len;
+            if (token_bytes_len > ext_len -| cursor) {
+                return -1;
+            }
+
+            const global_start = @as(usize, ext_start) + cursor;
+            if (global_start > std.math.maxInt(u32)) {
+                return -1;
+            }
+            out_token_starts[written] = @as(u32, @intCast(global_start));
+            out_source_chunks[written] = source_chunk;
+            written += 1;
+            cursor += token_bytes_len;
+        }
+        if (cursor != ext_len) {
+            return -1;
+        }
+    }
+
+    if (written != token_len) {
+        return -1;
+    }
+    if (written > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(written));
+}
+
+pub export fn turbotoken_filter_tokens_by_keep_flags(
+    tokens: [*c]const u32,
+    keep_flags: [*c]const u32,
+    token_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (token_len > 0 and (tokens == null or keep_flags == null)) {
+        return -1;
+    }
+
+    const token_slice: []const u32 = if (token_len == 0) &[_]u32{} else tokens[0..token_len];
+    const flag_slice: []const u32 = if (token_len == 0) &[_]u32{} else keep_flags[0..token_len];
+
+    var needed: usize = 0;
+    for (flag_slice) |flag| {
+        if (flag != 0) {
+            needed += 1;
+        }
+    }
+
+    if (needed > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+
+    if (out_tokens == null or out_cap == 0) {
+        return @as(isize, @intCast(needed));
+    }
+    if (out_cap < needed) {
+        return -1;
+    }
+
+    var written: usize = 0;
+    for (token_slice, flag_slice) |token, flag| {
+        if (flag != 0) {
+            out_tokens[written] = token;
+            written += 1;
+        }
+    }
+    if (written != needed) {
+        return -1;
+    }
+    return @as(isize, @intCast(written));
 }
 
 pub export fn turbotoken_encode_bpe_chunked_stitched_from_ranks(
@@ -712,16 +1468,163 @@ pub export fn turbotoken_count_bpe_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.page_allocator;
+    const allocator = std.heap.c_allocator;
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
 
     const backend = ScalarBackend.init();
-    const token_count = backend.count(allocator, text[0..text_len], table) catch return -1;
+    const token_count = backend.count(allocator, in_slice, table) catch return -1;
     if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
     return @as(isize, @intCast(token_count));
+}
+
+const AsciiO200kCountCacheEntry = struct {
+    count: usize,
+};
+
+const AsciiO200kEncodeCacheEntry = struct {
+    tokens: []u32,
+};
+
+const ascii_o200k_piece_cache_cap: usize = 65_536;
+
+fn countBpeAsciiO200kFromTable(
+    allocator: std.mem.Allocator,
+    backend: *const ScalarBackend,
+    in_slice: []const u8,
+    table: *const rank_loader.RankTable,
+) !usize {
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
+    defer {
+        var it = piece_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+        }
+        piece_cache.deinit(allocator);
+    }
+
+    var idx: usize = 0;
+    var total_count: usize = 0;
+    while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
+        const piece = in_slice[range.start..range.end];
+        if (piece_cache.get(piece)) |cached| {
+            total_count += cached.count;
+            continue;
+        }
+
+        const piece_count = try backend.count(allocator, piece, table);
+        total_count += piece_count;
+
+        if (piece_cache.count() >= ascii_o200k_piece_cache_cap) {
+            continue;
+        }
+
+        const key_copy = try allocator.alloc(u8, piece.len);
+        @memcpy(key_copy, piece);
+        try piece_cache.put(allocator, key_copy, .{ .count = piece_count });
+    }
+
+    return total_count;
+}
+
+pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
+    const backend = ScalarBackend.init();
+
+    const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
+}
+
+pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = std.heap.c_allocator;
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
+    const backend = ScalarBackend.init();
+
+    if (out_tokens == null) {
+        const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
+        if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_count));
+    }
+
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
+    defer {
+        var it = piece_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.key_ptr.*);
+            allocator.free(entry.value_ptr.tokens);
+        }
+        piece_cache.deinit(allocator);
+    }
+
+    var idx: usize = 0;
+    var total_tokens: usize = 0;
+    while ((pretokenizer.nextAsciiO200kRange(in_slice, &idx) catch return -1)) |range| {
+        const piece = in_slice[range.start..range.end];
+        if (piece_cache.get(piece)) |cached| {
+            if (cached.tokens.len > out_cap -| total_tokens) {
+                return -1;
+            }
+            @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
+            total_tokens += cached.tokens.len;
+            continue;
+        }
+
+        const encoded = backend.encode(allocator, piece, table) catch return -1;
+        defer allocator.free(encoded);
+        if (encoded.len > out_cap -| total_tokens) {
+            return -1;
+        }
+        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
+        total_tokens += encoded.len;
+
+        if (piece_cache.count() >= ascii_o200k_piece_cache_cap) {
+            continue;
+        }
+
+        const key_copy = allocator.alloc(u8, piece.len) catch return -1;
+        @memcpy(key_copy, piece);
+        const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
+        @memcpy(token_copy, encoded);
+        piece_cache.put(allocator, key_copy, .{ .tokens = token_copy }) catch return -1;
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
 }
 
 pub export fn turbotoken_decode_bpe_from_ranks(
@@ -776,6 +1679,84 @@ test "ascii letter/space pretokenizer export returns ranges" {
     try std.testing.expectEqualSlices(u8, "hello", text[starts[0]..ends[0]]);
     try std.testing.expectEqualSlices(u8, " ", text[starts[1]..ends[1]]);
     try std.testing.expectEqualSlices(u8, " world", text[starts[2]..ends[2]]);
+}
+
+test "ascii o200k pretokenizer export returns ranges" {
+    const text = "Tokenizer matters, for coding agents.\n";
+    const needed = turbotoken_pretokenize_ascii_o200k_ranges(text.ptr, text.len, null, null, 0);
+    try std.testing.expectEqual(@as(isize, 7), needed);
+
+    var starts: [7]u32 = undefined;
+    var ends: [7]u32 = undefined;
+    const written = turbotoken_pretokenize_ascii_o200k_ranges(text.ptr, text.len, &starts, &ends, starts.len);
+    try std.testing.expectEqual(@as(isize, 7), written);
+    try std.testing.expectEqualSlices(u8, "Tokenizer", text[starts[0]..ends[0]]);
+    try std.testing.expectEqualSlices(u8, " matters", text[starts[1]..ends[1]]);
+    try std.testing.expectEqualSlices(u8, ",", text[starts[2]..ends[2]]);
+    try std.testing.expectEqualSlices(u8, " for", text[starts[3]..ends[3]]);
+    try std.testing.expectEqualSlices(u8, " coding", text[starts[4]..ends[4]]);
+    try std.testing.expectEqualSlices(u8, " agents", text[starts[5]..ends[5]]);
+    try std.testing.expectEqualSlices(u8, ".\n", text[starts[6]..ends[6]]);
+}
+
+test "ascii o200k direct training export learns repeated pair" {
+    const text = "abababab";
+    const needed = turbotoken_train_bpe_ascii_o200k(
+        text.ptr,
+        text.len,
+        257,
+        1,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 1), needed);
+
+    var out: [3]u32 = undefined;
+    const written = turbotoken_train_bpe_ascii_o200k(
+        text.ptr,
+        text.len,
+        257,
+        1,
+        &out,
+        out.len,
+    );
+    try std.testing.expectEqual(@as(isize, 1), written);
+    try std.testing.expectEqual(@as(u32, 97), out[0]);
+    try std.testing.expectEqual(@as(u32, 98), out[1]);
+    try std.testing.expectEqual(@as(u32, 256), out[2]);
+}
+
+test "ascii o200k direct training multi export learns repeated pair" {
+    const texts = "ab" ++ "ab";
+    const offsets = [_]u32{ 0, 2, 4 };
+
+    const needed = turbotoken_train_bpe_ascii_o200k_multi(
+        texts.ptr,
+        texts.len,
+        &offsets,
+        offsets.len,
+        257,
+        1,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 1), needed);
+
+    var out: [3]u32 = undefined;
+    const written = turbotoken_train_bpe_ascii_o200k_multi(
+        texts.ptr,
+        texts.len,
+        &offsets,
+        offsets.len,
+        257,
+        1,
+        &out,
+        out.len,
+    );
+    try std.testing.expectEqual(@as(isize, 1), written);
+    try std.testing.expectEqual(@as(u32, 97), out[0]);
+    try std.testing.expectEqual(@as(u32, 98), out[1]);
+    try std.testing.expectEqual(@as(u32, 256), out[2]);
 }
 
 test "encode/decode utf8 byte placeholder path" {
@@ -924,6 +1905,42 @@ test "encode/decode bpe path using provided ranks" {
     try std.testing.expectEqualSlices(u8, "abb", &out);
 }
 
+test "ascii o200k full-text bpe exports match expected merges" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\IA== 3
+        \\
+    ;
+    const text = "abb abb";
+
+    const counted = turbotoken_count_bpe_ascii_o200k_from_ranks(ranks.ptr, ranks.len, text.ptr, text.len);
+    try std.testing.expectEqual(@as(isize, 5), counted);
+
+    const needed = turbotoken_encode_bpe_ascii_o200k_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 5), needed);
+
+    var tokens: [5]u32 = undefined;
+    const written = turbotoken_encode_bpe_ascii_o200k_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &tokens,
+        tokens.len,
+    );
+    try std.testing.expectEqual(@as(isize, 5), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1, 3, 2, 1 }, &tokens);
+}
+
 test "batch bpe encode from ranks returns flattened tokens and token offsets" {
     const ranks =
         \\YQ== 0
@@ -999,6 +2016,137 @@ test "range bpe encode from ranks handles overlapping windows" {
     try std.testing.expectEqual(@as(isize, 4), written);
     try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1, 2, 1 }, &tokens);
     try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+}
+
+test "range bpe encode from ranks supports count-only mode" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const text = "abbabb";
+    const starts = [_]u32{ 0, 0 };
+    const ends = [_]u32{ 3, 3 };
+    var token_offsets: [3]u32 = undefined;
+
+    const needed = turbotoken_encode_bpe_ranges_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+        null,
+        0,
+        &token_offsets,
+        token_offsets.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), needed);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+}
+
+test "range bpe token layout export returns token starts and source chunks" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const text = "ababab";
+    const starts = [_]u32{ 0, 2 };
+    const ends = [_]u32{ 4, 6 };
+
+    var token_offsets: [3]u32 = undefined;
+    var tokens: [8]u32 = undefined;
+    const written = turbotoken_encode_bpe_ranges_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+        &tokens,
+        tokens.len,
+        &token_offsets,
+        token_offsets.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 2, 2, 2 }, tokens[0..4]);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+
+    const needed = turbotoken_bpe_ranges_token_layout_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+        &tokens,
+        4,
+        &token_offsets,
+        token_offsets.len,
+        5,
+        4,
+        16,
+        null,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 4), needed);
+
+    var out_starts: [4]u32 = undefined;
+    var out_source_chunks: [4]u32 = undefined;
+    const layout_written = turbotoken_bpe_ranges_token_layout_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+        &tokens,
+        4,
+        &token_offsets,
+        token_offsets.len,
+        5,
+        4,
+        16,
+        &out_starts,
+        &out_source_chunks,
+        4,
+    );
+    try std.testing.expectEqual(@as(isize, 4), layout_written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 2, 4 }, &out_starts);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 5, 5, 6, 6 }, &out_source_chunks);
+}
+
+test "filter tokens export compacts by keep flags" {
+    const tokens = [_]u32{ 11, 22, 33, 44, 55 };
+    const flags = [_]u32{ 1, 0, 1, 0, 1 };
+
+    const needed = turbotoken_filter_tokens_by_keep_flags(
+        &tokens,
+        &flags,
+        tokens.len,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 3), needed);
+
+    var out: [3]u32 = undefined;
+    const written = turbotoken_filter_tokens_by_keep_flags(
+        &tokens,
+        &flags,
+        tokens.len,
+        &out,
+        out.len,
+    );
+    try std.testing.expectEqual(@as(isize, 3), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 11, 33, 55 }, &out);
 }
 
 test "chunked stitched bpe export matches direct encode on byte-level ranks" {

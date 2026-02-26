@@ -11,6 +11,7 @@ comptime {
     _ = exports.turbotoken_version;
     _ = exports.turbotoken_count;
     _ = exports.turbotoken_pretokenize_ascii_letter_space_ranges;
+    _ = exports.turbotoken_pretokenize_ascii_o200k_ranges;
     _ = exports.turbotoken_arm64_feature_mask;
     _ = exports.turbotoken_count_non_ascii_kernel_id;
     _ = exports.turbotoken_count_non_ascii_utf8;
@@ -24,10 +25,17 @@ comptime {
     _ = exports.turbotoken_encode_utf8_bytes;
     _ = exports.turbotoken_decode_utf8_bytes;
     _ = exports.turbotoken_encode_bpe_from_ranks;
+    _ = exports.turbotoken_train_bpe_from_chunk_counts;
+    _ = exports.turbotoken_train_bpe_ascii_o200k;
+    _ = exports.turbotoken_train_bpe_ascii_o200k_multi;
     _ = exports.turbotoken_encode_bpe_batch_from_ranks;
     _ = exports.turbotoken_encode_bpe_ranges_from_ranks;
+    _ = exports.turbotoken_bpe_ranges_token_layout_from_ranks;
+    _ = exports.turbotoken_filter_tokens_by_keep_flags;
     _ = exports.turbotoken_encode_bpe_chunked_stitched_from_ranks;
     _ = exports.turbotoken_count_bpe_from_ranks;
+    _ = exports.turbotoken_count_bpe_ascii_o200k_from_ranks;
+    _ = exports.turbotoken_encode_bpe_ascii_o200k_from_ranks;
     _ = exports.turbotoken_decode_bpe_from_ranks;
 }
 

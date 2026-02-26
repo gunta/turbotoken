@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 ENDOFTEXT = "<|endoftext|>"
 FIM_PREFIX = "<|fim_prefix|>"
 FIM_MIDDLE = "<|fim_middle|>"
@@ -99,13 +97,29 @@ _MODEL_TO_ENCODING = {
 }
 
 
-@dataclass(frozen=True, slots=True)
 class EncodingSpec:
+    __slots__ = ("name", "rank_file_url", "pat_str", "special_tokens", "explicit_n_vocab")
+
     name: str
     rank_file_url: str
     pat_str: str
     special_tokens: dict[str, int]
     explicit_n_vocab: int
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        rank_file_url: str,
+        pat_str: str,
+        special_tokens: dict[str, int],
+        explicit_n_vocab: int,
+    ) -> None:
+        self.name = name
+        self.rank_file_url = rank_file_url
+        self.pat_str = pat_str
+        self.special_tokens = special_tokens
+        self.explicit_n_vocab = explicit_n_vocab
 
     @property
     def n_vocab(self) -> int:

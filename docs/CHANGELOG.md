@@ -29,6 +29,7 @@
 - `scripts/test-upstream-alias.ts` to run upstream public `tiktoken` tests against a `turbotoken` alias shim
 - `scripts/bench-native-byte-path.ts` to benchmark native C ABI UTF-8 byte encode/decode paths independently of scalar BPE
 - `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd, plus optional SME when built with `-Dexperimental-sme=true`)
+- `scripts/bench-training.ts` to benchmark BPE training throughput (`turbotoken` vs `minbpe`/`rustbpe`) on shared fixtures
 - `scripts/bench-pair-cache-hash.ts` to compare scalar BPE throughput across pair-cache hash strategies (`rapidhash`, ARM64 `crc32`) under identical commands
 - `scripts/bench-encoder-queue.ts` to compare scalar BPE queue strategies (`hybrid` vs `full-bucket`) under `TURBOTOKEN_ENCODER_QUEUE`
 - `scripts/bench-boundary-classifier.ts` to benchmark native ASCII boundary-classification counters (`auto`/`scalar`/`neon`)
@@ -39,6 +40,17 @@
 - Python CLI coverage for `turbotoken bench` and `turbotoken info`
 - Native bridge probe in `python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
 - Native bridge wrappers for rank-based BPE encode/decode C ABI exports (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) with graceful fallback when symbols are unavailable
+- Training APIs in Python:
+  - `train_mergeable_ranks_from_iterator(...)`
+  - `train_encoding_from_iterator(...)`
+  implemented in `python/turbotoken/training.py` with incremental pair-count updates and lazy heap refresh
+- Native training bridge export `turbotoken_train_bpe_from_chunk_counts(...)` (Zig C ABI) plus Python bridge wrapper `NativeBridge.train_bpe_from_chunk_counts(...)`
+- Experimental native ASCII O200K training bridge exports:
+  - `turbotoken_pretokenize_ascii_o200k_ranges(...)`
+  - `turbotoken_train_bpe_ascii_o200k(...)`
+  - `turbotoken_train_bpe_ascii_o200k_multi(...)`
+  plus Python bridge wrappers (`NativeBridge.pretokenize_ascii_o200k_ranges`, `NativeBridge.train_bpe_ascii_o200k`)
+- Training unit tests in `python/tests/test_training.py`
 - Native bridge wrappers for rank-based BPE batch/range/chunk-stitch C ABI exports (`turbotoken_encode_bpe_batch_from_ranks`, `turbotoken_encode_bpe_ranges_from_ranks`, `turbotoken_encode_bpe_chunked_stitched_from_ranks`)
 - Native bridge wrappers for Metal stitch owner-mask C ABI export (`turbotoken_metal_chunk_owner_flags`) plus stitch profiling counters
 - Native bridge wrappers for UTF-8 byte C ABI exports (`turbotoken_encode_utf8_bytes`, `turbotoken_decode_utf8_bytes`)
@@ -83,6 +95,16 @@
 - Python `Encoding` now exposes extra internal-compat members used by upstream tests (`max_token_value`, `_encode_bytes`, `_pat_str`, `_special_tokens`, lazy `_mergeable_ranks`)
 - Python `Encoding` constructor now accepts tiktoken-style custom-encoding arguments (`name`, `pat_str`, `mergeable_ranks`, `special_tokens`) used by upstream pickle compatibility tests
 - Python BPE path now dispatches large byte pieces to native Zig rank-based encoding when available to avoid quadratic slow paths on repetitive large inputs
+- Python package now exposes first-pass BPE training APIs for custom tokenizer creation (training path is CPU-only at this stage)
+- Training route selection now supports `TURBOTOKEN_TRAINING_BACKEND=auto|native|python` (`auto` currently favors Python route based on measured throughput in this environment)
+- Training module now uses a local default O200K pattern constant (no eager registry lookup in `_compile_pattern`) and lazily imports native bridge symbols in native-only routes
+- `python/turbotoken/__init__.py` now uses lazy exports (`__getattr__`) so importing `turbotoken.training` no longer eagerly imports heavy `core` module paths
+- Training chunk counting now has an ASCII fast path for known default/GPT4 patterns and delays importing `regex` until non-ASCII/custom-pattern fallback is needed; latest training artifacts show Python-backend training ahead of `rustbpe` on tracked 100KB/1MB fixtures (`bench/results/bench-training-python-20260226-001016.json`, `bench/results/bench-training-python-20260226-000533.json`)
+- Training path now includes optional experimental native toggles (off by default):
+  - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1`
+  - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1`
+- Zig training core now uses arena-backed scratch allocation and octonary heap fanout in `src/trainer.zig`
+- Direct native ASCII O200K training path now supports multi-text inputs and streams chunk counting internally (no two-pass range materialization in the C ABI route)
 - Zig core now includes `.tiktoken` rank parsing (`src/rank_loader.zig`) and rank-aware encode/decode scaffolding (`encodeWithRanks`, `decodeWithRanks`) with unit tests
 - Zig rank loader now keeps constant-time reverse rank lookups (`rank -> token bytes`) and validates duplicate ranks during parsing
 - Zig rank-aware encoder now uses a backtracking merge queue (linked token nodes + priority queue candidates) with pair-rank memoization instead of quadratic full-scan merging

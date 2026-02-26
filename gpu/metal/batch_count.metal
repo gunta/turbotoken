@@ -21,7 +21,7 @@ kernel void tt_count_nonzero_segments(
     uint local_total = 0;
     uint idx = start + lane_id;
     uint stride = lanes_per_group;
-    for (; idx + (stride * 7) < end; idx += stride * 8) {
+    for (; idx + (stride * 15) < end; idx += stride * 16) {
         local_total += input[idx] != 0 ? 1u : 0u;
         local_total += input[idx + stride] != 0 ? 1u : 0u;
         local_total += input[idx + (stride * 2)] != 0 ? 1u : 0u;
@@ -30,6 +30,14 @@ kernel void tt_count_nonzero_segments(
         local_total += input[idx + (stride * 5)] != 0 ? 1u : 0u;
         local_total += input[idx + (stride * 6)] != 0 ? 1u : 0u;
         local_total += input[idx + (stride * 7)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 8)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 9)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 10)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 11)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 12)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 13)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 14)] != 0 ? 1u : 0u;
+        local_total += input[idx + (stride * 15)] != 0 ? 1u : 0u;
     }
     for (; idx < end; idx += lanes_per_group) {
         local_total += input[idx] != 0 ? 1u : 0u;

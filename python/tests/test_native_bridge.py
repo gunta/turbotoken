@@ -178,6 +178,63 @@ def test_native_bridge_bpe_ranges_wrapper_when_available() -> None:
     assert token_offsets == [0, 2, 4]
 
 
+def test_native_bridge_bpe_ranges_count_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    counted = bridge.count_bpe_ranges_from_ranks(ranks, b"abbabb", [(0, 3), (0, 3)])
+    if counted is None:
+        pytest.skip("native library does not expose rank-based BPE ranges symbol")
+    assert counted == 4
+
+
+def test_native_bridge_bpe_ranges_layout_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    batch = bridge.encode_bpe_ranges_from_ranks(ranks, b"ababab", [(0, 4), (2, 6)])
+    if batch is None:
+        pytest.skip("native library does not expose rank-based BPE ranges symbol")
+
+    tokens, token_offsets = batch
+    layout = bridge.bpe_ranges_token_layout_from_ranks(
+        ranks,
+        input_len=6,
+        starts=[0, 2],
+        ends=[4, 6],
+        tokens=tokens,
+        token_offsets=token_offsets,
+        source_chunk_base=5,
+        chunk_bytes=4,
+        num_chunks=16,
+    )
+    if layout is None:
+        pytest.skip("native library does not expose bpe ranges token layout symbol")
+
+    token_starts, source_chunks = layout
+    assert token_starts == [0, 2, 2, 4]
+    assert source_chunks == [5, 5, 6, 6]
+
+
+def test_native_bridge_filter_tokens_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    filtered = bridge.filter_tokens_by_keep_flags(
+        [11, 22, 33, 44, 55],
+        [1, 0, 1, 0, 1],
+    )
+    if filtered is None:
+        pytest.skip("native library does not expose token-filter symbol")
+
+    assert filtered == [11, 33, 55]
+
+
 def test_native_bridge_chunked_stitch_wrapper_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:

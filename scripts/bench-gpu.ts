@@ -105,6 +105,11 @@ if (includeNativeBaseline) {
     command:
       `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken._native import get_native_bridge;bridge=get_native_bridge();assert bridge.available,bridge.error;ffi=bridge._ffi;lib=bridge._lib;assert ffi is not None and lib is not None;data=pathlib.Path('bench/fixtures/english-1mb.txt').read_bytes();out=ffi.new('uint32_t[]',len(data));iters=${singleIterations};written=0\nfor _ in range(iters):\n written=int(lib.turbotoken_encode_utf8_bytes(data,len(data),out,len(data)))\nassert written==len(data)"`,
   });
+  commands.splice(2, 0, {
+    name: "turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb",
+    command:
+      `${python} -c "import concurrent.futures,pathlib,sys;sys.path.insert(0,'python');from turbotoken import _gpu;from turbotoken._native import get_native_bridge;gbridge=_gpu.get_metal_bridge();nbridge=get_native_bridge();assert gbridge.available,gbridge.error;assert nbridge.available,nbridge.error;gffi=gbridge._ffi;glib=gbridge._lib;nffi=nbridge._ffi;nlib=nbridge._lib;assert gffi is not None and glib is not None and nffi is not None and nlib is not None;data=pathlib.Path('bench/fixtures/english-1mb.txt').read_bytes();split=len(data)//2;left=data[:split];right=data[split:];right_in=gffi.from_buffer('const unsigned char[]',right);left_out=nffi.new('uint32_t[]',len(left));right_out=gffi.new('uint32_t[]',len(right));iters=${singleIterations};written_l=0;written_r=0\n\ndef run_cpu():\n w=0\n for _ in range(iters):\n  w=int(nlib.turbotoken_encode_utf8_bytes(left,len(left),left_out,len(left)))\n return w\n\ndef run_gpu():\n w=0\n for _ in range(iters):\n  w=int(glib.turbotoken_metal_encode_utf8_bytes(right_in,len(right),right_out,len(right)))\n return w\n\nwith concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:\n f1=pool.submit(run_cpu)\n f2=pool.submit(run_gpu)\n written_l=f1.result()\n written_r=f2.result()\nassert written_l==len(left) and written_r==len(right)"`,
+  });
 }
 
 process.exit(
@@ -116,6 +121,8 @@ process.exit(
       fixtureBatch: "bench/fixtures/english-1kb.txt",
       encodeIterationsPerSample: singleIterations,
       batchIterationsPerSample: batchIterations,
+      encodeTotalBytesPerSample: singleIterations * 1_048_576,
+      countBatchTotalBytesPerSample: batchIterations * 4_096 * 1_024,
       backend: "apple-metal",
       note: "Experimental Metal backend benchmarks UTF-8 byte-path kernels only (full GPU BPE merge path is still pending).",
       probe,

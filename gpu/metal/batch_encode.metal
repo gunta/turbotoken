@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 
-constant uint TT_ENCODE_BYTES_PER_THREAD = 512;
+constant uint TT_ENCODE_BYTES_PER_THREAD = 2048;
 
 kernel void tt_encode_u8_to_u32(
     device const uchar *input [[buffer(0)]],

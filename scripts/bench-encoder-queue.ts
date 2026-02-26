@@ -7,11 +7,11 @@ ensureFixtures();
 const python = pythonExecutable();
 
 function countCommand(mode: "hybrid" | "full-bucket"): string {
-  return `TURBOTOKEN_ENCODER_QUEUE=${mode} ${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');count=bridge.count_bpe_from_ranks(enc._rank_payload_cache,text);assert count is not None"`;
+  return `TURBOTOKEN_ENCODER_QUEUE=${mode} ${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();payload=enc._ensure_rank_payload();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');count=bridge.count_bpe_from_ranks(payload,text);assert count is not None"`;
 }
 
 function encodeCommand(mode: "hybrid" | "full-bucket"): string {
-  return `TURBOTOKEN_ENCODER_QUEUE=${mode} ${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');tokens=bridge.encode_bpe_from_ranks(enc._rank_payload_cache,text);assert tokens is not None"`;
+  return `TURBOTOKEN_ENCODER_QUEUE=${mode} ${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();payload=enc._ensure_rank_payload();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');tokens=bridge.encode_bpe_from_ranks(payload,text);assert tokens is not None"`;
 }
 
 const commands = [

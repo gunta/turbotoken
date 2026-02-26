@@ -1,0 +1,439 @@
+const std = @import("std");
+
+pub const PairKey = u64;
+
+pub const Merge = struct {
+    left: u32,
+    right: u32,
+    new_id: u32,
+};
+
+const PairDelta = struct {
+    key: PairKey,
+    delta: i32,
+};
+
+const HeapEntry = struct {
+    key: PairKey,
+    count: i64,
+};
+
+const MergeHeap = struct {
+    items: std.ArrayListUnmanaged(HeapEntry) = .{},
+    const arity: usize = 8;
+
+    fn deinit(self: *MergeHeap, allocator: std.mem.Allocator) void {
+        self.items.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn lessThan(a: HeapEntry, b: HeapEntry) bool {
+        if (a.count != b.count) {
+            return a.count > b.count;
+        }
+        return a.key < b.key;
+    }
+
+    fn push(self: *MergeHeap, allocator: std.mem.Allocator, entry: HeapEntry) !void {
+        try self.items.append(allocator, entry);
+        var child = self.items.items.len - 1;
+        while (child > 0) {
+            const parent = (child - 1) / arity;
+            if (!lessThan(self.items.items[child], self.items.items[parent])) {
+                break;
+            }
+            std.mem.swap(HeapEntry, &self.items.items[child], &self.items.items[parent]);
+            child = parent;
+        }
+    }
+
+    fn popOrNull(self: *MergeHeap) ?HeapEntry {
+        if (self.items.items.len == 0) {
+            return null;
+        }
+        const top = self.items.items[0];
+        const last = self.items.items[self.items.items.len - 1];
+        self.items.items.len -= 1;
+        if (self.items.items.len == 0) {
+            return top;
+        }
+        self.items.items[0] = last;
+        self.siftDown(0);
+        return top;
+    }
+
+    fn siftDown(self: *MergeHeap, start: usize) void {
+        var parent = start;
+        const len = self.items.items.len;
+        while (true) {
+            const first_child = parent * arity + 1;
+            if (first_child >= len) {
+                break;
+            }
+            var best = first_child;
+            var child = first_child + 1;
+            const child_end = @min(first_child + arity, len);
+            while (child < child_end) : (child += 1) {
+                if (lessThan(self.items.items[child], self.items.items[best])) {
+                    best = child;
+                }
+            }
+            if (!lessThan(self.items.items[best], self.items.items[parent])) {
+                break;
+            }
+            std.mem.swap(HeapEntry, &self.items.items[parent], &self.items.items[best]);
+            parent = best;
+        }
+    }
+};
+
+fn pairKey(left: u32, right: u32) PairKey {
+    return (@as(u64, left) << 32) | @as(u64, right);
+}
+
+fn pairLeft(key: PairKey) u32 {
+    return @as(u32, @intCast(key >> 32));
+}
+
+fn pairRight(key: PairKey) u32 {
+    return @as(u32, @intCast(key & 0xFFFF_FFFF));
+}
+
+const Word = struct {
+    ids: std.ArrayListUnmanaged(u32) = .{},
+
+    fn initFromBytes(allocator: std.mem.Allocator, chunk: []const u8) !Word {
+        var word = Word{};
+        errdefer word.deinit(allocator);
+        try word.ids.ensureTotalCapacityPrecise(allocator, chunk.len);
+        for (chunk) |byte| {
+            word.ids.appendAssumeCapacity(@as(u32, byte));
+        }
+        return word;
+    }
+
+    fn deinit(self: *Word, allocator: std.mem.Allocator) void {
+        self.ids.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn mergePair(
+        self: *Word,
+        allocator: std.mem.Allocator,
+        left_id: u32,
+        right_id: u32,
+        new_id: u32,
+        deltas: *std.ArrayListUnmanaged(PairDelta),
+    ) !bool {
+        const ids = self.ids.items;
+        if (ids.len < 2) {
+            return false;
+        }
+
+        var first_match: ?usize = null;
+        for (0..ids.len - 1) |idx| {
+            if (ids[idx] == left_id and ids[idx + 1] == right_id) {
+                first_match = idx;
+                break;
+            }
+        }
+        if (first_match == null) {
+            return false;
+        }
+
+        deltas.clearRetainingCapacity();
+        try deltas.ensureTotalCapacity(allocator, 8);
+
+        var write: usize = first_match.?;
+        var read: usize = first_match.?;
+        while (read < ids.len) {
+            if (read + 1 < ids.len and ids[read] == left_id and ids[read + 1] == right_id) {
+                const left_neighbor = if (write > 0) ids[write - 1] else null;
+                const right_neighbor = if (read + 2 < ids.len) ids[read + 2] else null;
+
+                if (left_neighbor) |left| {
+                    try deltas.append(allocator, .{ .key = pairKey(left, left_id), .delta = -1 });
+                    try deltas.append(allocator, .{ .key = pairKey(left, new_id), .delta = 1 });
+                }
+                try deltas.append(allocator, .{ .key = pairKey(left_id, right_id), .delta = -1 });
+                if (right_neighbor) |right| {
+                    try deltas.append(allocator, .{ .key = pairKey(right_id, right), .delta = -1 });
+                    try deltas.append(allocator, .{ .key = pairKey(new_id, right), .delta = 1 });
+                }
+
+                ids[write] = new_id;
+                write += 1;
+                read += 2;
+            } else {
+                ids[write] = ids[read];
+                write += 1;
+                read += 1;
+            }
+        }
+
+        self.ids.items.len = write;
+        return true;
+    }
+};
+
+fn validateChunkInputs(
+    chunks: []const u8,
+    offsets: []const u32,
+    counts: []const u32,
+) !void {
+    if (offsets.len == 0) {
+        return error.InvalidInput;
+    }
+    if (counts.len + 1 != offsets.len) {
+        return error.InvalidInput;
+    }
+    if (offsets[0] != 0) {
+        return error.InvalidInput;
+    }
+    if (offsets[offsets.len - 1] != chunks.len) {
+        return error.InvalidInput;
+    }
+    var prev: u32 = offsets[0];
+    for (offsets[1..]) |next| {
+        if (next < prev or next > chunks.len) {
+            return error.InvalidInput;
+        }
+        prev = next;
+    }
+}
+
+pub fn trainMergesFromChunkCounts(
+    allocator: std.mem.Allocator,
+    chunks: []const u8,
+    offsets: []const u32,
+    counts: []const u32,
+    vocab_size: u32,
+    min_frequency: u32,
+) ![]Merge {
+    if (vocab_size < 256) {
+        return error.InvalidInput;
+    }
+    if (min_frequency == 0) {
+        return error.InvalidInput;
+    }
+    try validateChunkInputs(chunks, offsets, counts);
+
+    const word_count = counts.len;
+    if (word_count == 0) {
+        return try allocator.alloc(Merge, 0);
+    }
+
+    // Training is allocation-heavy; use a scratch arena to amortize allocator overhead.
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const work_allocator = arena_state.allocator();
+
+    var words = try work_allocator.alloc(Word, word_count);
+    for (words) |*word| word.* = .{};
+    for (0..word_count) |idx| {
+        const start = offsets[idx];
+        const end = offsets[idx + 1];
+        words[idx] = try Word.initFromBytes(work_allocator, chunks[start..end]);
+    }
+    defer for (words) |*word| word.deinit(work_allocator);
+
+    var pair_counts: std.AutoHashMapUnmanaged(PairKey, i64) = .{};
+    defer pair_counts.deinit(work_allocator);
+
+    var where_to_update: std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)) = .{};
+    defer {
+        var iter = where_to_update.valueIterator();
+        while (iter.next()) |set_map| {
+            set_map.deinit(work_allocator);
+        }
+        where_to_update.deinit(work_allocator);
+    }
+
+    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    defer seen_pairs.deinit(work_allocator);
+
+    for (0..word_count) |word_idx| {
+        const weight = counts[word_idx];
+        const ids = words[word_idx].ids.items;
+        if (weight == 0 or ids.len < 2) {
+            continue;
+        }
+        seen_pairs.clearRetainingCapacity();
+        for (0..ids.len - 1) |idx| {
+            const key = pairKey(ids[idx], ids[idx + 1]);
+            const count_entry = try pair_counts.getOrPut(work_allocator, key);
+            if (!count_entry.found_existing) {
+                count_entry.value_ptr.* = 0;
+            }
+            count_entry.value_ptr.* += @as(i64, @intCast(weight));
+
+            const seen_entry = try seen_pairs.getOrPut(work_allocator, key);
+            if (!seen_entry.found_existing) {
+                const pos_entry = try where_to_update.getOrPut(work_allocator, key);
+                if (!pos_entry.found_existing) {
+                    pos_entry.value_ptr.* = .{};
+                }
+                _ = try pos_entry.value_ptr.getOrPut(work_allocator, @as(u32, @intCast(word_idx)));
+            }
+        }
+    }
+
+    const max_merges = vocab_size - 256;
+    var merges = std.ArrayListUnmanaged(Merge){};
+    defer merges.deinit(work_allocator);
+    try merges.ensureTotalCapacityPrecise(work_allocator, max_merges);
+
+    var deltas = std.ArrayListUnmanaged(PairDelta){};
+    defer deltas.deinit(work_allocator);
+
+    var seen_positive: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    defer seen_positive.deinit(work_allocator);
+
+    var candidate_indices: std.ArrayListUnmanaged(u32) = .{};
+    defer candidate_indices.deinit(work_allocator);
+    var local_changed_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    defer local_changed_pairs.deinit(work_allocator);
+
+    var heap: MergeHeap = .{};
+    defer heap.deinit(work_allocator);
+    {
+        var init_iter = pair_counts.iterator();
+        while (init_iter.next()) |entry| {
+            const count = entry.value_ptr.*;
+            if (count >= @as(i64, @intCast(min_frequency))) {
+                try heap.push(work_allocator, .{
+                    .key = entry.key_ptr.*,
+                    .count = count,
+                });
+            }
+        }
+    }
+
+    while (merges.items.len < max_merges) {
+        var selected: ?HeapEntry = null;
+        while (heap.popOrNull()) |candidate| {
+            const current = pair_counts.get(candidate.key) orelse 0;
+            if (current < @as(i64, @intCast(min_frequency))) {
+                continue;
+            }
+            if (current != candidate.count) {
+                try heap.push(work_allocator, .{
+                    .key = candidate.key,
+                    .count = current,
+                });
+                continue;
+            }
+            selected = candidate;
+            break;
+        }
+
+        if (selected == null) {
+            break;
+        }
+
+        const selected_key = selected.?.key;
+        const selected_left = pairLeft(selected_key);
+        const selected_right = pairRight(selected_key);
+        const new_id = @as(u32, @intCast(256 + merges.items.len));
+        try merges.append(work_allocator, .{
+            .left = selected_left,
+            .right = selected_right,
+            .new_id = new_id,
+        });
+
+        candidate_indices.clearRetainingCapacity();
+        if (where_to_update.getPtr(selected_key)) |indices_set| {
+            var word_iter = indices_set.keyIterator();
+            while (word_iter.next()) |word_idx_ptr| {
+                try candidate_indices.append(work_allocator, word_idx_ptr.*);
+            }
+            indices_set.clearRetainingCapacity();
+        }
+        for (candidate_indices.items) |word_idx_u32| {
+            const word_idx = @as(usize, @intCast(word_idx_u32));
+            if (word_idx >= words.len or counts[word_idx] == 0) {
+                continue;
+            }
+            const merged = try words[word_idx].mergePair(
+                work_allocator,
+                selected_left,
+                selected_right,
+                new_id,
+                &deltas,
+            );
+            if (!merged) {
+                continue;
+            }
+
+            const weight = @as(i64, @intCast(counts[word_idx]));
+            seen_positive.clearRetainingCapacity();
+            for (deltas.items) |delta| {
+                const delta_total = @as(i64, delta.delta) * weight;
+                if (delta_total == 0) {
+                    continue;
+                }
+
+                const count_entry = try pair_counts.getOrPut(work_allocator, delta.key);
+                if (!count_entry.found_existing) {
+                    count_entry.value_ptr.* = 0;
+                }
+                count_entry.value_ptr.* += delta_total;
+                if (count_entry.value_ptr.* <= 0) {
+                    _ = pair_counts.remove(delta.key);
+                }
+
+                if (delta.delta > 0) {
+                    const seen_entry = try seen_positive.getOrPut(work_allocator, delta.key);
+                    if (!seen_entry.found_existing) {
+                        const pos_entry = try where_to_update.getOrPut(work_allocator, delta.key);
+                        if (!pos_entry.found_existing) {
+                            pos_entry.value_ptr.* = .{};
+                        }
+                        _ = try pos_entry.value_ptr.getOrPut(work_allocator, @as(u32, @intCast(word_idx)));
+                        _ = try local_changed_pairs.getOrPut(work_allocator, delta.key);
+                    }
+                }
+            }
+        }
+        {
+            var changed_iter = local_changed_pairs.keyIterator();
+            while (changed_iter.next()) |pair_key_ptr| {
+                const key = pair_key_ptr.*;
+                const next_count = pair_counts.get(key) orelse 0;
+                if (next_count >= @as(i64, @intCast(min_frequency))) {
+                    try heap.push(work_allocator, .{
+                        .key = key,
+                        .count = next_count,
+                    });
+                }
+            }
+            local_changed_pairs.clearRetainingCapacity();
+        }
+        _ = pair_counts.remove(selected_key);
+    }
+    const out = try allocator.alloc(Merge, merges.items.len);
+    @memcpy(out, merges.items);
+    return out;
+}
+
+test "trainMergesFromChunkCounts learns repeated pair" {
+    const allocator = std.testing.allocator;
+    const chunks = "abab";
+    const offsets = [_]u32{ 0, 4 };
+    const counts = [_]u32{1};
+
+    const merges = try trainMergesFromChunkCounts(
+        allocator,
+        chunks,
+        &offsets,
+        &counts,
+        257,
+        1,
+    );
+    defer allocator.free(merges);
+
+    try std.testing.expectEqual(@as(usize, 1), merges.len);
+    try std.testing.expectEqual(@as(u32, 97), merges[0].left);
+    try std.testing.expectEqual(@as(u32, 98), merges[0].right);
+    try std.testing.expectEqual(@as(u32, 256), merges[0].new_id);
+}

@@ -37,6 +37,9 @@ fn addStaticLibraryCompat(
         });
 
     lib.root_module.addOptions("build_options", build_options);
+    if (target.result.os.tag != .freestanding) {
+        lib.linkLibC();
+    }
     if (target.result.cpu.arch == .aarch64) {
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
@@ -71,6 +74,9 @@ fn addSharedLibraryCompat(
         });
 
     lib.root_module.addOptions("build_options", build_options);
+    if (target.result.os.tag != .freestanding) {
+        lib.linkLibC();
+    }
     if (target.result.cpu.arch == .aarch64) {
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         lib.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));
@@ -102,6 +108,9 @@ fn addTestCompat(
         });
 
     tests.root_module.addOptions("build_options", build_options);
+    if (target.result.os.tag != .freestanding) {
+        tests.linkLibC();
+    }
     if (target.result.cpu.arch == .aarch64) {
         tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_pretokenizer.S"));
         tests.root_module.addAssemblyFile(b.path("asm/arm64/neon_decoder.S"));

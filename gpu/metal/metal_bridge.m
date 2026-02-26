@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +13,7 @@ static NSString *const kKernelSource =
     @"#include <metal_stdlib>\n"
     @"using namespace metal;\n"
     @"\n"
-    @"constant uint TT_ENCODE_BYTES_PER_THREAD = 512;\n"
+    @"constant uint TT_ENCODE_BYTES_PER_THREAD = 2048;\n"
     @"\n"
     @"kernel void tt_encode_u8_to_u32(\n"
     @"    const device uchar *input [[buffer(0)]],\n"
@@ -73,7 +74,7 @@ static NSString *const kKernelSource =
     @"    uint local_total = 0;\n"
     @"    uint idx = start + lane_id;\n"
     @"    uint stride = lanes_per_group;\n"
-    @"    for (; idx + (stride * 7) < end; idx += stride * 8) {\n"
+    @"    for (; idx + (stride * 15) < end; idx += stride * 16) {\n"
     @"        local_total += input[idx] != 0 ? 1u : 0u;\n"
     @"        local_total += input[idx + stride] != 0 ? 1u : 0u;\n"
     @"        local_total += input[idx + (stride * 2)] != 0 ? 1u : 0u;\n"
@@ -82,6 +83,14 @@ static NSString *const kKernelSource =
     @"        local_total += input[idx + (stride * 5)] != 0 ? 1u : 0u;\n"
     @"        local_total += input[idx + (stride * 6)] != 0 ? 1u : 0u;\n"
     @"        local_total += input[idx + (stride * 7)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 8)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 9)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 10)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 11)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 12)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 13)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 14)] != 0 ? 1u : 0u;\n"
+    @"        local_total += input[idx + (stride * 15)] != 0 ? 1u : 0u;\n"
     @"    }\n"
     @"    for (; idx < end; idx += lanes_per_group) {\n"
     @"        local_total += input[idx] != 0 ? 1u : 0u;\n"
@@ -167,6 +176,16 @@ static NSString *const kBpeKernelSource =
     @"        }\n"
     @"    }\n"
     @"    return false;\n"
+    @"}\n"
+    @"\n"
+    @"kernel void tt_bpe_reset_counters(\n"
+    @"    device atomic_uint *min_rank_atomic [[buffer(0)]],\n"
+    @"    device atomic_uint *merge_count [[buffer(1)]],\n"
+    @"    uint gid [[thread_position_in_grid]]) {\n"
+    @"    if (gid == 0) {\n"
+    @"        atomic_store_explicit(min_rank_atomic, TT_BPE_INVALID, memory_order_relaxed);\n"
+    @"        atomic_store_explicit(merge_count, 0u, memory_order_relaxed);\n"
+    @"    }\n"
     @"}\n"
     @"\n"
     @"kernel void tt_bpe_find_candidates(\n"
@@ -321,6 +340,7 @@ static id<MTLCommandQueue> g_queue = nil;
 static id<MTLComputePipelineState> g_encode_pipeline = nil;
 static id<MTLComputePipelineState> g_count_pipeline = nil;
 static id<MTLComputePipelineState> g_stitch_pipeline = nil;
+static id<MTLComputePipelineState> g_bpe_reset_pipeline = nil;
 static id<MTLComputePipelineState> g_bpe_find_pipeline = nil;
 static id<MTLComputePipelineState> g_bpe_min_pipeline = nil;
 static id<MTLComputePipelineState> g_bpe_mark_pipeline = nil;
@@ -355,7 +375,7 @@ static bool g_bpe_rank_table_ready = false;
 static uint32_t g_bpe_byte_token_map[256];
 static bool g_bpe_byte_token_map_ready = false;
 
-static const NSUInteger kEncodeBytesPerThread = 512;
+static const NSUInteger kEncodeBytesPerThread = 2048;
 static const uint32_t kBpeNullIndex = 0xffffffffu;
 static const uint32_t kBpeDeadIndex = 0xfffffffeu;
 static const uint32_t kBpeInvalid = 0xffffffffu;
@@ -541,7 +561,7 @@ static NSUInteger count_threads_per_group_for(
     NSUInteger target = width;
     if (avg_bytes >= 4096) {
         target = width * 8;
-    } else if (avg_bytes >= 1536) {
+    } else if (avg_bytes >= 1024) {
         target = width * 4;
     } else if (avg_bytes >= 384) {
         target = width * 2;
@@ -556,6 +576,24 @@ static NSUInteger count_threads_per_group_for(
     return floor_power_of_two(target);
 }
 
+static uint32_t bpe_rounds_per_submit(void) {
+    const uint32_t default_value = 1u;
+    const char *raw = getenv("TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT");
+    if (raw == NULL || raw[0] == '\0') {
+        return default_value;
+    }
+
+    char *end = NULL;
+    unsigned long parsed = strtoul(raw, &end, 10);
+    if (end == raw || parsed == 0ul) {
+        return default_value;
+    }
+    if (parsed > 32ul) {
+        parsed = 32ul;
+    }
+    return (uint32_t)parsed;
+}
+
 static bool init_metal_locked(void) {
     if (g_initialized) {
         return g_device != nil &&
@@ -563,6 +601,7 @@ static bool init_metal_locked(void) {
             g_encode_pipeline != nil &&
             g_count_pipeline != nil &&
             g_stitch_pipeline != nil &&
+            g_bpe_reset_pipeline != nil &&
             g_bpe_find_pipeline != nil &&
             g_bpe_min_pipeline != nil &&
             g_bpe_mark_pipeline != nil &&
@@ -627,6 +666,17 @@ static bool init_metal_locked(void) {
         g_stitch_pipeline = [g_device newComputePipelineStateWithFunction:stitch_fn error:&error];
         if (g_stitch_pipeline == nil) {
             set_error_ns_locked("failed to create stitch pipeline", error);
+            return false;
+        }
+
+        id<MTLFunction> bpe_reset_fn = [library newFunctionWithName:@"tt_bpe_reset_counters"];
+        if (bpe_reset_fn == nil) {
+            set_error_locked("failed to resolve kernel tt_bpe_reset_counters");
+            return false;
+        }
+        g_bpe_reset_pipeline = [g_device newComputePipelineStateWithFunction:bpe_reset_fn error:&error];
+        if (g_bpe_reset_pipeline == nil) {
+            set_error_ns_locked("failed to create bpe-reset pipeline", error);
             return false;
         }
 
@@ -701,7 +751,7 @@ static id<MTLCommandBuffer> create_command_buffer_locked(void) {
 }
 
 const char *turbotoken_metal_version(void) {
-    return "metal-byte-path-v6";
+    return "metal-byte-path-v7";
 }
 
 const char *turbotoken_metal_last_error(void) {
@@ -1371,96 +1421,188 @@ long turbotoken_metal_bpe_encode_from_bytes(
 
     const uint32_t node_count_u32 = (uint32_t)node_count;
     const uint32_t rank_table_entries_u32 = g_bpe_rank_table_entries;
+    const uint32_t rounds_per_submit = bpe_rounds_per_submit();
     uint32_t rounds = 0;
 
-    while (rounds < node_count_u32) {
-        rounds += 1;
-        *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
-        *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0;
+    if (rounds_per_submit <= 1u) {
+        while (rounds < node_count_u32) {
+            rounds += 1;
+            *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
+            *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0;
 
-        id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
-        if (command_buffer == nil) {
-            set_error_locked("failed to create bpe command buffer");
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
+            id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
+            if (command_buffer == nil) {
+                set_error_locked("failed to create bpe command buffer");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+
+            id<MTLComputeCommandEncoder> find_encoder = [command_buffer computeCommandEncoder];
+            if (find_encoder == nil) {
+                set_error_locked("failed to create bpe-find encoder");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+            [find_encoder setComputePipelineState:g_bpe_find_pipeline];
+            [find_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+            [find_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+            [find_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+            [find_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+            [find_encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
+            [find_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+            [find_encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
+            [find_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
+                      threadsPerThreadgroup:threads_per_group_for(g_bpe_find_pipeline)];
+            [find_encoder endEncoding];
+
+            id<MTLComputeCommandEncoder> min_encoder = [command_buffer computeCommandEncoder];
+            if (min_encoder == nil) {
+                set_error_locked("failed to create bpe-min encoder");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+            [min_encoder setComputePipelineState:g_bpe_min_pipeline];
+            [min_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
+            [min_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
+            [min_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
+            [min_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
+                     threadsPerThreadgroup:threads_per_group_for(g_bpe_min_pipeline)];
+            [min_encoder endEncoding];
+
+            id<MTLComputeCommandEncoder> mark_encoder = [command_buffer computeCommandEncoder];
+            if (mark_encoder == nil) {
+                set_error_locked("failed to create bpe-mark encoder");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+            [mark_encoder setComputePipelineState:g_bpe_mark_pipeline];
+            [mark_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
+            [mark_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+            [mark_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+            [mark_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
+            [mark_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
+            [mark_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+            [mark_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
+                      threadsPerThreadgroup:threads_per_group_for(g_bpe_mark_pipeline)];
+            [mark_encoder endEncoding];
+
+            id<MTLComputeCommandEncoder> apply_encoder = [command_buffer computeCommandEncoder];
+            if (apply_encoder == nil) {
+                set_error_locked("failed to create bpe-apply encoder");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+            [apply_encoder setComputePipelineState:g_bpe_apply_pipeline];
+            [apply_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+            [apply_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
+            [apply_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
+            [apply_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+            [apply_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
+            [apply_encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
+            [apply_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
+            [apply_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
+                       threadsPerThreadgroup:threads_per_group_for(g_bpe_apply_pipeline)];
+            [apply_encoder endEncoding];
+
+            if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+
+            total_gpu_ns += command_buffer_gpu_ns(command_buffer);
+            const uint32_t merges = *(uint32_t *)[g_bpe_merge_count_u32_buffer contents];
+            if (merges == 0) {
+                break;
+            }
         }
+    } else {
+        const MTLSize node_grid = MTLSizeMake(node_count, 1, 1);
+        const MTLSize reset_grid = MTLSizeMake(1, 1, 1);
+        const MTLSize reset_threads = threads_per_group_for(g_bpe_reset_pipeline);
+        const MTLSize find_threads = threads_per_group_for(g_bpe_find_pipeline);
+        const MTLSize min_threads = threads_per_group_for(g_bpe_min_pipeline);
+        const MTLSize mark_threads = threads_per_group_for(g_bpe_mark_pipeline);
+        const MTLSize apply_threads = threads_per_group_for(g_bpe_apply_pipeline);
 
-        id<MTLComputeCommandEncoder> find_encoder = [command_buffer computeCommandEncoder];
-        if (find_encoder == nil) {
-            set_error_locked("failed to create bpe-find encoder");
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
-        }
-        [find_encoder setComputePipelineState:g_bpe_find_pipeline];
-        [find_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-        [find_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-        [find_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-        [find_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-        [find_encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
-        [find_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-        [find_encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
-        [find_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                  threadsPerThreadgroup:threads_per_group_for(g_bpe_find_pipeline)];
-        [find_encoder endEncoding];
+        while (rounds < node_count_u32) {
+            const uint32_t remaining = node_count_u32 - rounds;
+            const uint32_t batch_rounds =
+                remaining < rounds_per_submit ? remaining : rounds_per_submit;
 
-        id<MTLComputeCommandEncoder> min_encoder = [command_buffer computeCommandEncoder];
-        if (min_encoder == nil) {
-            set_error_locked("failed to create bpe-min encoder");
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
-        }
-        [min_encoder setComputePipelineState:g_bpe_min_pipeline];
-        [min_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
-        [min_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
-        [min_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
-        [min_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                 threadsPerThreadgroup:threads_per_group_for(g_bpe_min_pipeline)];
-        [min_encoder endEncoding];
+            *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
+            *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0u;
 
-        id<MTLComputeCommandEncoder> mark_encoder = [command_buffer computeCommandEncoder];
-        if (mark_encoder == nil) {
-            set_error_locked("failed to create bpe-mark encoder");
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
-        }
-        [mark_encoder setComputePipelineState:g_bpe_mark_pipeline];
-        [mark_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
-        [mark_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-        [mark_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-        [mark_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
-        [mark_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
-        [mark_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-        [mark_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                  threadsPerThreadgroup:threads_per_group_for(g_bpe_mark_pipeline)];
-        [mark_encoder endEncoding];
+            id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
+            if (command_buffer == nil) {
+                set_error_locked("failed to create bpe command buffer");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
 
-        id<MTLComputeCommandEncoder> apply_encoder = [command_buffer computeCommandEncoder];
-        if (apply_encoder == nil) {
-            set_error_locked("failed to create bpe-apply encoder");
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
-        }
-        [apply_encoder setComputePipelineState:g_bpe_apply_pipeline];
-        [apply_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-        [apply_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
-        [apply_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
-        [apply_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-        [apply_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
-        [apply_encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
-        [apply_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
-        [apply_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                   threadsPerThreadgroup:threads_per_group_for(g_bpe_apply_pipeline)];
-        [apply_encoder endEncoding];
+            id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+            if (encoder == nil) {
+                set_error_locked("failed to create bpe encoder");
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
 
-        if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
-            pthread_mutex_unlock(&g_state_lock);
-            return -1;
-        }
+            for (uint32_t round_idx = 0; round_idx < batch_rounds; round_idx += 1) {
+                if (round_idx > 0u) {
+                    [encoder setComputePipelineState:g_bpe_reset_pipeline];
+                    [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:0];
+                    [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:1];
+                    [encoder dispatchThreads:reset_grid threadsPerThreadgroup:reset_threads];
+                }
 
-        total_gpu_ns += command_buffer_gpu_ns(command_buffer);
-        const uint32_t merges = *(uint32_t *)[g_bpe_merge_count_u32_buffer contents];
-        if (merges == 0) {
-            break;
+                [encoder setComputePipelineState:g_bpe_find_pipeline];
+                [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+                [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+                [encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
+                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+                [encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
+                [encoder dispatchThreads:node_grid threadsPerThreadgroup:find_threads];
+
+                [encoder setComputePipelineState:g_bpe_min_pipeline];
+                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
+                [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
+                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
+                [encoder dispatchThreads:node_grid threadsPerThreadgroup:min_threads];
+
+                [encoder setComputePipelineState:g_bpe_mark_pipeline];
+                [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
+                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+                [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
+                [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
+                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+                [encoder dispatchThreads:node_grid threadsPerThreadgroup:mark_threads];
+
+                [encoder setComputePipelineState:g_bpe_apply_pipeline];
+                [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+                [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
+                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
+                [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+                [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
+                [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
+                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
+                [encoder dispatchThreads:node_grid threadsPerThreadgroup:apply_threads];
+            }
+
+            [encoder endEncoding];
+
+            if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
+                pthread_mutex_unlock(&g_state_lock);
+                return -1;
+            }
+
+            total_gpu_ns += command_buffer_gpu_ns(command_buffer);
+            rounds += batch_rounds;
+            const uint32_t merges = *(uint32_t *)[g_bpe_merge_count_u32_buffer contents];
+            if (merges == 0) {
+                break;
+            }
         }
     }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import bisect
 import hashlib
 import json
@@ -10,9 +11,11 @@ import platform
 import shutil
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import Any, Sequence
 
 from ._native import get_native_bridge
@@ -175,6 +178,38 @@ def _bench_mean_ms(fn: Any, loops: int) -> float:
 _rank_token_len_cache: dict[str, dict[int, int]] = {}
 _metal_stitch_support_cache: dict[tuple[str, int, int, int], bool] = {}
 _metal_bpe_rank_table_ready: dict[str, bool] = {}
+_hybrid_pool: ThreadPoolExecutor | None = None
+_hybrid_pool_lock = Lock()
+
+
+def _unpack_u32(ffi: Any, out: Any, written: int) -> list[int]:
+    if written <= 0:
+        return []
+    try:
+        return list(ffi.unpack(out, written))
+    except AttributeError:
+        return [int(out[idx]) for idx in range(written)]
+
+
+def _shutdown_hybrid_pool() -> None:
+    global _hybrid_pool
+    with _hybrid_pool_lock:
+        pool = _hybrid_pool
+        _hybrid_pool = None
+    if pool is not None:
+        pool.shutdown(wait=False)
+
+
+def _get_hybrid_pool() -> ThreadPoolExecutor:
+    global _hybrid_pool
+    with _hybrid_pool_lock:
+        if _hybrid_pool is None:
+            _hybrid_pool = ThreadPoolExecutor(
+                max_workers=2,
+                thread_name_prefix="turbotoken-hybrid",
+            )
+            atexit.register(_shutdown_hybrid_pool)
+        return _hybrid_pool
 
 
 def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
@@ -451,7 +486,7 @@ class MetalBridge:
         written = int(self._lib.turbotoken_metal_encode_utf8_bytes(in_buf, len(data), out, needed))
         if written < 0:
             return None
-        return [int(out[idx]) for idx in range(written)]
+        return _unpack_u32(self._ffi, out, written)
 
     def encode_utf8_bytes_batch(self, batch: Sequence[bytes]) -> list[list[int]] | None:
         self.load()
@@ -524,7 +559,7 @@ class MetalBridge:
         )
         if written < 0:
             return None
-        return [int(out[idx]) for idx in range(written)]
+        return _unpack_u32(self._ffi, out, written)
 
     def chunk_owner_flags(
         self,
@@ -580,7 +615,7 @@ class MetalBridge:
         )
         if written < 0:
             return None
-        return [int(out[idx]) for idx in range(written)]
+        return _unpack_u32(self._ffi, out, written)
 
     def set_bpe_rank_table(self, entries_u32: Sequence[int]) -> bool:
         self.load()
@@ -650,7 +685,7 @@ class MetalBridge:
         )
         if written < 0:
             return None
-        return [int(out[idx]) for idx in range(written)]
+        return _unpack_u32(self._ffi, out, written)
 
     def last_profile(self) -> dict[str, int] | None:
         self.load()
@@ -709,6 +744,76 @@ def available() -> bool:
 
 def encode_utf8_bytes(data: bytes) -> list[int] | None:
     return get_metal_bridge().encode_utf8_bytes(data)
+
+
+def encode_utf8_bytes_hybrid(
+    data: bytes,
+    *,
+    split_ratio: float = 0.5,
+    min_bytes: int = 1_048_576,
+) -> list[int] | None:
+    """Experimental split execution: native CPU + Metal GPU in parallel.
+
+    This only applies to the UTF-8 byte-path (u8 -> u32 identity mapping), so
+    concatenating split results is exact.
+    """
+
+    if not data:
+        return []
+
+    bridge = get_metal_bridge()
+    native = get_native_bridge()
+    if not bridge.available or not native.available:
+        return None
+    if len(data) < max(2, min_bytes):
+        return None
+
+    bounded_ratio = min(0.9, max(0.1, split_ratio))
+    split = int(len(data) * bounded_ratio)
+    split = min(len(data) - 1, max(1, split))
+    if native._ffi is None or native._lib is None or bridge._ffi is None or bridge._lib is None:
+        return None
+
+    payload_view = memoryview(data)
+    left_view = payload_view[:split]
+    right_view = payload_view[split:]
+    left_len = len(left_view)
+    right_len = len(right_view)
+
+    nffi = native._ffi
+    nlib = native._lib
+    gffi = bridge._ffi
+    glib = bridge._lib
+
+    left_in = nffi.from_buffer("const char[]", left_view)
+    right_in = gffi.from_buffer("const unsigned char[]", right_view)
+    left_out = nffi.new("uint32_t[]", left_len)
+    right_out = gffi.new("uint32_t[]", right_len)
+
+    pool = _get_hybrid_pool()
+    left_future = pool.submit(
+        nlib.turbotoken_encode_utf8_bytes,
+        left_in,
+        left_len,
+        left_out,
+        left_len,
+    )
+    right_future = pool.submit(
+        glib.turbotoken_metal_encode_utf8_bytes,
+        right_in,
+        right_len,
+        right_out,
+        right_len,
+    )
+
+    written_left = int(left_future.result())
+    written_right = int(right_future.result())
+    if written_left < 0 or written_right < 0:
+        return None
+
+    left_tokens = _unpack_u32(nffi, left_out, written_left)
+    left_tokens.extend(_unpack_u32(gffi, right_out, written_right))
+    return left_tokens
 
 
 def encode_utf8_bytes_batch(batch: Sequence[bytes]) -> list[list[int]] | None:
@@ -929,6 +1034,30 @@ def encode_utf8_bytes_auto(data: bytes) -> tuple[list[int] | None, str]:
     if not data:
         return [], "none"
 
+    hybrid_enabled = os.environ.get("TURBOTOKEN_METAL_HYBRID_ENABLE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if hybrid_enabled:
+        split_ratio_raw = os.environ.get("TURBOTOKEN_METAL_HYBRID_SPLIT", "").strip()
+        min_bytes_raw = os.environ.get("TURBOTOKEN_METAL_HYBRID_MIN_BYTES", "").strip()
+        try:
+            split_ratio = float(split_ratio_raw) if split_ratio_raw else 0.5
+        except ValueError:
+            split_ratio = 0.5
+        try:
+            min_bytes = int(min_bytes_raw) if min_bytes_raw else 1_048_576
+        except ValueError:
+            min_bytes = 1_048_576
+        hybrid = encode_utf8_bytes_hybrid(
+            data,
+            split_ratio=split_ratio,
+            min_bytes=max(2, min_bytes),
+        )
+        if hybrid is not None:
+            return hybrid, "hybrid"
+
     if bridge.available and len(data) >= encode_threshold:
         out = bridge.encode_utf8_bytes(data)
         if out is not None:
@@ -1094,30 +1223,47 @@ def _encode_bpe_chunked_stitched_metal(
         if len(token_offsets) != len(window_ranges) + 1:
             return None
 
-        token_starts_global: list[int] = []
-        source_chunks: list[int] = []
-        for window_idx, (ext_start, ext_end) in enumerate(window_ranges):
-            token_start = token_offsets[window_idx]
-            token_end = token_offsets[window_idx + 1]
-            if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
-                return None
+        window_starts = [start for start, _ in window_ranges]
+        window_ends = [end for _, end in window_ranges]
+        layout = native_bridge.bpe_ranges_token_layout_from_ranks(
+            rank_payload,
+            input_len=len(data),
+            starts=window_starts,
+            ends=window_ends,
+            tokens=flat_tokens,
+            token_offsets=token_offsets,
+            source_chunk_base=batch_start,
+            chunk_bytes=chunk_bytes,
+            num_chunks=num_chunks,
+        )
 
-            cursor = 0
-            ext_len = ext_end - ext_start
-            chunk_idx = batch_start + window_idx
-            for token_idx in range(token_start, token_end):
-                token = flat_tokens[token_idx]
-                token_len = token_lens.get(token)
-                if token_len is None:
+        if layout is None:
+            token_starts_global = []
+            source_chunks = []
+            for window_idx, (ext_start, ext_end) in enumerate(window_ranges):
+                token_start = token_offsets[window_idx]
+                token_end = token_offsets[window_idx + 1]
+                if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
                     return None
-                next_cursor = cursor + token_len
-                if next_cursor > ext_len:
+
+                cursor = 0
+                ext_len = ext_end - ext_start
+                chunk_idx = batch_start + window_idx
+                for token_idx in range(token_start, token_end):
+                    token = flat_tokens[token_idx]
+                    token_len = token_lens.get(token)
+                    if token_len is None:
+                        return None
+                    next_cursor = cursor + token_len
+                    if next_cursor > ext_len:
+                        return None
+                    token_starts_global.append(ext_start + cursor)
+                    source_chunks.append(chunk_idx)
+                    cursor = next_cursor
+                if cursor != ext_len:
                     return None
-                token_starts_global.append(ext_start + cursor)
-                source_chunks.append(chunk_idx)
-                cursor = next_cursor
-            if cursor != ext_len:
-                return None
+        else:
+            token_starts_global, source_chunks = layout
 
         if len(token_starts_global) != len(flat_tokens):
             return None
@@ -1131,9 +1277,13 @@ def _encode_bpe_chunked_stitched_metal(
         if flags is None or len(flags) != len(flat_tokens):
             return None
 
-        for token, keep in zip(flat_tokens, flags):
-            if keep != 0:
-                stitched.append(token)
+        filtered = native_bridge.filter_tokens_by_keep_flags(flat_tokens, flags)
+        if filtered is not None:
+            stitched.extend(filtered)
+        else:
+            for token, keep in zip(flat_tokens, flags):
+                if keep != 0:
+                    stitched.append(token)
 
     total = _token_total_bytes(stitched, token_lens)
     if total is None or total != len(data):
@@ -1274,6 +1424,11 @@ def encode_bpe_chunked_stitched(
     used_metal_result = False
     stitch_cache_key = (hashlib.sha256(rank_payload).hexdigest()[:16], chunk_bytes, overlap_bytes, len(data))
     stitch_cache_state = _metal_stitch_support_cache.get(stitch_cache_key)
+    force_repair = os.environ.get("TURBOTOKEN_METAL_STITCH_ALWAYS_REPAIR", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     if prefer_metal_stitch:
         if stitch_cache_state is False:
             exact = bridge.encode_bpe_from_ranks(rank_payload, data)
@@ -1358,13 +1513,17 @@ def encode_bpe_chunked_stitched(
                     return None
 
     if prefer_metal_stitch and used_metal_result and stitched is not None:
-        repaired = _repair_chunk_boundaries(
-            rank_payload,
-            data,
-            stitched,
-            chunk_bytes=chunk_bytes,
-            overlap_bytes=overlap_bytes,
-        )
+        should_repair = force_repair or strict_verify or stitch_cache_state is not True
+        if not should_repair:
+            repaired = stitched
+        else:
+            repaired = _repair_chunk_boundaries(
+                rank_payload,
+                data,
+                stitched,
+                chunk_bytes=chunk_bytes,
+                overlap_bytes=overlap_bytes,
+            )
         if repaired is not None:
             stitched = repaired
         else:

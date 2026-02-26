@@ -10,12 +10,12 @@ const commands = [
   {
     name: "turbotoken-native-count-bpe-100kb",
     command:
-      `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');count=bridge.count_bpe_from_ranks(enc._rank_payload_cache,text);assert count is not None"`,
+      `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken._native import get_native_bridge;from turbotoken._rank_files import read_rank_file_native_payload;payload=read_rank_file_native_payload('o200k_base');bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_bytes();count=bridge.count_bpe_from_ranks(payload,text);assert count is not None"`,
   },
   {
     name: "turbotoken-native-encode-bpe-100kb",
     command:
-      `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;from turbotoken._native import get_native_bridge;enc=get_encoding('o200k_base');enc.load_mergeable_ranks();bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_text().encode('utf-8');tokens=bridge.encode_bpe_from_ranks(enc._rank_payload_cache,text);assert tokens is not None"`,
+      `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken._native import get_native_bridge;from turbotoken._rank_files import read_rank_file_native_payload;payload=read_rank_file_native_payload('o200k_base');bridge=get_native_bridge();assert bridge.available,bridge.error;text=pathlib.Path('bench/fixtures/english-100kb.txt').read_bytes();tokens=bridge.encode_bpe_from_ranks(payload,text);assert tokens is not None"`,
   },
 ];
 

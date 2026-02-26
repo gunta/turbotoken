@@ -35,7 +35,7 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
     add v4.8h, v4.8h, v6.8h
     add v31.8h, v31.8h, v4.8h
     add x4, x4, #1
-    and x5, x4, #255
+    and x5, x4, #4095
     cbnz x5, .Lloop64_skip_flush
     uaddlv s8, v31.8h
     umov w3, v8.s[0]
@@ -48,7 +48,7 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
     b .Lloop64
 
 .Lflush64:
-    and x5, x4, #255
+    and x5, x4, #4095
     cbz x5, .Lloop16
     uaddlv s8, v31.8h
     umov w3, v8.s[0]
@@ -89,13 +89,15 @@ TT_SYM(turbotoken_arm64_count_non_ascii):
 .p2align 2
 TT_SYM(turbotoken_arm64_count_non_ascii_dotprod):
     mov x2, #0
+    mov x4, #0
     cbz x1, .Ldot_done
 
     movi v30.16b, #1
+    eor v31.16b, v31.16b, v31.16b
 
 .Ldot_loop64:
     cmp x1, #64
-    b.lo .Ldot_loop16
+    b.lo .Ldot_flush64
     prfm pldl1keep, [x0, #128]
     ld1 {v0.16b, v1.16b, v2.16b, v3.16b}, [x0], #64
 
@@ -109,12 +111,26 @@ TT_SYM(turbotoken_arm64_count_non_ascii_dotprod):
     udot v20.4s, v1.16b, v30.16b
     udot v20.4s, v2.16b, v30.16b
     udot v20.4s, v3.16b, v30.16b
-    addv s21, v20.4s
+    add v31.4s, v31.4s, v20.4s
+    add x4, x4, #1
+    and x5, x4, #1023
+    cbnz x5, .Ldot_loop64_skip_flush
+    addv s21, v31.4s
     umov w3, v21.s[0]
     add x2, x2, x3
+    eor v31.16b, v31.16b, v31.16b
 
+.Ldot_loop64_skip_flush:
     sub x1, x1, #64
     b .Ldot_loop64
+
+.Ldot_flush64:
+    and x5, x4, #1023
+    cbz x5, .Ldot_loop16
+    addv s21, v31.4s
+    umov w3, v21.s[0]
+    add x2, x2, x3
+    eor v31.16b, v31.16b, v31.16b
 
 .Ldot_loop16:
     cmp x1, #16

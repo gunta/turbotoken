@@ -1,5 +1,9 @@
 const std = @import("std");
 
+const binary_magic = "TTKRBIN1";
+const binary_version: u32 = 1;
+const binary_missing_len: u32 = std.math.maxInt(u32);
+
 pub const RankEntry = struct {
     token: []u8,
     rank: u32,
@@ -90,8 +94,30 @@ pub const RankTable = struct {
 };
 
 pub fn loadFromBytes(allocator: std.mem.Allocator, payload: []const u8) !RankTable {
+    if (std.mem.startsWith(u8, payload, binary_magic)) {
+        return loadFromBinaryPayload(allocator, payload);
+    }
+
     var table = RankTable.init(allocator);
     errdefer table.deinit();
+
+    const stats = try scanRankPayloadStats(payload);
+    if (stats.line_count > 0) {
+        try table.entries.ensureTotalCapacity(allocator, stats.line_count);
+        if (stats.line_count > std.math.maxInt(u32)) {
+            return error.InvalidLine;
+        }
+        const map_capacity: u32 = @intCast(stats.line_count);
+        try table.by_token.ensureTotalCapacity(allocator, map_capacity);
+        try table.by_rank.ensureTotalCapacity(allocator, map_capacity);
+
+        const dense_len = @as(usize, stats.max_rank) + 1;
+        try table.by_rank_dense.ensureTotalCapacity(allocator, dense_len);
+        var idx: usize = 0;
+        while (idx < dense_len) : (idx += 1) {
+            table.by_rank_dense.appendAssumeCapacity(null);
+        }
+    }
 
     var line_iter = std.mem.splitScalar(u8, payload, '\n');
     while (line_iter.next()) |raw_line| {
@@ -118,6 +144,132 @@ pub fn loadFromBytes(allocator: std.mem.Allocator, payload: []const u8) !RankTab
     }
 
     return table;
+}
+
+fn readU32Le(payload: []const u8, offset: *usize) !u32 {
+    if (payload.len < offset.* + 4) {
+        return error.InvalidBinary;
+    }
+    const value = std.mem.readInt(u32, payload[offset.* .. offset.* + 4][0..4], .little);
+    offset.* += 4;
+    return value;
+}
+
+fn readU64Le(payload: []const u8, offset: *usize) !u64 {
+    if (payload.len < offset.* + 8) {
+        return error.InvalidBinary;
+    }
+    const value = std.mem.readInt(u64, payload[offset.* .. offset.* + 8][0..8], .little);
+    offset.* += 8;
+    return value;
+}
+
+fn loadFromBinaryPayload(allocator: std.mem.Allocator, payload: []const u8) !RankTable {
+    var offset: usize = 0;
+    if (payload.len < binary_magic.len) {
+        return error.InvalidBinary;
+    }
+    if (!std.mem.eql(u8, payload[0..binary_magic.len], binary_magic)) {
+        return error.InvalidBinary;
+    }
+    offset += binary_magic.len;
+
+    const version = try readU32Le(payload, &offset);
+    const flags = try readU32Le(payload, &offset);
+    _ = try readU64Le(payload, &offset); // source file size (informational)
+    _ = try readU64Le(payload, &offset); // source file mtime ns (informational)
+    const entry_count_u32 = try readU32Le(payload, &offset);
+    const max_rank_plus_one_u32 = try readU32Le(payload, &offset);
+
+    if (version != binary_version or flags != 0) {
+        return error.InvalidBinary;
+    }
+    if (entry_count_u32 > max_rank_plus_one_u32) {
+        return error.InvalidBinary;
+    }
+
+    const entry_count: usize = @intCast(entry_count_u32);
+    const max_rank_plus_one: usize = @intCast(max_rank_plus_one_u32);
+
+    var table = RankTable.init(allocator);
+    errdefer table.deinit();
+
+    if (entry_count > 0) {
+        try table.entries.ensureTotalCapacity(allocator, entry_count);
+        try table.by_token.ensureTotalCapacity(allocator, entry_count_u32);
+
+        try table.by_rank_dense.ensureTotalCapacity(allocator, max_rank_plus_one);
+        var idx: usize = 0;
+        while (idx < max_rank_plus_one) : (idx += 1) {
+            table.by_rank_dense.appendAssumeCapacity(null);
+        }
+    }
+
+    var parsed_entries: usize = 0;
+    for (0..max_rank_plus_one) |rank_idx| {
+        const token_len_u32 = try readU32Le(payload, &offset);
+        if (token_len_u32 == binary_missing_len) {
+            continue;
+        }
+
+        const token_len: usize = @intCast(token_len_u32);
+        if (payload.len < offset + token_len) {
+            return error.InvalidBinary;
+        }
+
+        const token_copy = try allocator.alloc(u8, token_len);
+        const token_src = payload[offset .. offset + token_len];
+        @memcpy(token_copy, token_src);
+        offset += token_len;
+
+        const rank: u32 = @intCast(rank_idx);
+        try table.by_token.putNoClobber(allocator, token_copy, rank);
+        table.by_rank_dense.items[rank_idx] = token_copy;
+        try table.entries.append(allocator, .{
+            .token = token_copy,
+            .rank = rank,
+        });
+        parsed_entries += 1;
+    }
+
+    if (parsed_entries != entry_count) {
+        return error.InvalidBinary;
+    }
+    if (offset != payload.len) {
+        return error.InvalidBinary;
+    }
+
+    return table;
+}
+
+const RankPayloadStats = struct {
+    line_count: usize = 0,
+    max_rank: u32 = 0,
+};
+
+fn scanRankPayloadStats(payload: []const u8) !RankPayloadStats {
+    var stats: RankPayloadStats = .{};
+    var line_iter = std.mem.splitScalar(u8, payload, '\n');
+    while (line_iter.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r");
+        if (line.len == 0) {
+            continue;
+        }
+
+        const sep = std.mem.indexOfAny(u8, line, " \t") orelse return error.InvalidLine;
+        const token_b64 = std.mem.trim(u8, line[0..sep], " \t");
+        const rank_text = std.mem.trim(u8, line[sep + 1 ..], " \t");
+        if (token_b64.len == 0 or rank_text.len == 0) {
+            return error.InvalidLine;
+        }
+
+        const rank = std.fmt.parseInt(u32, rank_text, 10) catch return error.InvalidRank;
+        if (stats.line_count == 0 or rank > stats.max_rank) {
+            stats.max_rank = rank;
+        }
+        stats.line_count += 1;
+    }
+    return stats;
 }
 
 test "loadFromBytes parses valid rank data" {
@@ -186,4 +338,52 @@ test "loadFromBytes rejects invalid base64 and invalid rank" {
     const allocator = std.testing.allocator;
     try std.testing.expectError(error.InvalidBase64, loadFromBytes(allocator, "%%% 1\n"));
     try std.testing.expectError(error.InvalidRank, loadFromBytes(allocator, "YQ== no-int\n"));
+}
+
+test "loadFromBytes supports native binary payload format" {
+    const allocator = std.testing.allocator;
+
+    var payload = std.ArrayListUnmanaged(u8){};
+    defer payload.deinit(allocator);
+
+    try payload.appendSlice(allocator, binary_magic);
+
+    var u32_buf: [4]u8 = undefined;
+    var u64_buf: [8]u8 = undefined;
+
+    std.mem.writeInt(u32, &u32_buf, binary_version, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u32, &u32_buf, 0, .little); // flags
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u64, &u64_buf, 16, .little); // source size
+    try payload.appendSlice(allocator, &u64_buf);
+    std.mem.writeInt(u64, &u64_buf, 0, .little); // source mtime
+    try payload.appendSlice(allocator, &u64_buf);
+    std.mem.writeInt(u32, &u32_buf, 2, .little); // entry count
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u32, &u32_buf, 3, .little); // max_rank_plus_one
+    try payload.appendSlice(allocator, &u32_buf);
+
+    // rank 0 -> "a"
+    std.mem.writeInt(u32, &u32_buf, 1, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    try payload.append(allocator, 'a');
+    // rank 1 -> missing
+    std.mem.writeInt(u32, &u32_buf, binary_missing_len, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    // rank 2 -> "b"
+    std.mem.writeInt(u32, &u32_buf, 1, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    try payload.append(allocator, 'b');
+
+    var table = try loadFromBytes(allocator, payload.items);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), table.len());
+    try std.testing.expectEqual(@as(usize, 3), table.maxRankPlusOne());
+    try std.testing.expectEqual(@as(?u32, 0), table.get("a"));
+    try std.testing.expectEqual(@as(?u32, 2), table.get("b"));
+    try std.testing.expect(table.tokenForRank(1) == null);
+    try std.testing.expectEqualStrings("a", table.tokenForRank(0).?);
+    try std.testing.expectEqualStrings("b", table.tokenForRank(2).?);
 }
