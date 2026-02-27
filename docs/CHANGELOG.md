@@ -34,6 +34,9 @@
 - `scripts/bench-encoder-queue.ts` to compare scalar BPE queue strategies (`hybrid` vs `full-bucket`) under `TURBOTOKEN_ENCODER_QUEUE`
 - `scripts/bench-boundary-classifier.ts` to benchmark native ASCII boundary-classification counters (`auto`/`scalar`/`neon`)
 - `scripts/bench-gpu-crossover.ts` now includes long-piece BPE crossover rows (`encode_gpu(auto)` vs forced `encode_gpu(metal)`) with baseline correctness checks, plus optional `TURBOTOKEN_BENCH_LONG=1` mode that appends a `10,485,760` bytes/chars row for periodic heavy comparison runs
+- `scripts/bench-gpu-memory.ts` to benchmark GPU memory telemetry rows (active bytes, bridge working-set bytes, and Metal driver-reported allocated bytes) across encode/count/BPE workloads
+- `scripts/bench-gpu-memory-cuda.ts` to benchmark CUDA GPU memory usage (`nvidia-smi` + backend allocator counters) with graceful skip records on non-NVIDIA hosts
+- `scripts/modal/bench_cuda_modal.py` to run benchmark suites on Modal NVIDIA GPUs and export a consolidated local JSON artifact (`bench/results/bench-modal-cuda-*.json`)
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
@@ -134,6 +137,8 @@
 - Experimental chunked stitch path now applies boundary-repair/exactness guards and per-shape compatibility caching so `encode_gpu(device="metal", strict_verify=False)` preserves baseline token output on calibrated long-piece rows
 - Metal byte-path bridge/kernels now run as `metal-byte-path-v3`: encode widened to `256` bytes/thread with unrolled `uint4` stores, count switched to SIMD-group reduction + unrolled accumulation, host dispatch uses dedicated encode threadgroup sizing and adaptive count lanes, and autoroute cache schema moved to `v3` to force recalibration after kernel changes
 - Metal byte-path bridge/kernels now run as `metal-byte-path-v4`: encode widened to `512` bytes/thread with unrolled `uchar4 -> uint4` stores, count hot loop widened to 8x unroll with single-simdgroup fast path, host launch heuristics tuned again (including lower mid-size count lanes), and autoroute cache schema moved to `v4` for recalibration
+- Metal bridge profiling now exports per-op memory telemetry (`memory_active_bytes`, `memory_working_set_bytes`, `memory_device_allocated_bytes`, `memory_device_recommended_working_set_bytes`) through `_gpu.profile_last()` and benchmark artifacts
+- GPU memory benchmark artifacts now include derived throughput columns (`median_*_mib_per_s`) for workloads with known byte totals (Metal + CUDA memory scripts)
 - UTF-8 byte C ABI now also exports explicit scalar-only variants (`turbotoken_encode_utf8_bytes_scalar`, `turbotoken_decode_utf8_bytes_scalar`) to allow apples-to-apples NEON-vs-scalar benchmarking
 - Native byte-path benchmark now includes direct NEON-vs-scalar comparison (latest artifact: `bench/results/bench-native-byte-path-20260225-134436.json`)
 - Native pretokenizer benchmark now measures auto/scalar/NEON/DotProd paths with kernel-selection visibility (`bench/results/bench-native-pretokenizer-20260225-134405.json`)

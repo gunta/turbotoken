@@ -23,6 +23,8 @@ const scripts = [
   "scripts/bench-binary-size.ts",
   "scripts/bench-wasm.ts",
   "scripts/bench-gpu.ts",
+  "scripts/bench-gpu-memory.ts",
+  "scripts/bench-gpu-memory-cuda.ts",
   "scripts/bench-gpu-crossover.ts",
   "scripts/generate-charts.ts",
 ];

@@ -149,6 +149,33 @@ fn addCrossTargetStep(
     return step;
 }
 
+fn addWasmModuleStep(
+    b: *std.Build,
+    optimize: std.builtin.OptimizeMode,
+    build_options: *std.Build.Step.Options,
+) *std.Build.Step {
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
+    });
+    const root_module = createRootModule(b, wasm_target, optimize, build_options);
+    const wasm_exe = b.addExecutable(.{
+        .name = "turbotoken",
+        .root_module = root_module,
+    });
+    wasm_exe.entry = .disabled;
+    wasm_exe.rdynamic = true;
+    wasm_exe.export_memory = true;
+    wasm_exe.import_memory = false;
+    wasm_exe.stack_size = 8 * 1024 * 1024;
+    wasm_exe.initial_memory = 16 * 1024 * 1024;
+
+    const install_wasm = b.addInstallArtifact(wasm_exe, .{});
+    const step = b.step("wasm", "Build WebAssembly module (zig-out/bin/turbotoken.wasm)");
+    step.dependOn(&install_wasm.step);
+    return step;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -240,4 +267,10 @@ pub fn build(b: *std.Build) void {
         );
         targets_step.dependOn(step);
     }
+
+    _ = addWasmModuleStep(
+        b,
+        optimize,
+        build_options,
+    );
 }

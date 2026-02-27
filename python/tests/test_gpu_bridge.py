@@ -43,3 +43,25 @@ def test_gpu_bridge_byte_path_roundtrip_when_available() -> None:
 def test_gpu_bpe_route_backend_shape() -> None:
     route = _gpu.bpe_route_backend(4096)
     assert route in {"none", "native", "metal"}
+
+
+def test_gpu_profile_exposes_memory_fields_when_available() -> None:
+    bridge = _gpu.get_metal_bridge()
+    if not bridge.available:
+        pytest.skip(f"Metal backend unavailable in this environment: {bridge.error}")
+
+    payload = b"gpu-memory-check"
+    encoded = bridge.encode_utf8_bytes(payload)
+    assert encoded == [b for b in payload]
+
+    profile = _gpu.profile_last()
+    assert profile is not None
+    for key in (
+        "memory_active_bytes",
+        "memory_working_set_bytes",
+        "memory_device_allocated_bytes",
+        "memory_device_recommended_working_set_bytes",
+    ):
+        assert key in profile
+        assert isinstance(profile[key], int)
+        assert profile[key] >= 0

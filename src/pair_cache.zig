@@ -154,6 +154,11 @@ pub const PairCache = struct {
     }
 
     fn initHashMode() void {
+        if (builtin.os.tag == .freestanding) {
+            selected_hash_mode = defaultHashMode();
+            return;
+        }
+
         const mode = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_PAIR_CACHE_HASH") catch {
             selected_hash_mode = defaultHashMode();
             return;

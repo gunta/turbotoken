@@ -401,6 +401,10 @@ static uint64_t g_last_bpe_gpu_ns = 0;
 static uint64_t g_last_bpe_rounds = 0;
 static uint64_t g_last_bpe_input_bytes = 0;
 static uint64_t g_last_bpe_output_tokens = 0;
+static uint64_t g_last_memory_active_bytes = 0;
+static uint64_t g_last_memory_working_set_bytes = 0;
+static uint64_t g_last_memory_device_allocated_bytes = 0;
+static uint64_t g_last_memory_device_recommended_working_set_bytes = 0;
 
 static void set_error_locked(const char *message) {
     if (message == NULL || message[0] == '\0') {
@@ -485,6 +489,74 @@ static bool ensure_buffer_locked(
     *buffer = next;
     *capacity = target;
     return true;
+}
+
+static uint64_t bridge_working_set_bytes_locked(void) {
+    uint64_t total = 0;
+    if (g_input_buffer != nil) {
+        total += (uint64_t)g_input_capacity;
+    }
+    if (g_output_u32_buffer != nil) {
+        total += (uint64_t)g_output_u32_capacity;
+    }
+    if (g_offsets_u32_buffer != nil) {
+        total += (uint64_t)g_offsets_u32_capacity;
+    }
+    if (g_bpe_tokens_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_tokens_u32_capacity;
+    }
+    if (g_bpe_prev_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_prev_u32_capacity;
+    }
+    if (g_bpe_next_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_next_u32_capacity;
+    }
+    if (g_bpe_pair_rank_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_pair_rank_u32_capacity;
+    }
+    if (g_bpe_pair_merged_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_pair_merged_u32_capacity;
+    }
+    if (g_bpe_merge_flags_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_merge_flags_u32_capacity;
+    }
+    if (g_bpe_min_rank_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_min_rank_u32_capacity;
+    }
+    if (g_bpe_merge_count_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_merge_count_u32_capacity;
+    }
+    if (g_bpe_rank_table_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_rank_table_u32_capacity;
+    }
+    return total;
+}
+
+static uint64_t metal_device_allocated_bytes_locked(void) {
+    if (g_device == nil) {
+        return 0;
+    }
+    if ([g_device respondsToSelector:@selector(currentAllocatedSize)]) {
+        return (uint64_t)[g_device currentAllocatedSize];
+    }
+    return 0;
+}
+
+static uint64_t metal_device_recommended_working_set_bytes_locked(void) {
+    if (g_device == nil) {
+        return 0;
+    }
+    if ([g_device respondsToSelector:@selector(recommendedMaxWorkingSetSize)]) {
+        return (uint64_t)[g_device recommendedMaxWorkingSetSize];
+    }
+    return 0;
+}
+
+static void update_memory_profile_locked(uint64_t active_bytes) {
+    g_last_memory_active_bytes = active_bytes;
+    g_last_memory_working_set_bytes = bridge_working_set_bytes_locked();
+    g_last_memory_device_allocated_bytes = metal_device_allocated_bytes_locked();
+    g_last_memory_device_recommended_working_set_bytes = metal_device_recommended_working_set_bytes_locked();
 }
 
 static MTLSize threads_per_group_for(id<MTLComputePipelineState> pipeline) {
@@ -751,7 +823,7 @@ static id<MTLCommandBuffer> create_command_buffer_locked(void) {
 }
 
 const char *turbotoken_metal_version(void) {
-    return "metal-byte-path-v7";
+    return "metal-byte-path-v8";
 }
 
 const char *turbotoken_metal_last_error(void) {
@@ -894,6 +966,34 @@ uint64_t turbotoken_metal_last_bpe_output_tokens(void) {
     return value;
 }
 
+uint64_t turbotoken_metal_last_memory_active_bytes(void) {
+    pthread_mutex_lock(&g_state_lock);
+    const uint64_t value = g_last_memory_active_bytes;
+    pthread_mutex_unlock(&g_state_lock);
+    return value;
+}
+
+uint64_t turbotoken_metal_last_memory_working_set_bytes(void) {
+    pthread_mutex_lock(&g_state_lock);
+    const uint64_t value = g_last_memory_working_set_bytes;
+    pthread_mutex_unlock(&g_state_lock);
+    return value;
+}
+
+uint64_t turbotoken_metal_last_memory_device_allocated_bytes(void) {
+    pthread_mutex_lock(&g_state_lock);
+    const uint64_t value = g_last_memory_device_allocated_bytes;
+    pthread_mutex_unlock(&g_state_lock);
+    return value;
+}
+
+uint64_t turbotoken_metal_last_memory_device_recommended_working_set_bytes(void) {
+    pthread_mutex_lock(&g_state_lock);
+    const uint64_t value = g_last_memory_device_recommended_working_set_bytes;
+    pthread_mutex_unlock(&g_state_lock);
+    return value;
+}
+
 int turbotoken_metal_available(void) {
     pthread_mutex_lock(&g_state_lock);
     const bool ok = init_metal_locked();
@@ -1000,6 +1100,7 @@ long turbotoken_metal_encode_utf8_bytes(
     g_last_encode_gpu_ns = command_buffer_gpu_ns(command_buffer);
     g_last_encode_bytes = (uint64_t)in_bytes;
     g_last_encode_dispatch_threads = (uint64_t)dispatch_threads;
+    update_memory_profile_locked((uint64_t)in_bytes + (uint64_t)out_bytes);
     pthread_mutex_unlock(&g_state_lock);
     return (long)input_len;
 }
@@ -1146,6 +1247,7 @@ long turbotoken_metal_count_nonzero_segments(
     g_last_count_bytes = (uint64_t)in_bytes;
     g_last_count_segments = (uint64_t)segment_count;
     g_last_count_lanes = (uint64_t)lanes;
+    update_memory_profile_locked((uint64_t)in_bytes + (uint64_t)offsets_bytes + (uint64_t)out_bytes);
     pthread_mutex_unlock(&g_state_lock);
     return (long)segment_count;
 }
@@ -1296,6 +1398,7 @@ long turbotoken_metal_chunk_owner_flags(
     g_last_stitch_tokens = (uint64_t)token_len;
     g_last_stitch_chunk_bytes = (uint64_t)chunk_bytes;
     g_last_stitch_num_chunks = (uint64_t)num_chunks;
+    update_memory_profile_locked((uint64_t)token_bytes * 3u);
     pthread_mutex_unlock(&g_state_lock);
     return (long)token_len;
 }
@@ -1337,6 +1440,7 @@ long turbotoken_metal_bpe_set_rank_table(
     memcpy([g_bpe_rank_table_u32_buffer contents], entries_u32, bytes);
     g_bpe_rank_table_entries = (uint32_t)entry_count;
     g_bpe_rank_table_ready = true;
+    update_memory_profile_locked((uint64_t)bytes);
     pthread_mutex_unlock(&g_state_lock);
     return (long)entry_count;
 }
@@ -1647,6 +1751,10 @@ long turbotoken_metal_bpe_encode_from_bytes(
     g_last_bpe_rounds = rounds;
     g_last_bpe_input_bytes = (uint64_t)input_len;
     g_last_bpe_output_tokens = (uint64_t)written;
+    const uint64_t rank_table_active_bytes = (uint64_t)rank_table_entries_u32 * 4u * (uint64_t)sizeof(uint32_t);
+    const uint64_t bpe_active_bytes =
+        ((uint64_t)node_bytes * 6u) + rank_table_active_bytes + (2u * (uint64_t)sizeof(uint32_t));
+    update_memory_profile_locked(bpe_active_bytes);
 
     pthread_mutex_unlock(&g_state_lock);
     return (long)written;

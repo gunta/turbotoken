@@ -11,6 +11,7 @@ SIMD backends, and a compatibility-focused Python API.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
 - Native Zig CPU acceleration is available for key byte-path primitives; broader backend work (AVX/GPU full BPE) is still in progress.
 - Apple Metal backend is now wired as an experimental UTF-8 byte-path accelerator (full GPU BPE merge path is still pending).
+- Modal NVIDIA remote benchmark runner is available via `scripts/modal/bench_cuda_modal.py` for CUDA-hosted baseline runs (`L40S`/`A100`/`H100` class on Modal).
 - First-pass Python training APIs are available (`train_mergeable_ranks_from_iterator`, `train_encoding_from_iterator`) for custom regex+BPE vocab training (CPU path only).
 - Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`
   on the tracked compatibility corpus.
@@ -41,6 +42,40 @@ Notes:
   - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1` enables native ASCII O200K pretokenization before chunk counting
   - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1` enables direct native ASCII O200K single-text training route
 - Latest local training benchmarks show the Python training path beating both `rustbpe` and `minbpe` on the tracked 100KB/1MB fixtures; the Zig-native training prototype still trails the Python fallback path in this environment.
+
+## JS + WASM (First Pass)
+
+```ts
+import { getEncodingAsync, trainBpeFromChunks } from "./js/src/index";
+
+const enc = await getEncodingAsync("o200k_base", {
+  wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
+  enableWasmBpe: true, // experimental
+});
+
+const ids = await enc.encodeAsync("hello world");
+const text = await enc.decodeAsync(ids);
+
+const merges = await trainBpeFromChunks({
+  chunks: ["ab", "ab", "ab"],
+  vocabSize: 257,
+  minFrequency: 1,
+  wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
+});
+```
+
+Build WASM artifact:
+
+```bash
+zig build wasm -Doptimize=ReleaseSmall
+# or
+bun run build:wasm
+```
+
+Notes:
+- `enableWasmBpe` is currently experimental and off by default.
+- Without it, JS methods fall back to UTF-8 byte behavior while still using the real WASM loader for byte-path primitives.
+- WASM training helpers are available via `trainBpeFromChunkCounts` and `trainBpeFromChunks`.
 
 ## Quick Start
 

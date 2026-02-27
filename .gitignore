@@ -25,6 +25,7 @@ dist/
 # Bench outputs
 bench/results/*.json
 bench/results/*.md
+bench/results/cache/
 bench/charts/*.png
 bench/charts/*.svg
 .dmux/

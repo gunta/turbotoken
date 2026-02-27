@@ -418,6 +418,10 @@ class MetalBridge:
             uint64_t turbotoken_metal_last_bpe_rounds(void);
             uint64_t turbotoken_metal_last_bpe_input_bytes(void);
             uint64_t turbotoken_metal_last_bpe_output_tokens(void);
+            uint64_t turbotoken_metal_last_memory_active_bytes(void);
+            uint64_t turbotoken_metal_last_memory_working_set_bytes(void);
+            uint64_t turbotoken_metal_last_memory_device_allocated_bytes(void);
+            uint64_t turbotoken_metal_last_memory_device_recommended_working_set_bytes(void);
             """
         )
 
@@ -713,6 +717,12 @@ class MetalBridge:
                 "bpe_rounds": int(self._lib.turbotoken_metal_last_bpe_rounds()),
                 "bpe_input_bytes": int(self._lib.turbotoken_metal_last_bpe_input_bytes()),
                 "bpe_output_tokens": int(self._lib.turbotoken_metal_last_bpe_output_tokens()),
+                "memory_active_bytes": int(self._lib.turbotoken_metal_last_memory_active_bytes()),
+                "memory_working_set_bytes": int(self._lib.turbotoken_metal_last_memory_working_set_bytes()),
+                "memory_device_allocated_bytes": int(self._lib.turbotoken_metal_last_memory_device_allocated_bytes()),
+                "memory_device_recommended_working_set_bytes": int(
+                    self._lib.turbotoken_metal_last_memory_device_recommended_working_set_bytes(),
+                ),
             }
         except (AttributeError, TypeError):
             return None
@@ -734,7 +744,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend accelerates UTF-8 byte-path primitives; BPE chunked stitch remains experimental and is enabled by device='metal' or by autoroute-v4 thresholds, with exactness guards to preserve baseline output when stitch kernels diverge.",
+        "note": "Experimental Metal backend accelerates UTF-8 byte-path primitives; BPE chunked stitch remains experimental and is enabled by device='metal' or by autoroute-v4 thresholds, with exactness guards to preserve baseline output when stitch kernels diverge. last_profile now includes per-op GPU memory telemetry fields.",
     }
 
 

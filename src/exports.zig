@@ -7,7 +7,12 @@ const rank_loader = @import("rank_loader.zig");
 const pretokenizer = @import("pretokenizer.zig");
 const trainer = @import("trainer.zig");
 
-const rank_cache_allocator = std.heap.c_allocator;
+const rank_cache_allocator = if (builtin.os.tag == .freestanding and builtin.cpu.arch == .wasm32)
+    std.heap.wasm_allocator
+else if (builtin.os.tag == .freestanding)
+    std.heap.page_allocator
+else
+    std.heap.c_allocator;
 
 const RankTableCache = struct {
     hash: u64 = 0,
@@ -27,6 +32,16 @@ const BpeParallelMode = enum {
 
 var bpe_parallel_mode: BpeParallelMode = .auto;
 var bpe_parallel_once = std.once(initBpeParallelMode);
+
+fn runtimeAllocator() std.mem.Allocator {
+    if (builtin.os.tag == .freestanding and builtin.cpu.arch == .wasm32) {
+        return std.heap.wasm_allocator;
+    }
+    if (builtin.os.tag == .freestanding) {
+        return std.heap.page_allocator;
+    }
+    return std.heap.c_allocator;
+}
 
 fn clearRankTableCache() void {
     if (rank_table_cache.table) |*table| {
@@ -88,6 +103,11 @@ fn isTruthyEnvValue(value: []const u8) bool {
 }
 
 fn initBpeParallelMode() void {
+    if (builtin.os.tag == .freestanding) {
+        bpe_parallel_mode = .off;
+        return;
+    }
+
     const disable = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_NATIVE_BPE_PARALLEL_DISABLE") catch {
         const enable = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_NATIVE_BPE_PARALLEL_ENABLE") catch {
             bpe_parallel_mode = .auto;
@@ -189,7 +209,7 @@ fn markWorkerFailed(flag: *std.atomic.Value(u8)) void {
 }
 
 fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const backend = ScalarBackend.init();
 
     for (begin..end) |idx| {
@@ -213,7 +233,7 @@ fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
 }
 
 fn encodeRangesWorker(ctx: *EncodeRangesContext, begin: usize, end: usize) void {
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const backend = ScalarBackend.init();
 
     for (begin..end) |idx| {
@@ -436,6 +456,23 @@ fn encodeBpeRangesFromTable(
 
 pub export fn turbotoken_version() [*c]const u8 {
     return "0.1.0-dev";
+}
+
+pub export fn turbotoken_wasm_alloc(size: usize) [*c]u8 {
+    if (size == 0) {
+        return null;
+    }
+    const allocator = runtimeAllocator();
+    const memory = allocator.alloc(u8, size) catch return null;
+    return memory.ptr;
+}
+
+pub export fn turbotoken_wasm_free(ptr: [*c]u8, size: usize) void {
+    if (ptr == null or size == 0) {
+        return;
+    }
+    const allocator = runtimeAllocator();
+    allocator.free(ptr[0..size]);
 }
 
 pub export fn turbotoken_count(_: [*c]const u8, text_len: usize) isize {
@@ -834,7 +871,7 @@ pub export fn turbotoken_encode_bpe_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
@@ -883,7 +920,7 @@ pub export fn turbotoken_train_bpe_from_chunk_counts(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const chunk_slice: []const u8 = if (chunks_len == 0) &[_]u8{} else chunks[0..chunks_len];
     const offsets = chunk_offsets[0..chunk_offsets_len];
     const counts = chunk_counts[0..chunk_counts_len];
@@ -1069,7 +1106,7 @@ pub export fn turbotoken_train_bpe_ascii_o200k(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
     const offsets = [_]u32{ 0, @as(u32, @intCast(text_len)) };
 
@@ -1108,7 +1145,7 @@ pub export fn turbotoken_train_bpe_ascii_o200k_multi(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const all_text: []const u8 = if (texts_len == 0) &[_]u8{} else texts[0..texts_len];
     const offsets = text_offsets[0..text_offsets_len];
 
@@ -1167,7 +1204,7 @@ pub export fn turbotoken_encode_bpe_batch_from_ranks(
     const starts = offset_slice[0..segment_count];
     const ends = offset_slice[1..offsets_len];
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     return encodeBpeRangesFromTable(
@@ -1209,7 +1246,7 @@ pub export fn turbotoken_encode_bpe_ranges_from_ranks(
     const starts = range_starts[0..ranges_len];
     const ends = range_ends[0..ranges_len];
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     return encodeBpeRangesFromTable(
@@ -1410,7 +1447,7 @@ pub export fn turbotoken_encode_bpe_chunked_stitched_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const backend = ScalarBackend.init();
-    const allocator = std.heap.page_allocator;
+    const allocator = runtimeAllocator();
 
     const num_chunks = (in_slice.len + chunk_bytes - 1) / chunk_bytes;
     var total_tokens: usize = 0;
@@ -1468,7 +1505,7 @@ pub export fn turbotoken_count_bpe_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
@@ -1540,7 +1577,7 @@ pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
@@ -1565,7 +1602,7 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.c_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
@@ -1639,7 +1676,7 @@ pub export fn turbotoken_decode_bpe_from_ranks(
         return -1;
     }
 
-    const allocator = std.heap.page_allocator;
+    const allocator = runtimeAllocator();
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
 

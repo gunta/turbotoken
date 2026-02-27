@@ -528,7 +528,10 @@ pub const Encoder = struct {
             arena.version[idx] = 0;
         }
 
-        var cache = pair_cache.PairCache.init();
+        const cache = try allocator.create(pair_cache.PairCache);
+        defer allocator.destroy(cache);
+        cache.clear();
+
         _ = cache.populateFromKnownSeedSets(table);
         var scratch = std.ArrayListUnmanaged(u8){};
         defer scratch.deinit(allocator);
@@ -540,7 +543,7 @@ pub const Encoder = struct {
         if (arena.token.len > 1) {
             try queue.ensureTotalCapacity(arena.token.len - 1);
             for (0..arena.token.len - 1) |idx| {
-                try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, idx);
+                try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, idx);
             }
         }
 
@@ -548,8 +551,8 @@ pub const Encoder = struct {
             if (queue.peekOrNull()) |next_candidate| {
                 const next_left_idx = @as(usize, next_candidate.left);
                 if (next_left_idx < arena.token.len) {
-                    @prefetch(&arena.token[next_left_idx], .{ .rw = .read, .locality = 2 });
-                    @prefetch(&arena.next[next_left_idx], .{ .rw = .read, .locality = 2 });
+                    prefetchRead(2, &arena.token[next_left_idx]);
+                    prefetchRead(2, &arena.next[next_left_idx]);
                 }
             }
 
@@ -577,12 +580,12 @@ pub const Encoder = struct {
             if (prev_idx != null_index and prev_idx != dead_index) {
                 const prev_usize = @as(usize, prev_idx);
                 const prev_rank_slot = cache.slotIndexFor(arena.token[prev_usize], candidate.rank);
-                @prefetch(&cache.entries[prev_rank_slot], .{ .rw = .read, .locality = 3 });
+                prefetchRead(3, &cache.entries[prev_rank_slot]);
             }
             if (next_next_idx != null_index and next_next_idx != dead_index) {
                 const next_next_usize = @as(usize, next_next_idx);
                 const next_rank_slot = cache.slotIndexFor(candidate.rank, arena.token[next_next_usize]);
-                @prefetch(&cache.entries[next_rank_slot], .{ .rw = .read, .locality = 3 });
+                prefetchRead(3, &cache.entries[next_rank_slot]);
             }
 
             arena.end[left_idx] = arena.end[actual_right_usize];
@@ -600,9 +603,9 @@ pub const Encoder = struct {
             arena.version[actual_right_usize] +%= 1;
 
             if (prev_idx != null_index and prev_idx != dead_index) {
-                try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, @as(usize, prev_idx));
+                try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, @as(usize, prev_idx));
             }
-            try enqueueCandidate(allocator, &queue, &arena, table, &cache, &scratch, left_idx);
+            try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, left_idx);
         }
 
         var head_idx: ?NodeIndex = null;
@@ -617,6 +620,12 @@ pub const Encoder = struct {
             .arena = arena,
             .head_idx = head_idx orelse return error.InvalidTokenizerState,
         };
+    }
+
+    fn prefetchRead(comptime locality: u2, ptr: anytype) void {
+        if (comptime builtin.cpu.arch != .wasm32 and builtin.os.tag != .freestanding) {
+            @prefetch(ptr, .{ .rw = .read, .locality = locality });
+        }
     }
 
     pub fn init() Encoder {

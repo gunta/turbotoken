@@ -15,6 +15,16 @@ We need a WASM build that:
 4. Is as fast as possible for BPE encoding/decoding
 5. Loads and initializes quickly (Time To First Token)
 
+## Implemented Baseline (2026-02-26)
+
+- Zig WASM build step now emits `zig-out/bin/turbotoken.wasm` via `zig build wasm`.
+- JS loader (`js/src/wasm-loader.ts`) instantiates the module and calls exported Zig C-ABI symbols directly.
+- JS `Encoding` now has async WASM+BPE methods (`encodeAsync`, `decodeAsync`, `countAsync`) with rank payload loading.
+- JS now also exposes WASM training wrappers (`trainBpeFromChunkCounts`, `trainBpeFromChunks`).
+- `scripts/bench-wasm.ts` now reports startup latency, throughput (MB/s), and peak RSS rows.
+
+This is still an optimization-stage baseline, not a final browser package release.
+
 ## The Zig Advantage
 
 With our decision to use Zig as the core language (ADR-001), we get a unique WASM story:
