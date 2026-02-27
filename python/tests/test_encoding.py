@@ -124,3 +124,28 @@ def test_o200k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.Monke
 
     assert fast == slow
     assert fast_count == slow_count == len(slow)
+
+
+def test_decode_bytes_native_fast_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("decode path parity check for native fallback. " * 4096).strip()
+    tokens = enc.encode(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_DECODE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_DECODE_DISABLE", raising=False)
+    fast = enc.decode_bytes(tokens)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_DECODE_DISABLE", "1")
+    slow = enc.decode_bytes(tokens)
+
+    assert fast == slow == text.encode("utf-8")
+
+
+def test_decode_bytes_unknown_token_keeps_value_error_semantics(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_DECODE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_DECODE_DISABLE", raising=False)
+    with pytest.raises(ValueError):
+        enc.decode_bytes([2_147_483_647])

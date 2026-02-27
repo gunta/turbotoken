@@ -100,6 +100,7 @@ Benchmark entrypoints:
 ```bash
 bun run bench       # default local suite (CUDA excluded)
 bun run bench:cuda  # include local CUDA rows explicitly
+bun run bench:scorecard  # consolidate latest artifacts into a canonical scorecard
 bun run bench:modal:cuda  # paid remote Modal CUDA run (explicitly confirmed)
 ```
 

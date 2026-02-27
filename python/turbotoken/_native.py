@@ -70,6 +70,8 @@ class NativeBridge:
     _error: str | None = None
     _rank_payload_ref: bytes | None = None
     _rank_payload_buf: Any | None = None
+    _rank_session_payload_ref: bytes | None = None
+    _rank_session_cache: "NativeRankSession | None" = None
 
     def load(self) -> None:
         if self._lib is not None or self._error is not None:
@@ -326,6 +328,22 @@ class NativeBridge:
             self._rank_payload_ref = rank_payload
             self._rank_payload_buf = self._ffi.from_buffer("const char[]", rank_payload)
         return self._rank_payload_buf
+
+    def rank_session(self, rank_payload: bytes) -> "NativeRankSession | None":
+        self.load()
+        if self._lib is None:
+            return None
+        if (
+            self._rank_session_cache is not None
+            and self._rank_session_payload_ref is rank_payload
+        ):
+            return self._rank_session_cache
+        if self._rank_payload_ptr(rank_payload) is None:
+            return None
+        session = NativeRankSession(_bridge=self, _rank_payload=rank_payload)
+        self._rank_session_payload_ref = rank_payload
+        self._rank_session_cache = session
+        return session
 
     def count_bytes(self, data: bytes) -> int | None:
         self.load()
@@ -1352,3 +1370,48 @@ class NativeBridge:
 @lru_cache(maxsize=1)
 def get_native_bridge() -> NativeBridge:
     return NativeBridge()
+
+
+@dataclass(slots=True)
+class NativeRankSession:
+    _bridge: NativeBridge
+    _rank_payload: bytes
+
+    def encode_bpe(self, data: bytes) -> list[int] | None:
+        return self._bridge.encode_bpe_from_ranks(self._rank_payload, data)
+
+    def count_bpe(self, data: bytes) -> int | None:
+        return self._bridge.count_bpe_from_ranks(self._rank_payload, data)
+
+    def encode_bpe_ranges(
+        self,
+        data: bytes,
+        ranges: list[tuple[int, int]],
+    ) -> tuple[list[int], list[int]] | None:
+        return self._bridge.encode_bpe_ranges_from_ranks(self._rank_payload, data, ranges)
+
+    def count_bpe_ranges(self, data: bytes, ranges: list[tuple[int, int]]) -> int | None:
+        return self._bridge.count_bpe_ranges_from_ranks(self._rank_payload, data, ranges)
+
+    def encode_bpe_chunked_stitched(
+        self,
+        data: bytes,
+        *,
+        chunk_bytes: int,
+        overlap_bytes: int,
+    ) -> list[int] | None:
+        return self._bridge.encode_bpe_chunked_stitched_from_ranks(
+            self._rank_payload,
+            data,
+            chunk_bytes=chunk_bytes,
+            overlap_bytes=overlap_bytes,
+        )
+
+    def encode_bpe_ascii_o200k(self, data: bytes) -> list[int] | None:
+        return self._bridge.encode_bpe_ascii_o200k_from_ranks(self._rank_payload, data)
+
+    def count_bpe_ascii_o200k(self, data: bytes) -> int | None:
+        return self._bridge.count_bpe_ascii_o200k_from_ranks(self._rank_payload, data)
+
+    def decode_bpe(self, tokens: list[int]) -> bytes | None:
+        return self._bridge.decode_bpe_from_ranks(self._rank_payload, tokens)

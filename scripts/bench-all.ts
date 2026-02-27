@@ -26,6 +26,7 @@ const scripts = [
   "scripts/bench-gpu-memory.ts",
   "scripts/bench-gpu-crossover.ts",
   "scripts/generate-charts.ts",
+  "scripts/bench-scorecard.ts",
 ];
 
 const includeCuda = ["1", "true", "yes", "on"].includes(

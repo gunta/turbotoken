@@ -411,6 +411,9 @@ def _load_rank_payload_and_ranks_impl(
 
 
 def parse_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
+    if payload.startswith(_NATIVE_PAYLOAD_MAGIC):
+        return _parse_native_rank_file_bytes(payload)
+
     ranks: dict[bytes, int] = {}
     for raw_line in payload.splitlines():
         line = raw_line.strip()
@@ -421,6 +424,40 @@ def parse_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
         token_bytes = base64.b64decode(token_b64)
         ranks[token_bytes] = int(rank_text)
 
+    return ranks
+
+
+def _parse_native_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
+    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
+        raise ValueError("invalid native rank payload header")
+    magic, version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
+        payload[: _NATIVE_PAYLOAD_HEADER.size]
+    )
+    if (
+        magic != _NATIVE_PAYLOAD_MAGIC
+        or version != _NATIVE_PAYLOAD_VERSION
+        or flags != _NATIVE_PAYLOAD_FLAGS
+    ):
+        raise ValueError("unsupported native rank payload format")
+
+    cursor = _NATIVE_PAYLOAD_HEADER.size
+    ranks: dict[bytes, int] = {}
+    for rank in range(max_rank_plus_one):
+        if cursor + 4 > len(payload):
+            raise ValueError("truncated native rank payload")
+        (token_len,) = struct.unpack_from("<I", payload, cursor)
+        cursor += 4
+        if token_len == _NATIVE_PAYLOAD_MISSING:
+            continue
+        end = cursor + token_len
+        if end > len(payload):
+            raise ValueError("truncated native rank payload token bytes")
+        token_bytes = payload[cursor:end]
+        cursor = end
+        ranks[token_bytes] = rank
+
+    if len(ranks) != entry_count:
+        raise ValueError("native rank payload entry count mismatch")
     return ranks
 
 

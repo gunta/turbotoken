@@ -74,3 +74,12 @@ def test_read_rank_file_native_payload_builds_cache(tmp_path: Path, monkeypatch)
     native_cache = tmp_path / "o200k_base.tiktoken.native.bin"
     assert native_cache.exists()
     assert read_rank_file_native_payload("o200k_base", dir_path=tmp_path) == payload
+
+
+def test_parse_rank_file_bytes_supports_native_payload(tmp_path: Path, monkeypatch) -> None:
+    fixture = b"YQ== 0\nYg== 2\n"
+    monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
+
+    payload = read_rank_file_native_payload("o200k_base", dir_path=tmp_path)
+    parsed = parse_rank_file_bytes(payload)
+    assert parsed == {b"a": 0, b"b": 2}

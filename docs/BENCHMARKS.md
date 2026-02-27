@@ -25,6 +25,7 @@
 5. **Same machine** for any comparison table (noted in header)
 6. **JSON export** for every run (`bench/results/*.json`)
 7. **Charts auto-generated** from JSON via `bun run scripts/generate-charts.ts`
+8. **Canonical scorecard** consolidated from latest artifacts via `bun run bench:scorecard` (`bench/results/bench-scorecard-*.json`, `bench/charts/scorecard.md`)
 
 ### Test Machine
 
@@ -49,37 +50,38 @@ Local benchmark host details (from `sysctl` / `uname`):
 
 ---
 
-## Latest Measured Run (2026-02-27, macOS ARM64)
+## Latest Measured Snapshot (2026-02-27, macOS ARM64)
 
-This is the latest full default `bench-all` pass (`bun run bench`, CUDA skipped by default). Artifacts:
+This is the latest refreshed scorecard snapshot (`bun run bench:scorecard`) built from latest measured artifacts:
 
-- `bench/results/bench-startup-cold-20260227-145147.json`
-- `bench/results/bench-startup-warm-20260227-145218.json`
-- `bench/results/bench-count-20260227-145300.json`
-- `bench/results/bench-encode-20260227-145305.json`
-- `bench/results/bench-decode-20260227-145309.json`
-- `bench/results/bench-bigfile-20260227-145324.json`
-- `bench/results/bench-parallel-20260227-145329.json`
-- `bench/results/bench-comparison-20260227-145334.json`
-- `bench/results/bench-competitors-python-encode-20260227-145342.json`
-- `bench/results/bench-competitors-python-decode-20260227-145503.json`
-- `bench/results/bench-competitors-python-count-20260227-145553.json`
+- `bench/results/bench-startup-cold-20260227-162101.json`
+- `bench/results/bench-startup-warm-20260227-162132.json`
+- `bench/results/bench-comparison-20260227-162050.json`
+- `bench/results/bench-competitors-python-encode-20260227-162558.json`
+- `bench/results/bench-competitors-python-decode-20260227-162719.json`
+- `bench/results/bench-competitors-python-count-20260227-162811.json`
 - `bench/results/bench-training-python-20260227-145645.json`
+- `bench/results/bench-ram-1772204354545.json`
+- `bench/results/bench-gpu-memory-1772204436247.json`
+- `bench/results/bench-scorecard-1772209744278.json`
+
+Note:
+- This snapshot mixes freshly rerun startup/comparison/competitor artifacts with the latest already-available training/RAM/GPU-memory artifacts.
 
 | Workload | Mean |
 |---|---:|
-| startup cold (import + first encode) | 64.4 ms |
-| startup warm | 64.1 ms |
-| count 100KB | 44.5 ms |
-| encode 100KB | 46.1 ms |
-| decode 100KB-equivalent | 59.7 ms |
-| encode 1MB | 72.4 ms |
-| parallel count (512 items, 4 workers) | 206.0 ms |
+| startup cold (import + first encode) | 65.2 ms |
+| startup warm | 63.6 ms |
+| count 100KB | 44.6 ms |
+| encode 100KB | 43.6 ms |
+| decode 128K tokens | 74.3 ms |
+| encode 1MB | 74.2 ms |
+| count 1MB | 72.6 ms |
 
-Comparison (`bench-comparison-20260227-145334.json`):
-- turbotoken encode 100KB: 43.4 ms
-- tiktoken encode 100KB: 215.9 ms
-- turbotoken ran ~4.98x faster on this workload in this run.
+Comparison (`bench-comparison-20260227-162050.json`):
+- turbotoken encode 100KB: 44.9 ms
+- tiktoken encode 100KB: 216.5 ms
+- turbotoken ran ~4.82x faster on this workload in this run.
 
 ---
 

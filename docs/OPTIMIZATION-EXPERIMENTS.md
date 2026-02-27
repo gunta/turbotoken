@@ -863,3 +863,79 @@ Scalar fallback stayed in the same winning zone for count:
 | `tiktoken-encode-100kb` | `202.1 ms` |
 
 Decision: `adopt` for native range parallel engine and bridge API; `keep optional` for Python default route (opt-in only) to avoid regressions on tiny-piece corpora.
+
+## Experiment CPU-011 (2026-02-27)
+
+### Goal
+
+Reduce Python-side overhead in rank-BPE hot paths and improve developer ergonomics by centralizing native rank-bound calls, while preserving benchmark-leading default performance.
+
+### Implementation
+
+- Added rank-bound native session abstraction:
+  - `python/turbotoken/_native.py`
+  - `NativeBridge.rank_session(rank_payload)` with payload-identity caching
+  - `NativeRankSession` helpers for encode/count/decode/ranges/chunked/ascii-o200k calls
+- Refactored `Encoding` native paths to use session objects instead of repeated bridge+payload plumbing:
+  - `python/turbotoken/core.py`
+  - native range encode/count, large-piece encode/count, native o200k full encode/count, GPU strict-verify baseline path
+- Switched rank payload preference to compiled native blobs by default:
+  - `_ensure_rank_payload()` now prefers `read_rank_file_native_payload(...)`
+  - opt-out: `TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`
+- Extended rank payload parser compatibility:
+  - `python/turbotoken/_rank_files.py` now parses both text `.tiktoken` and native binary payloads (`TTKRBIN1`) via `parse_rank_file_bytes(...)`
+  - Added Python test coverage for binary parse path.
+- Decode experiment:
+  - added native decode route in `Encoding.decode_bytes(...)`
+  - benchmarked with default-on mode, observed regressions
+  - kept route opt-in only via `TURBOTOKEN_NATIVE_DECODE_ENABLE=1`
+  - added tests ensuring parity and unknown-token `ValueError` semantics.
+
+### Commands
+
+```bash
+zig build test
+bun run test
+bun run scripts/bench-comparison.ts
+bun run scripts/bench-startup.ts
+bun run scripts/bench-competitors.ts
+bun run bench:scorecard
+```
+
+### Artifacts
+
+- comparison: `bench/results/bench-comparison-20260227-162050.json`
+- startup:
+  - `bench/results/bench-startup-cold-20260227-162101.json`
+  - `bench/results/bench-startup-warm-20260227-162132.json`
+- competitors:
+  - `bench/results/bench-competitors-python-encode-20260227-162558.json`
+  - `bench/results/bench-competitors-python-decode-20260227-162719.json`
+  - `bench/results/bench-competitors-python-count-20260227-162811.json`
+- scorecard: `bench/results/bench-scorecard-1772209744278.json`
+
+### Result Summary
+
+Representative means from the final post-fix snapshot:
+
+| Command | Mean |
+|---|---:|
+| `python-encode-100kb-turbotoken` | `43.6 ms` |
+| `python-encode-100kb-rs-bpe` | `72.3 ms` |
+| `python-encode-100kb-tiktoken` | `216.6 ms` |
+| `python-decode-128000-tok-turbotoken` | `74.3 ms` |
+| `python-decode-128000-tok-rs-bpe` | `82.9 ms` |
+| `python-count-1mb-turbotoken` | `72.6 ms` |
+| `python-count-1mb-rs-bpe` | `87.5 ms` |
+| `python-count-1mb-tiktoken-via-len-encode` | `283.3 ms` |
+
+Comparison row:
+- `turbotoken-encode-100kb`: `44.9 ms`
+- `tiktoken-encode-100kb`: `216.5 ms`
+- speedup: ~`4.82x`
+
+Decode route decision:
+- default native decode path was regressing decode rows when forced on
+- final state keeps native decode path available but opt-in only (`TURBOTOKEN_NATIVE_DECODE_ENABLE=1`)
+
+Decision: `adopt` for session/native-payload refactor; `keep optional` for native decode route until it beats default Python decode on tracked workloads.

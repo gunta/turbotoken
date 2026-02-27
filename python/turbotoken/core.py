@@ -10,6 +10,7 @@ from ._rank_files import (
     load_decoder_only,
     load_piece_bpe_cache,
     load_ranks_only,
+    read_rank_file_native_payload,
     rank_file_path,
     save_piece_bpe_cache,
 )
@@ -97,6 +98,8 @@ class Encoding:
         "_ascii_text_bpe_cache",
         "_rank_payload_cache",
         "_persistent_piece_cache",
+        "_native_rank_session_cache",
+        "_native_rank_payload_ref",
     )
 
     name: str
@@ -109,6 +112,8 @@ class Encoding:
     _ascii_text_bpe_cache: dict[str, tuple[int, ...]]
     _rank_payload_cache: bytes | None
     _persistent_piece_cache: dict[bytes, tuple[int, ...]] | None
+    _native_rank_session_cache: Any | None
+    _native_rank_payload_ref: bytes | None
 
     def __init__(
         self,
@@ -127,6 +132,8 @@ class Encoding:
         self._ascii_text_bpe_cache = {}
         self._rank_payload_cache = None
         self._persistent_piece_cache = None
+        self._native_rank_session_cache = None
+        self._native_rank_payload_ref = None
 
         if _spec is not None:
             self._spec = _spec
@@ -385,14 +392,11 @@ class Encoding:
         if len(ranges) <= 1:
             return None
 
-        rank_payload = self._rank_payload_cache
-        if rank_payload is None:
-            rank_payload = self._ensure_rank_payload()
-        bridge = _native_bridge()
-        if not bridge.available:
+        session = self._native_rank_session()
+        if session is None:
             return None
 
-        batch = bridge.encode_bpe_ranges_from_ranks(rank_payload, data, ranges)
+        batch = session.encode_bpe_ranges(data, ranges)
         if batch is None:
             return None
         tokens, _ = batch
@@ -420,13 +424,10 @@ class Encoding:
         if len(ranges) <= 1:
             return None
 
-        rank_payload = self._rank_payload_cache
-        if rank_payload is None:
-            rank_payload = self._ensure_rank_payload()
-        bridge = _native_bridge()
-        if not bridge.available:
+        session = self._native_rank_session()
+        if session is None:
             return None
-        return bridge.count_bpe_ranges_from_ranks(rank_payload, data, ranges)
+        return session.count_bpe_ranges(data, ranges)
 
     def _ordinary_piece_bytes(self, text: str) -> list[bytes]:
         native_o200k_pieces = self._native_ascii_o200k_piece_bytes(text)
@@ -459,9 +460,61 @@ class Encoding:
         if self._rank_payload_cache is not None and not force:
             return self._rank_payload_cache
 
-        rank_path = ensure_rank_file(self.name, dir_path=cache_dir, force=force)
-        self._rank_payload_cache = rank_path.read_bytes()
+        native_payload_disable = os.environ.get("TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if native_payload_disable:
+            rank_path = ensure_rank_file(self.name, dir_path=cache_dir, force=force)
+            payload = rank_path.read_bytes()
+        else:
+            payload = read_rank_file_native_payload(self.name, dir_path=cache_dir, force=force)
+        self._rank_payload_cache = payload
+        self._native_rank_session_cache = None
+        self._native_rank_payload_ref = None
         return self._rank_payload_cache
+
+    def _native_piece_min_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_NATIVE_PIECE_MIN_BYTES", "").strip()
+        if not raw:
+            return 2048
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 2048
+        return max(1, value)
+
+    def _native_decode_min_tokens(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "").strip()
+        if not raw:
+            return 512
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 512
+        return max(1, value)
+
+    def _native_rank_session(self) -> Any | None:
+        rank_payload = self._rank_payload_cache
+        if rank_payload is None:
+            rank_payload = self._ensure_rank_payload()
+
+        if (
+            self._native_rank_session_cache is not None
+            and self._native_rank_payload_ref is rank_payload
+        ):
+            return self._native_rank_session_cache
+
+        bridge = _native_bridge()
+        if not bridge.available:
+            return None
+        session = bridge.rank_session(rank_payload)
+        if session is None:
+            return None
+        self._native_rank_session_cache = session
+        self._native_rank_payload_ref = rank_payload
+        return session
 
     def _bpe_tokenize_piece(self, piece: bytes) -> tuple[int, ...]:
         if not piece:
@@ -480,11 +533,10 @@ class Encoding:
             return result
 
         # Large repeated segments are expensive in pure-Python BPE; use native Zig path when available.
-        rank_payload = self._rank_payload_cache
-        if len(piece) >= 2048 and rank_payload is None:
-            rank_payload = self._ensure_rank_payload()
-        if len(piece) >= 2048 and rank_payload is not None:
-            native_tokens = _native_bridge().encode_bpe_from_ranks(rank_payload, piece)
+        native_piece_min_bytes = self._native_piece_min_bytes()
+        if len(piece) >= native_piece_min_bytes:
+            session = self._native_rank_session()
+            native_tokens = session.encode_bpe(piece) if session is not None else None
             if native_tokens is not None:
                 result = tuple(native_tokens)
                 if len(self._bpe_cache) < 100_000:
@@ -578,12 +630,9 @@ class Encoding:
             and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
             not in {"1", "true", "yes"}
         ):
-            rank_payload = self._rank_payload_cache
-            if rank_payload is None:
-                rank_payload = self._ensure_rank_payload()
-            bridge = _native_bridge()
-            if bridge.available:
-                native_tokens = bridge.encode_bpe_ascii_o200k_from_ranks(rank_payload, text.encode("ascii"))
+            session = self._native_rank_session()
+            if session is not None:
+                native_tokens = session.encode_bpe_ascii_o200k(text.encode("ascii"))
                 if native_tokens is not None:
                     return native_tokens
 
@@ -688,7 +737,7 @@ class Encoding:
         rank_payload = self._rank_payload_cache
         if rank_payload is None:
             rank_payload = self._ensure_rank_payload()
-        native_bridge = _native_bridge() if rank_payload is not None else None
+        session = self._native_rank_session() if rank_payload is not None else None
         gpu = None
         if device in {"auto", "metal"}:
             try:
@@ -706,6 +755,7 @@ class Encoding:
             out.extend(cached_tokens)
 
         out: list[int] = []
+        native_piece_min_bytes = self._native_piece_min_bytes()
         for piece_bytes in self._ordinary_piece_bytes(text):
             if rank_payload is None:
                 _extend_cached(piece_bytes)
@@ -714,8 +764,8 @@ class Encoding:
             if strict_verify:
                 # Exact mode: keep the fast single-pass native encode and skip
                 # chunked stitch work that would be verified and discarded anyway.
-                if len(piece_bytes) >= 2048 and native_bridge is not None:
-                    native_tokens = native_bridge.encode_bpe_from_ranks(rank_payload, piece_bytes)
+                if len(piece_bytes) >= native_piece_min_bytes and session is not None:
+                    native_tokens = session.encode_bpe(piece_bytes)
                     if native_tokens is not None:
                         out.extend(native_tokens)
                         continue
@@ -764,12 +814,9 @@ class Encoding:
             and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
             not in {"1", "true", "yes"}
         ):
-            rank_payload = self._rank_payload_cache
-            if rank_payload is None:
-                rank_payload = self._ensure_rank_payload()
-            bridge = _native_bridge()
-            if bridge.available:
-                native_count = bridge.count_bpe_ascii_o200k_from_ranks(rank_payload, text.encode("ascii"))
+            session = self._native_rank_session()
+            if session is not None:
+                native_count = session.count_bpe_ascii_o200k(text.encode("ascii"))
                 if native_count is not None:
                     return native_count
 
@@ -782,10 +829,10 @@ class Encoding:
             if ascii_regex is not None:
                 return self._count_ordinary_ascii_impl(text, ascii_regex)
         self.load_mergeable_ranks()
-        rank_payload = self._rank_payload_cache
-        native_bridge = _native_bridge() if rank_payload is not None else None
+        session = self._native_rank_session()
         bpe_cache = self._bpe_cache
         count = 0
+        native_piece_min_bytes = self._native_piece_min_bytes()
         last_piece: bytes | None = None
         last_cached_len = 0
         for piece_bytes in self._ordinary_piece_bytes(text):
@@ -802,18 +849,13 @@ class Encoding:
                 continue
 
             # Keep count() allocation-free for large pieces by using the native scalar fast path.
-            if len(piece_bytes) >= 2048:
-                if rank_payload is None:
-                    rank_payload = self._ensure_rank_payload()
-                if rank_payload is not None:
-                    if native_bridge is None:
-                        native_bridge = _native_bridge()
-                    native_count = native_bridge.count_bpe_from_ranks(rank_payload, piece_bytes)
-                    if native_count is not None:
-                        count += native_count
-                        last_piece = piece_bytes
-                        last_cached_len = native_count
-                        continue
+            if len(piece_bytes) >= native_piece_min_bytes and session is not None:
+                native_count = session.count_bpe(piece_bytes)
+                if native_count is not None:
+                    count += native_count
+                    last_piece = piece_bytes
+                    last_cached_len = native_count
+                    continue
 
             token_len = len(self._bpe_tokenize_piece(piece_bytes))
             count += token_len
@@ -1106,6 +1148,24 @@ class Encoding:
         return [len(tokens) for tokens in encoded]
 
     def decode_bytes(self, tokens: list[int]) -> bytes:
+        if tokens:
+            native_decode_enable = os.environ.get("TURBOTOKEN_NATIVE_DECODE_ENABLE", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            native_decode_disable = os.environ.get("TURBOTOKEN_NATIVE_DECODE_DISABLE", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }
+            if native_decode_enable and not native_decode_disable and len(tokens) >= self._native_decode_min_tokens():
+                session = self._native_rank_session()
+                if session is not None:
+                    native = session.decode_bpe(tokens)
+                    if native is not None:
+                        return native
+
         self._ensure_decoder()
         assert self._decoder is not None
 
@@ -1219,6 +1279,8 @@ class Encoding:
 
         ranks = load_ranks_only(self.name, dir_path=cache_dir, force=force)
         self._rank_payload_cache = None
+        self._native_rank_session_cache = None
+        self._native_rank_payload_ref = None
         self._mergeable_ranks_cache = ranks
         self._decoder = None
         self._token_byte_values_cache = None

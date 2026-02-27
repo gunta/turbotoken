@@ -21,6 +21,7 @@
     "bench:gpu-crossover": "bun run scripts/bench-gpu-crossover.ts",
     "bench:gpu-memory": "bun run scripts/bench-gpu-memory.ts",
     "bench:gpu-memory:cuda": "bun run scripts/bench-gpu-memory-cuda.ts",
+    "bench:scorecard": "bun run scripts/bench-scorecard.ts",
     "bench:modal:cuda": "modal run scripts/modal/bench_cuda_modal.py --confirm-paid",
     "bench:competitors": "bun run scripts/bench-competitors.ts",
     "bench:competitors:stable": "bun run scripts/bench-competitors-stable.ts",
