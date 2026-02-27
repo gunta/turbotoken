@@ -94,6 +94,18 @@ def test_simple_encoding():
 
 **Why:** Comprehensive test suite comparing Node.js tokenizers. We adapt their tests for our npm package.
 
+### 5. gpt-tokenizer -- JS Competitor Reference
+
+| Property | Value |
+|----------|-------|
+| **Repo** | https://github.com/niieani/gpt-tokenizer |
+| **Local path** | `upstream/gpt-tokenizer/` |
+| **Sync method** | git clone/update via `scripts/sync-upstream.ts` |
+| **What we use** | JS benchmark competitor rows, model/chat API behavior study, test fixture ideas |
+| **Sync frequency** | Weekly |
+
+**Why:** `gpt-tokenizer` is a major JS tokenizer benchmark target and includes practical API patterns (`countTokens`, streaming generators, special-token controls) we can cross-check against our wrappers.
+
 ---
 
 ## Sync Script
@@ -133,6 +145,11 @@ const upstreams: Upstream[] = [
   {
     name: "compare-tokenizers",
     repo: "transitive-bullshit/compare-tokenizers",
+    branch: "main",
+  },
+  {
+    name: "gpt-tokenizer",
+    repo: "niieani/gpt-tokenizer",
     branch: "main",
   },
 ];

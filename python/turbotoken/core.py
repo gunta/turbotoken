@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, AbstractSet, Callable, Collection, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, AbstractSet, Callable, Collection, Iterable, Literal, Mapping, TypeVar
 
 from ._rank_files import (
     ensure_rank_file,
@@ -44,6 +44,10 @@ _CL100K_ASCII_PAT_STR = (
 )
 _O200K_ASCII_PAT_BYTES = _O200K_ASCII_PAT_STR.encode("ascii")
 _CL100K_ASCII_PAT_BYTES = _CL100K_ASCII_PAT_STR.encode("ascii")
+_CHAT_START = "<|im_start|>"
+_CHAT_END = "<|im_end|>"
+_CHAT_TEMPLATE_TURBOTOKEN_V1 = "turbotoken_v1"
+_CHAT_TEMPLATE_IM_TOKENS = "im_tokens"
 
 
 @lru_cache(maxsize=1)
@@ -98,6 +102,7 @@ class Encoding:
         "_ascii_text_bpe_cache",
         "_rank_payload_cache",
         "_persistent_piece_cache",
+        "_merge_cache_size",
         "_native_rank_session_cache",
         "_native_rank_payload_ref",
     )
@@ -112,6 +117,7 @@ class Encoding:
     _ascii_text_bpe_cache: dict[str, tuple[int, ...]]
     _rank_payload_cache: bytes | None
     _persistent_piece_cache: dict[bytes, tuple[int, ...]] | None
+    _merge_cache_size: int
     _native_rank_session_cache: Any | None
     _native_rank_payload_ref: bytes | None
 
@@ -132,6 +138,7 @@ class Encoding:
         self._ascii_text_bpe_cache = {}
         self._rank_payload_cache = None
         self._persistent_piece_cache = None
+        self._merge_cache_size = self._default_merge_cache_size()
         self._native_rank_session_cache = None
         self._native_rank_payload_ref = None
 
@@ -163,6 +170,42 @@ class Encoding:
             explicit_n_vocab=max_token + 1,
         )
         self._mergeable_ranks_cache = mergeable
+
+    @staticmethod
+    def _default_merge_cache_size() -> int:
+        raw = os.environ.get("TURBOTOKEN_MERGE_CACHE_SIZE", "").strip()
+        if not raw:
+            return 100_000
+        try:
+            parsed = int(raw)
+        except ValueError:
+            return 100_000
+        return max(0, parsed)
+
+    def _cache_room(self, current_size: int) -> bool:
+        return self._merge_cache_size > 0 and current_size < self._merge_cache_size
+
+    def set_merge_cache_size(self, size: int) -> None:
+        if size < 0:
+            raise ValueError("merge cache size must be >= 0")
+        self._merge_cache_size = size
+        if size == 0:
+            self.clear_merge_cache()
+            return
+        if len(self._bpe_cache) > size:
+            self._bpe_cache.clear()
+        if len(self._ascii_text_bpe_cache) > size:
+            self._ascii_text_bpe_cache.clear()
+
+    def clear_merge_cache(self) -> None:
+        self._bpe_cache.clear()
+        self._ascii_text_bpe_cache.clear()
+        self._native_rank_session_cache = None
+        self._native_rank_payload_ref = None
+        bridge = _native_bridge()
+        clear_native = getattr(bridge, "clear_rank_table_cache", None)
+        if callable(clear_native):
+            clear_native()
 
     @property
     def n_vocab(self) -> int:
@@ -385,16 +428,20 @@ class Encoding:
         if not force_enable:
             return None
 
-        native_ranges = self._native_pretokenized_ranges(text)
-        if native_ranges is None:
+        piece_ranges = self._ordinary_piece_ranges_bytes(text)
+        if piece_ranges is None:
             return None
-        data, ranges = native_ranges
-        if len(ranges) <= 1:
-            return None
-
+        data, ranges = piece_ranges
+        if not ranges:
+            return []
         session = self._native_rank_session()
         if session is None:
             return None
+
+        if len(ranges) == 1:
+            single = session.encode_bpe(data)
+            if single is not None:
+                return single
 
         batch = session.encode_bpe_ranges(data, ranges)
         if batch is None:
@@ -417,44 +464,108 @@ class Encoding:
         if not force_enable:
             return None
 
-        native_ranges = self._native_pretokenized_ranges(text)
-        if native_ranges is None:
+        piece_ranges = self._ordinary_piece_ranges_bytes(text)
+        if piece_ranges is None:
             return None
-        data, ranges = native_ranges
-        if len(ranges) <= 1:
-            return None
-
+        data, ranges = piece_ranges
+        if not ranges:
+            return 0
         session = self._native_rank_session()
         if session is None:
             return None
+        if len(ranges) == 1:
+            return session.count_bpe(data)
         return session.count_bpe_ranges(data, ranges)
 
-    def _ordinary_piece_bytes(self, text: str) -> list[bytes]:
+    def _ordinary_piece_bytes_iter(self, text: str) -> Iterable[bytes]:
         native_o200k_pieces = self._native_ascii_o200k_piece_bytes(text)
         if native_o200k_pieces is not None:
-            return native_o200k_pieces
+            for piece in native_o200k_pieces:
+                yield piece
+            return
 
         native_pieces = self._native_ascii_letter_space_piece_bytes(text)
         if native_pieces is not None:
-            return native_pieces
+            for piece in native_pieces:
+                yield piece
+            return
 
         if text.isascii():
             ascii_regex_bytes = self._ascii_piece_regex_bytes()
             if ascii_regex_bytes is not None:
                 data = text.encode("ascii")
-                return [piece for piece in ascii_regex_bytes.findall(data) if piece]
+                for match in ascii_regex_bytes.finditer(data):
+                    piece = match.group(0)
+                    if piece:
+                        yield piece
+                return
 
             ascii_regex = self._ascii_piece_regex()
             if ascii_regex is not None:
-                return [piece.encode("ascii") for piece in ascii_regex.findall(text) if piece]
+                for match in ascii_regex.finditer(text):
+                    piece = match.group(0)
+                    if piece:
+                        yield piece.encode("ascii")
+                return
 
         piece_regex = self._ensure_piece_regex()
-        pieces: list[bytes] = []
-        for piece in piece_regex.findall(text):
+        for match in piece_regex.finditer(text):
+            piece = match.group(0)
             if not piece:
                 continue
-            pieces.append(piece.encode("utf-8"))
-        return pieces
+            yield piece.encode("utf-8")
+
+    def _ordinary_piece_bytes(self, text: str) -> list[bytes]:
+        return list(self._ordinary_piece_bytes_iter(text))
+
+    def _ordinary_piece_bytes_pipelined_iter(self, text: str, *, max_prefetch: int) -> Iterable[bytes]:
+        from queue import SimpleQueue
+        from threading import Thread
+
+        _ = max_prefetch
+        sentinel = object()
+        queue: SimpleQueue[bytes | object] = SimpleQueue()
+        errors: list[BaseException] = []
+
+        def _producer() -> None:
+            try:
+                for piece in self._ordinary_piece_bytes_iter(text):
+                    queue.put(piece)
+            except BaseException as exc:  # pragma: no cover - rethrown on consumer side
+                errors.append(exc)
+            finally:
+                queue.put(sentinel)
+
+        producer = Thread(target=_producer, name="turbotoken-gpu-overlap-pretokenize", daemon=True)
+        producer.start()
+        try:
+            while True:
+                item = queue.get()
+                if item is sentinel:
+                    break
+                yield item  # type: ignore[misc]
+            if errors:
+                raise errors[0]
+        finally:
+            producer.join()
+
+    def _ordinary_piece_ranges_bytes(self, text: str) -> tuple[bytes, list[tuple[int, int]]] | None:
+        native_ranges = self._native_pretokenized_ranges(text)
+        if native_ranges is not None:
+            return native_ranges
+
+        pieces = self._ordinary_piece_bytes(text)
+        if not pieces:
+            return b"", []
+
+        data = b"".join(pieces)
+        ranges: list[tuple[int, int]] = []
+        cursor = 0
+        for piece in pieces:
+            next_cursor = cursor + len(piece)
+            ranges.append((cursor, next_cursor))
+            cursor = next_cursor
+        return data, ranges
 
     def _ensure_rank_payload(self, *, cache_dir: "Path | None" = None, force: bool = False) -> bytes:
         if self._rank_payload_cache is not None and not force:
@@ -485,6 +596,16 @@ class Encoding:
             return 2048
         return max(1, value)
 
+    def _native_cl100k_full_min_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_MIN_BYTES", "").strip()
+        if not raw:
+            return 131_072
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 131_072
+        return max(1, value)
+
     def _native_decode_min_tokens(self) -> int:
         raw = os.environ.get("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "").strip()
         if not raw:
@@ -494,6 +615,34 @@ class Encoding:
         except ValueError:
             return 512
         return max(1, value)
+
+    def _gpu_overlap_enabled(self) -> bool:
+        raw = os.environ.get("TURBOTOKEN_GPU_OVERLAP_ENABLE", "").strip().lower()
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        return True
+
+    def _gpu_overlap_min_text_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_GPU_OVERLAP_MIN_TEXT_BYTES", "").strip()
+        if not raw:
+            return 262_144
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 262_144
+        return max(1, value)
+
+    def _gpu_overlap_prefetch_pieces(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_GPU_OVERLAP_PREFETCH_PIECES", "").strip()
+        if not raw:
+            return 32
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 32
+        return max(2, value)
 
     def _native_rank_session(self) -> Any | None:
         rank_payload = self._rank_payload_cache
@@ -528,7 +677,7 @@ class Encoding:
         direct_token = mergeable_ranks.get(piece)
         if direct_token is not None:
             result = (direct_token,)
-            if len(self._bpe_cache) < 100_000:
+            if self._cache_room(len(self._bpe_cache)):
                 self._bpe_cache[piece] = result
             return result
 
@@ -539,7 +688,7 @@ class Encoding:
             native_tokens = session.encode_bpe(piece) if session is not None else None
             if native_tokens is not None:
                 result = tuple(native_tokens)
-                if len(self._bpe_cache) < 100_000:
+                if self._cache_room(len(self._bpe_cache)):
                     self._bpe_cache[piece] = result
                 return result
 
@@ -559,7 +708,7 @@ class Encoding:
             parts = parts[:best_idx] + [parts[best_idx] + parts[best_idx + 1]] + parts[best_idx + 2 :]
 
         result = tuple(mergeable_ranks[part] for part in parts)
-        if len(self._bpe_cache) < 100_000:
+        if self._cache_room(len(self._bpe_cache)):
             self._bpe_cache[piece] = result
         return result
 
@@ -584,13 +733,13 @@ class Encoding:
             return
 
         for piece_bytes, piece_tokens in pieces.items():
-            if len(self._bpe_cache) < 100_000 and piece_bytes not in self._bpe_cache:
+            if self._cache_room(len(self._bpe_cache)) and piece_bytes not in self._bpe_cache:
                 self._bpe_cache[piece_bytes] = piece_tokens
             try:
                 piece_text = piece_bytes.decode("ascii")
             except UnicodeDecodeError:
                 continue
-            if len(self._ascii_text_bpe_cache) < 100_000 and piece_text not in self._ascii_text_bpe_cache:
+            if self._cache_room(len(self._ascii_text_bpe_cache)) and piece_text not in self._ascii_text_bpe_cache:
                 self._ascii_text_bpe_cache[piece_text] = piece_tokens
 
     def _persist_piece_entries(self, entries: dict[bytes, tuple[int, ...]]) -> None:
@@ -622,6 +771,19 @@ class Encoding:
     def _encode_ordinary_impl(self, text: str) -> list[int]:
         if not text:
             return []
+        if (
+            self.name == "cl100k_base"
+            and text.isascii()
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+            and len(text) >= self._native_cl100k_full_min_bytes()
+        ):
+            session = self._native_rank_session()
+            if session is not None:
+                native_tokens = session.encode_bpe_ascii_letter_space(text.encode("ascii"))
+                if native_tokens is not None:
+                    return native_tokens
         if (
             self.name in {"o200k_base", "o200k_harmony"}
             and text.isascii()
@@ -687,7 +849,7 @@ class Encoding:
                             cached = self._bpe_tokenize_piece(piece_bytes)
                             if len(piece_bytes) <= 64:
                                 new_persistent_entries[piece_bytes] = cached
-                        if len(ascii_cache) < 100_000:
+                        if self._cache_room(len(ascii_cache)):
                             ascii_cache[piece_text] = cached
                     unique_token_map[piece_text] = cached
                 out = list(itertools.chain.from_iterable(unique_token_map[piece] for piece in pieces))
@@ -711,7 +873,7 @@ class Encoding:
                     cached = self._bpe_tokenize_piece(piece_bytes)
                     if len(piece_bytes) <= 64:
                         new_persistent_entries[piece_bytes] = cached
-                if len(ascii_cache) < 100_000:
+                if self._cache_room(len(ascii_cache)):
                     ascii_cache[piece_text] = cached
 
             out.extend(cached)
@@ -745,6 +907,19 @@ class Encoding:
             except Exception:
                 gpu = None
         bpe_cache = self._bpe_cache
+        use_overlap_pretokenize = (
+            gpu is not None
+            and not strict_verify
+            and self._gpu_overlap_enabled()
+            and len(text.encode("utf-8")) >= self._gpu_overlap_min_text_bytes()
+        )
+        if use_overlap_pretokenize:
+            piece_iter: Iterable[bytes] = self._ordinary_piece_bytes_pipelined_iter(
+                text,
+                max_prefetch=self._gpu_overlap_prefetch_pieces(),
+            )
+        else:
+            piece_iter = self._ordinary_piece_bytes(text)
 
         def _extend_cached(piece: bytes) -> None:
             cached = bpe_cache.get(piece)
@@ -756,7 +931,12 @@ class Encoding:
 
         out: list[int] = []
         native_piece_min_bytes = self._native_piece_min_bytes()
-        for piece_bytes in self._ordinary_piece_bytes(text):
+        force_all_metal = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        for piece_bytes in piece_iter:
             if rank_payload is None:
                 _extend_cached(piece_bytes)
                 continue
@@ -772,8 +952,8 @@ class Encoding:
                 _extend_cached(piece_bytes)
                 continue
 
-            if device == "metal":
-                route_backend = "metal" if gpu is not None else "native"
+            if force_all_metal and gpu is not None:
+                route_backend = "metal"
             else:
                 route_backend = gpu.bpe_route_backend(len(piece_bytes)) if gpu is not None else "native"
             if route_backend != "metal":
@@ -806,6 +986,19 @@ class Encoding:
     def _count_ordinary_impl(self, text: str) -> int:
         if not text:
             return 0
+        if (
+            self.name == "cl100k_base"
+            and text.isascii()
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+            and len(text) >= self._native_cl100k_full_min_bytes()
+        ):
+            session = self._native_rank_session()
+            if session is not None:
+                native_count = session.count_bpe_ascii_letter_space(text.encode("ascii"))
+                if native_count is not None:
+                    return native_count
         if (
             self.name in {"o200k_base", "o200k_harmony"}
             and text.isascii()
@@ -863,6 +1056,45 @@ class Encoding:
             last_cached_len = token_len
         return count
 
+    def _count_ordinary_up_to_limit_impl(self, text: str, token_limit: int) -> int | bool:
+        if not text:
+            return 0
+
+        self.load_mergeable_ranks()
+        session = self._native_rank_session()
+        bpe_cache = self._bpe_cache
+        native_piece_min_bytes = self._native_piece_min_bytes()
+        count = 0
+        last_piece: bytes | None = None
+        last_cached_len = 0
+
+        for piece_bytes in self._ordinary_piece_bytes(text):
+            if piece_bytes == last_piece:
+                piece_count = last_cached_len
+            else:
+                cached = bpe_cache.get(piece_bytes)
+                if cached is not None:
+                    piece_count = len(cached)
+                else:
+                    piece_count: int | None = None
+                    if len(piece_bytes) >= native_piece_min_bytes and session is not None:
+                        native_within = session.is_within_token_limit_bpe(piece_bytes, token_limit - count)
+                        if native_within is False:
+                            return False
+                        if isinstance(native_within, int):
+                            piece_count = native_within
+                    if piece_count is None:
+                        piece_count = len(self._bpe_tokenize_piece(piece_bytes))
+
+                last_piece = piece_bytes
+                last_cached_len = piece_count
+
+            count += piece_count
+            if count > token_limit:
+                return False
+
+        return count
+
     def _count_ordinary_ascii_impl(self, text: str, ascii_regex: re.Pattern[str]) -> int:
         bpe_cache = self._bpe_cache
         ascii_cache = self._ascii_text_bpe_cache
@@ -889,7 +1121,7 @@ class Encoding:
                             cached = self._bpe_tokenize_piece(piece_bytes)
                             if len(piece_bytes) <= 64:
                                 new_persistent_entries[piece_bytes] = cached
-                        if len(ascii_cache) < 100_000:
+                        if self._cache_room(len(ascii_cache)):
                             ascii_cache[piece_text] = cached
                     unique_len_map[piece_text] = len(cached)
                 total = sum(unique_len_map[piece] * count for piece, count in piece_counts.items())
@@ -913,7 +1145,7 @@ class Encoding:
                     cached = self._bpe_tokenize_piece(piece_bytes)
                     if len(piece_bytes) <= 64:
                         new_persistent_entries[piece_bytes] = cached
-                if len(ascii_cache) < 100_000:
+                if self._cache_room(len(ascii_cache)):
                     ascii_cache[piece_text] = cached
 
             cached_len = len(cached)
@@ -1012,6 +1244,125 @@ class Encoding:
 
         return count
 
+    def _count_with_allowed_special_up_to_limit(
+        self,
+        text: str,
+        allowed_special: set[str],
+        token_limit: int,
+    ) -> int | bool:
+        if not allowed_special:
+            return self._count_ordinary_up_to_limit_impl(text, token_limit)
+
+        special_regex = _special_token_regex(frozenset(allowed_special))
+        count = 0
+        start = 0
+        for match in special_regex.finditer(text):
+            match_start, match_end = match.span()
+            if match_start > start:
+                segment = self._count_ordinary_up_to_limit_impl(text[start:match_start], token_limit - count)
+                if segment is False:
+                    return False
+                count += int(segment)
+                if count > token_limit:
+                    return False
+
+            count += 1
+            if count > token_limit:
+                return False
+            start = match_end
+
+        if start < len(text):
+            segment = self._count_ordinary_up_to_limit_impl(text[start:], token_limit - count)
+            if segment is False:
+                return False
+            count += int(segment)
+            if count > token_limit:
+                return False
+
+        return count
+
+    def _resolve_chat_template(
+        self,
+        template: str | Mapping[str, str] | None,
+    ) -> tuple[dict[str, str | None], set[str]]:
+        if template is None or template == _CHAT_TEMPLATE_TURBOTOKEN_V1:
+            config: dict[str, str | None] = {
+                "message_prefix": "[[role:{role}]]\n",
+                "message_suffix": "\n[[/message]]\n",
+                "assistant_prefix": "[[role:{role}]]\n",
+            }
+        elif template == _CHAT_TEMPLATE_IM_TOKENS:
+            config = {
+                "message_prefix": f"{_CHAT_START}" + "{role}\n",
+                "message_suffix": f"{_CHAT_END}\n",
+                "assistant_prefix": f"{_CHAT_START}" + "{role}\n",
+            }
+        elif isinstance(template, Mapping):
+            message_prefix = template.get("message_prefix")
+            if not isinstance(message_prefix, str) or not message_prefix:
+                raise ValueError("chat template requires non-empty string 'message_prefix'")
+            message_suffix = template.get("message_suffix", "")
+            if not isinstance(message_suffix, str):
+                raise ValueError("chat template field 'message_suffix' must be a string")
+            assistant_prefix_raw = template.get("assistant_prefix")
+            if assistant_prefix_raw is None:
+                assistant_prefix: str | None = None
+            elif isinstance(assistant_prefix_raw, str):
+                assistant_prefix = assistant_prefix_raw
+            else:
+                raise ValueError("chat template field 'assistant_prefix' must be a string or null")
+            config = {
+                "message_prefix": message_prefix,
+                "message_suffix": message_suffix,
+                "assistant_prefix": assistant_prefix,
+            }
+        else:
+            raise ValueError(
+                "chat template must be 'turbotoken_v1', 'im_tokens', or a mapping template config"
+            )
+
+        special_tokens: set[str] = set()
+        probe_parts = [
+            config["message_prefix"].replace("{role}", "assistant"),
+            config["message_suffix"],
+        ]
+        assistant_prefix = config["assistant_prefix"]
+        if assistant_prefix:
+            probe_parts.append(assistant_prefix.replace("{role}", "assistant"))
+        for token in self._spec.special_tokens:
+            if token and any(token in part for part in probe_parts):
+                special_tokens.add(token)
+        return config, special_tokens
+
+    def _iter_chat_segments(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        *,
+        template_config: Mapping[str, str | None],
+        prime_with_assistant_response: str | None,
+    ):
+        for message in messages:
+            if not isinstance(message, Mapping):
+                raise TypeError("chat messages must be mapping-like objects with role/name/content keys")
+            role_value = message.get("name", message.get("role", "user"))
+            if not isinstance(role_value, str) or not role_value:
+                role_value = "user"
+
+            content = message.get("content", "")
+            if content is None:
+                content = ""
+            if not isinstance(content, str):
+                content = str(content)
+
+            yield template_config["message_prefix"].replace("{role}", role_value)
+            if content:
+                yield content
+            yield template_config["message_suffix"]
+
+        assistant_prefix = template_config["assistant_prefix"]
+        if prime_with_assistant_response and assistant_prefix:
+            yield assistant_prefix.replace("{role}", prime_with_assistant_response)
+
     def encode(
         self,
         text: str,
@@ -1026,6 +1377,94 @@ class Encoding:
             return self._encode_with_allowed_special(text, allowed_set)
         except UnicodeEncodeError:
             return self._encode_with_allowed_special(_sanitize_text(text), allowed_set)
+
+    def encode_generator(
+        self,
+        text: str,
+        *,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ):
+        allowed_set = self._allowed_special_set(allowed_special)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+        self._raise_if_disallowed_special(text, disallowed_set)
+
+        try:
+            source = text
+            self.load_mergeable_ranks()
+        except UnicodeEncodeError:
+            source = _sanitize_text(text)
+            self.load_mergeable_ranks()
+
+        if not allowed_set:
+            for piece_bytes in self._ordinary_piece_bytes(source):
+                yield list(self._bpe_tokenize_piece(piece_bytes))
+            return
+
+        special_regex = _special_token_regex(frozenset(allowed_set))
+        start = 0
+        for match in special_regex.finditer(source):
+            match_start, match_end = match.span()
+            if match_start > start:
+                yield self.encode_ordinary(source[start:match_start])
+            yield [self._special_token_to_id(match.group())]
+            start = match_end
+
+        if start < len(source):
+            yield self.encode_ordinary(source[start:])
+
+    def encode_chat_generator(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        *,
+        prime_with_assistant_response: str | None = "assistant",
+        template: str | Mapping[str, str] | None = _CHAT_TEMPLATE_TURBOTOKEN_V1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ):
+        template_config, template_special_tokens = self._resolve_chat_template(template)
+        allowed_set = self._allowed_special_set(allowed_special)
+        allowed_set.update(template_special_tokens)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+
+        for segment in self._iter_chat_segments(
+            messages,
+            template_config=template_config,
+            prime_with_assistant_response=prime_with_assistant_response,
+        ):
+            self._raise_if_disallowed_special(segment, disallowed_set)
+            try:
+                yield self.encode(
+                    segment,
+                    allowed_special=allowed_set,
+                    disallowed_special=disallowed_set,
+                )
+            except UnicodeEncodeError:
+                yield self.encode(
+                    _sanitize_text(segment),
+                    allowed_special=allowed_set,
+                    disallowed_special=disallowed_set,
+                )
+
+    def encode_chat(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        *,
+        prime_with_assistant_response: str | None = "assistant",
+        template: str | Mapping[str, str] | None = _CHAT_TEMPLATE_TURBOTOKEN_V1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> list[int]:
+        out: list[int] = []
+        for chunk in self.encode_chat_generator(
+            messages,
+            prime_with_assistant_response=prime_with_assistant_response,
+            template=template,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
+        ):
+            out.extend(chunk)
+        return out
 
     def encode_ordinary(self, text: str) -> list[int]:
         try:
@@ -1203,6 +1642,18 @@ class Encoding:
     def decode(self, tokens: list[int], errors: str = "replace") -> str:
         return self.decode_bytes(tokens).decode("utf-8", errors=errors)
 
+    def decode_generator(self, tokens: list[int], *, errors: str = "replace"):
+        import codecs
+
+        incremental = codecs.getincrementaldecoder("utf-8")(errors=errors)
+        for token_bytes in self.decode_tokens_bytes(tokens):
+            chunk = incremental.decode(token_bytes, final=False)
+            if chunk:
+                yield chunk
+        tail = incremental.decode(b"", final=True)
+        if tail:
+            yield tail
+
     def decode_batch(self, batch: list[list[int]], *, num_threads: int = 8) -> list[str]:
         return self._map_batch(batch, self.decode, num_threads=num_threads)
 
@@ -1240,6 +1691,159 @@ class Encoding:
             return self._count_with_allowed_special(text, allowed_set)
         except UnicodeEncodeError:
             return self._count_with_allowed_special(_sanitize_text(text), allowed_set)
+
+    def count_tokens(
+        self,
+        text: str,
+        *,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> int:
+        return self.count(
+            text,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
+        )
+
+    def count_chat(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        *,
+        prime_with_assistant_response: str | None = "assistant",
+        template: str | Mapping[str, str] | None = _CHAT_TEMPLATE_TURBOTOKEN_V1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> int:
+        template_config, template_special_tokens = self._resolve_chat_template(template)
+        allowed_set = self._allowed_special_set(allowed_special)
+        allowed_set.update(template_special_tokens)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+
+        total = 0
+        for segment in self._iter_chat_segments(
+            messages,
+            template_config=template_config,
+            prime_with_assistant_response=prime_with_assistant_response,
+        ):
+            self._raise_if_disallowed_special(segment, disallowed_set)
+            try:
+                total += self._count_with_allowed_special(segment, allowed_set)
+            except UnicodeEncodeError:
+                total += self._count_with_allowed_special(_sanitize_text(segment), allowed_set)
+        return total
+
+    def count_chat_tokens(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        *,
+        prime_with_assistant_response: str | None = "assistant",
+        template: str | Mapping[str, str] | None = _CHAT_TEMPLATE_TURBOTOKEN_V1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> int:
+        return self.count_chat(
+            messages,
+            prime_with_assistant_response=prime_with_assistant_response,
+            template=template,
+            allowed_special=allowed_special,
+            disallowed_special=disallowed_special,
+        )
+
+    def is_within_token_limit(
+        self,
+        text: str,
+        token_limit: int,
+        *,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> int | bool:
+        if token_limit < 0:
+            raise ValueError("token_limit must be >= 0")
+
+        allowed_set = self._allowed_special_set(allowed_special)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+        self._raise_if_disallowed_special(text, disallowed_set)
+        try:
+            return self._count_with_allowed_special_up_to_limit(text, allowed_set, token_limit)
+        except UnicodeEncodeError:
+            return self._count_with_allowed_special_up_to_limit(
+                _sanitize_text(text),
+                allowed_set,
+                token_limit,
+            )
+
+    def encode_file_native(
+        self,
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> list[int] | None:
+        """Encode file bytes via native rank-BPE C ABI (raw byte-path, no regex framing)."""
+        session = self._native_rank_session()
+        if session is None:
+            return None
+        return session.encode_bpe_file(path)
+
+    def count_file_native(
+        self,
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> int | None:
+        """Count file bytes via native rank-BPE C ABI (raw byte-path, no regex framing)."""
+        session = self._native_rank_session()
+        if session is None:
+            return None
+        return session.count_bpe_file(path)
+
+    def is_file_within_token_limit_native(
+        self,
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        token_limit: int,
+    ) -> int | bool | None:
+        """Token-limit check for file bytes via native rank-BPE C ABI (raw byte-path)."""
+        if token_limit < 0:
+            raise ValueError("token_limit must be >= 0")
+        session = self._native_rank_session()
+        if session is None:
+            return None
+        return session.is_within_token_limit_bpe_file(path, token_limit)
+
+    def is_chat_within_token_limit(
+        self,
+        messages: Iterable[Mapping[str, Any]],
+        token_limit: int,
+        *,
+        prime_with_assistant_response: str | None = "assistant",
+        template: str | Mapping[str, str] | None = _CHAT_TEMPLATE_TURBOTOKEN_V1,
+        allowed_special: AllowedSpecial = set(),  # noqa: B006
+        disallowed_special: DisallowedSpecial = "all",
+    ) -> int | bool:
+        if token_limit < 0:
+            raise ValueError("token_limit must be >= 0")
+
+        template_config, template_special_tokens = self._resolve_chat_template(template)
+        allowed_set = self._allowed_special_set(allowed_special)
+        allowed_set.update(template_special_tokens)
+        disallowed_set = self._disallowed_special_set(disallowed_special) - allowed_set
+
+        total = 0
+        for segment in self._iter_chat_segments(
+            messages,
+            template_config=template_config,
+            prime_with_assistant_response=prime_with_assistant_response,
+        ):
+            self._raise_if_disallowed_special(segment, disallowed_set)
+            try:
+                piece = self._count_with_allowed_special_up_to_limit(segment, allowed_set, token_limit - total)
+            except UnicodeEncodeError:
+                piece = self._count_with_allowed_special_up_to_limit(
+                    _sanitize_text(segment),
+                    allowed_set,
+                    token_limit - total,
+                )
+            if piece is False:
+                return False
+            total += int(piece)
+            if total > token_limit:
+                return False
+        return total
 
     def count_batch(self, texts: list[str], *, num_threads: int = 8) -> list[int]:
         return self._map_batch(texts, self.count, num_threads=num_threads)

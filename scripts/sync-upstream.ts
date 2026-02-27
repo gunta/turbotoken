@@ -19,6 +19,7 @@ const upstreams: Upstream[] = [
     preferSubmodule: true,
   },
   { name: "rs-bpe", url: "https://github.com/gweidart/rs-bpe.git", branch: "main" },
+  { name: "gpt-tokenizer", url: "https://github.com/niieani/gpt-tokenizer.git", branch: "main" },
   { name: "github-bpe", url: "https://github.com/github/bpe.git", branch: "main", optional: true },
   {
     name: "compare-tokenizers",

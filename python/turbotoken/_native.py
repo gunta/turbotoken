@@ -158,6 +158,7 @@ class NativeBridge:
                 unsigned char *out_bytes,
                 size_t out_cap
             );
+            void turbotoken_clear_rank_table_cache(void);
             long turbotoken_encode_bpe_from_ranks(
                 const char *rank_bytes,
                 size_t rank_len,
@@ -262,6 +263,48 @@ class NativeBridge:
                 const char *text,
                 size_t text_len
             );
+            long turbotoken_is_within_token_limit_bpe_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *text,
+                size_t text_len,
+                size_t token_limit
+            );
+            long turbotoken_encode_bpe_file_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *file_path,
+                size_t file_path_len,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
+            long turbotoken_count_bpe_file_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *file_path,
+                size_t file_path_len
+            );
+            long turbotoken_is_within_token_limit_bpe_file_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *file_path,
+                size_t file_path_len,
+                size_t token_limit
+            );
+            long turbotoken_count_bpe_ascii_letter_space_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *text,
+                size_t text_len
+            );
+            long turbotoken_encode_bpe_ascii_letter_space_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *text,
+                size_t text_len,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
             long turbotoken_count_bpe_ascii_o200k_from_ranks(
                 const char *rank_bytes,
                 size_t rank_len,
@@ -329,6 +372,16 @@ class NativeBridge:
             self._rank_payload_buf = self._ffi.from_buffer("const char[]", rank_payload)
         return self._rank_payload_buf
 
+    @staticmethod
+    def _path_to_bytes(path: Any) -> bytes | None:
+        try:
+            raw = os.fsencode(path)
+        except (TypeError, ValueError):
+            return None
+        if not raw or b"\x00" in raw:
+            return None
+        return raw
+
     def rank_session(self, rank_payload: bytes) -> "NativeRankSession | None":
         self.load()
         if self._lib is None:
@@ -344,6 +397,16 @@ class NativeBridge:
         self._rank_session_payload_ref = rank_payload
         self._rank_session_cache = session
         return session
+
+    def clear_rank_table_cache(self) -> bool:
+        self.load()
+        if self._lib is None:
+            return False
+        try:
+            self._lib.turbotoken_clear_rank_table_cache()
+        except (AttributeError, TypeError):
+            return False
+        return True
 
     def count_bytes(self, data: bytes) -> int | None:
         self.load()
@@ -640,26 +703,12 @@ class NativeBridge:
         if rank_buf is None:
             return None
 
-        try:
-            needed = int(
-                self._lib.turbotoken_encode_bpe_from_ranks(
-                    rank_buf,
-                    len(rank_payload),
-                    data,
-                    len(data),
-                    self._ffi.NULL,
-                    0,
-                )
-            )
-        except (AttributeError, TypeError):
-            return None
-        if needed < 0:
-            return None
-        if needed == 0:
+        if not data:
             return []
 
-        out = self._ffi.new("uint32_t[]", needed)
         try:
+            # BPE output token count is bounded by input byte length.
+            out = self._ffi.new("uint32_t[]", len(data))
             written = int(
                 self._lib.turbotoken_encode_bpe_from_ranks(
                     rank_buf,
@@ -667,10 +716,10 @@ class NativeBridge:
                     data,
                     len(data),
                     out,
-                    needed,
+                    len(data),
                 )
             )
-        except (AttributeError, TypeError):
+        except (AttributeError, OverflowError, TypeError):
             return None
         if written < 0:
             return None
@@ -708,31 +757,13 @@ class NativeBridge:
         offsets_buf = self._ffi.new("uint32_t[]", offsets)
         counts_buf = self._ffi.new("uint32_t[]", counts)
 
-        try:
-            needed = int(
-                self._lib.turbotoken_train_bpe_from_chunk_counts(
-                    chunk_buf,
-                    len(chunks),
-                    offsets_buf,
-                    len(offsets),
-                    counts_buf,
-                    len(counts),
-                    vocab_size,
-                    min_frequency,
-                    self._ffi.NULL,
-                    0,
-                )
-            )
-        except (AttributeError, OverflowError, TypeError):
-            return None
-        if needed < 0:
-            return None
-        if needed == 0:
+        max_merges = max(0, vocab_size - 256)
+        if max_merges == 0:
             return []
 
-        flat_len = needed * 3
-        out = self._ffi.new("uint32_t[]", flat_len)
+        flat_len = max_merges * 3
         try:
+            out = self._ffi.new("uint32_t[]", flat_len)
             written = int(
                 self._lib.turbotoken_train_bpe_from_chunk_counts(
                     chunk_buf,
@@ -772,27 +803,13 @@ class NativeBridge:
             return None
 
         in_buf = self._ffi.from_buffer("const char[]", text)
-        try:
-            needed = int(
-                self._lib.turbotoken_train_bpe_ascii_o200k(
-                    in_buf,
-                    len(text),
-                    vocab_size,
-                    min_frequency,
-                    self._ffi.NULL,
-                    0,
-                )
-            )
-        except (AttributeError, OverflowError, TypeError):
-            return None
-        if needed < 0:
-            return None
-        if needed == 0:
+        max_merges = max(0, vocab_size - 256)
+        if max_merges == 0:
             return []
 
-        flat_len = needed * 3
-        out = self._ffi.new("uint32_t[]", flat_len)
+        flat_len = max_merges * 3
         try:
+            out = self._ffi.new("uint32_t[]", flat_len)
             written = int(
                 self._lib.turbotoken_train_bpe_ascii_o200k(
                     in_buf,
@@ -837,30 +854,14 @@ class NativeBridge:
             prev = value
 
         in_buf = self._ffi.from_buffer("const char[]", texts)
-        try:
-            offsets_buf = self._ffi.new("uint32_t[]", offsets)
-            needed = int(
-                self._lib.turbotoken_train_bpe_ascii_o200k_multi(
-                    in_buf,
-                    len(texts),
-                    offsets_buf,
-                    len(offsets),
-                    vocab_size,
-                    min_frequency,
-                    self._ffi.NULL,
-                    0,
-                )
-            )
-        except (AttributeError, OverflowError, TypeError):
-            return None
-        if needed < 0:
-            return None
-        if needed == 0:
+        max_merges = max(0, vocab_size - 256)
+        if max_merges == 0:
             return []
 
-        flat_len = needed * 3
-        out = self._ffi.new("uint32_t[]", flat_len)
+        flat_len = max_merges * 3
         try:
+            offsets_buf = self._ffi.new("uint32_t[]", offsets)
+            out = self._ffi.new("uint32_t[]", flat_len)
             written = int(
                 self._lib.turbotoken_train_bpe_ascii_o200k_multi(
                     in_buf,
@@ -1252,6 +1253,206 @@ class NativeBridge:
             return None
         return result
 
+    def is_within_token_limit_bpe_from_ranks(
+        self,
+        rank_payload: bytes,
+        data: bytes,
+        token_limit: int,
+    ) -> int | bool | None:
+        self.load()
+        if self._lib is None:
+            return None
+        if token_limit < 0:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        try:
+            result = int(
+                self._lib.turbotoken_is_within_token_limit_bpe_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    data,
+                    len(data),
+                    token_limit,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result == -2:
+            return False
+        if result < 0:
+            return None
+        return result
+
+    def encode_bpe_file_from_ranks(self, rank_payload: bytes, path: Any) -> list[int] | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        path_bytes = self._path_to_bytes(path)
+        if path_bytes is None:
+            return None
+
+        path_buf = self._ffi.from_buffer("const char[]", path_bytes)
+        try:
+            needed = int(
+                self._lib.turbotoken_encode_bpe_file_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    path_buf,
+                    len(path_bytes),
+                    self._ffi.NULL,
+                    0,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        out = self._ffi.new("uint32_t[]", needed)
+        try:
+            written = int(
+                self._lib.turbotoken_encode_bpe_file_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    path_buf,
+                    len(path_bytes),
+                    out,
+                    needed,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return _unpack_u32(self._ffi, out, written)
+
+    def count_bpe_file_from_ranks(self, rank_payload: bytes, path: Any) -> int | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        path_bytes = self._path_to_bytes(path)
+        if path_bytes is None:
+            return None
+
+        path_buf = self._ffi.from_buffer("const char[]", path_bytes)
+        try:
+            result = int(
+                self._lib.turbotoken_count_bpe_file_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    path_buf,
+                    len(path_bytes),
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def is_within_token_limit_bpe_file_from_ranks(
+        self,
+        rank_payload: bytes,
+        path: Any,
+        token_limit: int,
+    ) -> int | bool | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+        if token_limit < 0:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        path_bytes = self._path_to_bytes(path)
+        if path_bytes is None:
+            return None
+
+        path_buf = self._ffi.from_buffer("const char[]", path_bytes)
+        try:
+            result = int(
+                self._lib.turbotoken_is_within_token_limit_bpe_file_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    path_buf,
+                    len(path_bytes),
+                    token_limit,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result == -2:
+            return False
+        if result < 0:
+            return None
+        return result
+
+    def count_bpe_ascii_letter_space_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        in_buf = self._ffi.from_buffer("const char[]", data)
+        try:
+            result = int(
+                self._lib.turbotoken_count_bpe_ascii_letter_space_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def encode_bpe_ascii_letter_space_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
+        self.load()
+        if self._lib is None or self._ffi is None:
+            return None
+        rank_buf = self._rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        if not data:
+            return []
+
+        in_buf = self._ffi.from_buffer("const char[]", data)
+        try:
+            # BPE output token count is bounded by input byte length.
+            out = self._ffi.new("uint32_t[]", len(data))
+            written = int(
+                self._lib.turbotoken_encode_bpe_ascii_letter_space_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                    out,
+                    len(data),
+                )
+            )
+        except (AttributeError, OverflowError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return _unpack_u32(self._ffi, out, written)
+
     def count_bpe_ascii_o200k_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
         self.load()
         if self._lib is None or self._ffi is None:
@@ -1284,27 +1485,13 @@ class NativeBridge:
         if rank_buf is None:
             return None
 
-        in_buf = self._ffi.from_buffer("const char[]", data)
-        try:
-            needed = int(
-                self._lib.turbotoken_encode_bpe_ascii_o200k_from_ranks(
-                    rank_buf,
-                    len(rank_payload),
-                    in_buf,
-                    len(data),
-                    self._ffi.NULL,
-                    0,
-                )
-            )
-        except (AttributeError, TypeError):
-            return None
-        if needed < 0:
-            return None
-        if needed == 0:
+        if not data:
             return []
 
+        in_buf = self._ffi.from_buffer("const char[]", data)
         try:
-            out = self._ffi.new("uint32_t[]", needed)
+            # BPE output token count is bounded by input byte length.
+            out = self._ffi.new("uint32_t[]", len(data))
             written = int(
                 self._lib.turbotoken_encode_bpe_ascii_o200k_from_ranks(
                     rank_buf,
@@ -1312,7 +1499,7 @@ class NativeBridge:
                     in_buf,
                     len(data),
                     out,
-                    needed,
+                    len(data),
                 )
             )
         except (AttributeError, OverflowError, TypeError):
@@ -1383,6 +1570,26 @@ class NativeRankSession:
     def count_bpe(self, data: bytes) -> int | None:
         return self._bridge.count_bpe_from_ranks(self._rank_payload, data)
 
+    def is_within_token_limit_bpe(self, data: bytes, token_limit: int) -> int | bool | None:
+        return self._bridge.is_within_token_limit_bpe_from_ranks(
+            self._rank_payload,
+            data,
+            token_limit,
+        )
+
+    def encode_bpe_file(self, path: Any) -> list[int] | None:
+        return self._bridge.encode_bpe_file_from_ranks(self._rank_payload, path)
+
+    def count_bpe_file(self, path: Any) -> int | None:
+        return self._bridge.count_bpe_file_from_ranks(self._rank_payload, path)
+
+    def is_within_token_limit_bpe_file(self, path: Any, token_limit: int) -> int | bool | None:
+        return self._bridge.is_within_token_limit_bpe_file_from_ranks(
+            self._rank_payload,
+            path,
+            token_limit,
+        )
+
     def encode_bpe_ranges(
         self,
         data: bytes,
@@ -1412,6 +1619,12 @@ class NativeRankSession:
 
     def count_bpe_ascii_o200k(self, data: bytes) -> int | None:
         return self._bridge.count_bpe_ascii_o200k_from_ranks(self._rank_payload, data)
+
+    def encode_bpe_ascii_letter_space(self, data: bytes) -> list[int] | None:
+        return self._bridge.encode_bpe_ascii_letter_space_from_ranks(self._rank_payload, data)
+
+    def count_bpe_ascii_letter_space(self, data: bytes) -> int | None:
+        return self._bridge.count_bpe_ascii_letter_space_from_ranks(self._rank_payload, data)
 
     def decode_bpe(self, tokens: list[int]) -> bytes | None:
         return self._bridge.decode_bpe_from_ranks(self._rank_payload, tokens)

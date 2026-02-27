@@ -19,6 +19,24 @@ def test_encode_matches_known_hello_world_tokens(encoding: str, expected: list[i
     assert enc.encode("hello world") == expected
 
 
+@pytest.mark.parametrize(
+    ("encoding", "text", "expected"),
+    [
+        ("o200k_base", "This is some text", [2500, 382, 1236, 2201]),
+        ("o200k_base", "hello 👋 world 🌍", [24912, 61138, 233, 2375, 130321, 235]),
+        ("cl100k_base", "This is some text", [2028, 374, 1063, 1495]),
+        ("cl100k_base", "hello 👋 world 🌍", [15339, 62904, 233, 1917, 11410, 234, 235]),
+    ],
+)
+def test_encode_matches_selected_gpt_tokenizer_reference_vectors(
+    encoding: str,
+    text: str,
+    expected: list[int],
+) -> None:
+    enc = get_encoding(encoding)
+    assert enc.encode(text) == expected
+
+
 def test_roundtrip_utf8_text() -> None:
     enc = get_encoding("o200k_base")
     text = "emoji: 🚀✅"
@@ -53,6 +71,30 @@ def test_count_with_allowed_special_counts_one_token_for_special_marker() -> Non
     assert enc.count("x<|endoftext|>y", allowed_special={"<|endoftext|>"}) == 3
 
 
+def test_count_tokens_alias_matches_count() -> None:
+    enc = get_encoding("o200k_base")
+    text = "Tokenizer count alias check."
+    assert enc.count_tokens(text) == enc.count(text)
+
+
+def test_is_within_token_limit_matches_count_semantics() -> None:
+    enc = get_encoding("o200k_base")
+    text = "hello world"
+    token_count = enc.count(text)
+    assert enc.is_within_token_limit(text, token_count) == token_count
+    assert enc.is_within_token_limit(text, token_count - 1) is False
+
+
+def test_is_within_token_limit_handles_special_tokens() -> None:
+    enc = get_encoding("o200k_base")
+    text = "x<|endoftext|>y"
+    with pytest.raises(ValueError):
+        enc.is_within_token_limit(text, 16)
+
+    assert enc.is_within_token_limit(text, 3, allowed_special={"<|endoftext|>"}) == 3
+    assert enc.is_within_token_limit(text, 2, allowed_special={"<|endoftext|>"}) is False
+
+
 def test_encode_single_token_accepts_single_byte_and_special() -> None:
     enc = get_encoding("o200k_base")
     hello_token = enc.encode("hello")
@@ -66,6 +108,93 @@ def test_encode_single_token_rejects_non_single_token_input() -> None:
     enc = get_encoding("o200k_base")
     with pytest.raises(KeyError):
         enc.encode_single_token("hello world")
+
+
+def test_encode_generator_and_decode_generator_roundtrip() -> None:
+    enc = get_encoding("o200k_base")
+    text = "hello<|endoftext|>world"
+    chunks = list(enc.encode_generator(text, allowed_special={"<|endoftext|>"}))
+    flat = [token for chunk in chunks for token in chunk]
+    assert flat == enc.encode(text, allowed_special={"<|endoftext|>"})
+
+    decoded_chunks = list(enc.decode_generator(flat))
+    assert "".join(decoded_chunks) == text
+
+
+def test_chat_helpers_count_and_limit_are_consistent() -> None:
+    enc = get_encoding("o200k_base")
+    chat = [
+        {"role": "system", "content": "You are concise."},
+        {"role": "user", "content": "Hello tokenizer"},
+        {"role": "assistant", "content": "Hi."},
+    ]
+
+    encoded = enc.encode_chat(chat)
+    count = enc.count_chat(chat)
+    assert count == len(encoded)
+    assert enc.count_chat_tokens(chat) == count
+    assert enc.is_chat_within_token_limit(chat, count) == count
+    assert enc.is_chat_within_token_limit(chat, count - 1) is False
+
+
+def test_chat_encode_generator_matches_chat_encode() -> None:
+    enc = get_encoding("o200k_base")
+    chat = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "two"},
+    ]
+    chunks = list(enc.encode_chat_generator(chat))
+    flat = [token for chunk in chunks for token in chunk]
+    assert flat == enc.encode_chat(chat)
+
+
+def test_chat_template_modes_and_custom_template() -> None:
+    enc = get_encoding("o200k_base")
+    chat = [{"role": "user", "content": "hello"}]
+
+    native_tokens = enc.encode_chat(chat, template="turbotoken_v1")
+    compat_tokens = enc.encode_chat(chat, template="im_tokens")
+    assert native_tokens != compat_tokens
+
+    custom_tokens = enc.encode_chat(
+        chat,
+        template={
+            "message_prefix": "<msg role='{role}'>",
+            "message_suffix": "</msg>",
+            "assistant_prefix": "<msg role='{role}'>",
+        },
+        prime_with_assistant_response="assistant",
+    )
+    assert len(custom_tokens) > 0
+
+
+def test_native_file_helpers_count_and_limit_are_consistent(tmp_path) -> None:
+    enc = get_encoding("o200k_base")
+    sample = tmp_path / "sample.txt"
+    sample.write_text("hello world", encoding="utf-8")
+
+    tokens = enc.encode_file_native(sample)
+    if tokens is None:
+        pytest.skip("native file-path BPE bridge not available")
+
+    count = enc.count_file_native(sample)
+    if count is None:
+        pytest.skip("native file-path BPE count bridge not available")
+    assert count == len(tokens)
+
+    assert enc.is_file_within_token_limit_native(sample, count) == count
+    assert enc.is_file_within_token_limit_native(sample, count - 1) is False
+
+
+def test_merge_cache_controls_preserve_results() -> None:
+    enc = get_encoding("o200k_base")
+    text = ("cache control check " * 32).strip()
+    baseline = enc.encode(text)
+    enc.set_merge_cache_size(0)
+    assert enc.encode(text) == baseline
+    enc.set_merge_cache_size(1024)
+    enc.clear_merge_cache()
+    assert enc.encode(text) == baseline
 
 
 def test_native_ascii_pretokenizer_fast_path_matches_regex_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,6 +253,42 @@ def test_o200k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.Monke
 
     assert fast == slow
     assert fast_count == slow_count == len(slow)
+
+
+def test_cl100k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("cl100k_base")
+    text = ("Tokenizer speed matters for large cl100k ASCII corpora. " * 2048).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", raising=False)
+    fast = enc.encode_ordinary(text)
+    fast_count = enc.count(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE", raising=False)
+    slow = enc.encode_ordinary(text)
+    slow_count = enc.count(text)
+
+    assert fast == slow
+    assert fast_count == slow_count == len(slow)
+
+
+def test_native_range_batch_force_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer speed matters for range-batch routing.\n" * 256).strip()
+
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", raising=False)
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE", "1")
+    auto_tokens = enc.encode_ordinary(text)
+    auto_count = enc.count(text)
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE", raising=False)
+    fallback_tokens = enc.encode_ordinary(text)
+    fallback_count = enc.count(text)
+
+    assert auto_tokens == fallback_tokens
+    assert auto_count == fallback_count == len(fallback_tokens)
 
 
 def test_decode_bytes_native_fast_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

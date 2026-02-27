@@ -10,12 +10,21 @@ function hasPythonModule(python: string, name: string): boolean {
   return result.code === 0;
 }
 
+function hasBunModule(name: string): boolean {
+  const result = runShell(
+    `bun -e "import('${name}').then(()=>process.exit(0)).catch(()=>process.exit(1))"`,
+    { allowFailure: true },
+  );
+  return result.code === 0;
+}
+
 const python = pythonExecutable();
 const availability = {
   tiktoken: hasPythonModule(python, "tiktoken"),
   rs_bpe: hasPythonModule(python, "rs_bpe"),
   token_dagger:
     hasPythonModule(python, "token_dagger") || hasPythonModule(python, "tokendagger"),
+  gpt_tokenizer: hasBunModule("gpt-tokenizer"),
 };
 
 const commands: BenchCommand[] = [
@@ -52,6 +61,14 @@ if (availability.token_dagger) {
     name: "python-startup-token-dagger",
     command:
       `${python} -c "import importlib.util\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nenc.encode('hello')"`,
+  });
+}
+
+if (availability.gpt_tokenizer) {
+  commands.push({
+    name: "js-startup-gpt-tokenizer",
+    command:
+      `bun -e "import { encode } from 'gpt-tokenizer'; encode('hello');"`,
   });
 }
 

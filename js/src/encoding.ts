@@ -13,6 +13,60 @@ export interface EncodingOptions {
   eagerLoad?: boolean;
 }
 
+export interface ChatMessage {
+  role?: string;
+  name?: string;
+  content?: string;
+}
+
+export interface ChatTemplate {
+  messagePrefix: string;
+  messageSuffix: string;
+  assistantPrefix?: string | null;
+}
+
+export type ChatTemplateMode = "turbotoken_v1" | "im_tokens";
+
+export interface ChatOptions {
+  primeWithAssistantResponse?: string | null;
+  template?: ChatTemplateMode | ChatTemplate;
+}
+
+function formatChatRole(templatePart: string, role: string): string {
+  return templatePart.split("{role}").join(role);
+}
+
+function resolveChatTemplate(template: ChatTemplateMode | ChatTemplate | undefined): ChatTemplate {
+  if (template === undefined || template === "turbotoken_v1") {
+    return {
+      messagePrefix: "[[role:{role}]]\n",
+      messageSuffix: "\n[[/message]]\n",
+      assistantPrefix: "[[role:{role}]]\n",
+    };
+  }
+  if (template === "im_tokens") {
+    return {
+      messagePrefix: "<|im_start|>{role}\n",
+      messageSuffix: "<|im_end|>\n",
+      assistantPrefix: "<|im_start|>{role}\n",
+    };
+  }
+  if (typeof template.messagePrefix !== "string" || template.messagePrefix.length === 0) {
+    throw new Error("chat template requires non-empty messagePrefix");
+  }
+  if (typeof template.messageSuffix !== "string") {
+    throw new Error("chat template requires string messageSuffix");
+  }
+  if (template.assistantPrefix != null && typeof template.assistantPrefix !== "string") {
+    throw new Error("chat template assistantPrefix must be string or null");
+  }
+  return {
+    messagePrefix: template.messagePrefix,
+    messageSuffix: template.messageSuffix,
+    assistantPrefix: template.assistantPrefix ?? null,
+  };
+}
+
 async function fetchRankPayload(url: string): Promise<Uint8Array> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -41,6 +95,14 @@ function decodeByteFallback(tokens: readonly number[]): string {
 
 function encodeByteFallback(text: string): number[] {
   return Array.from(encoder.encode(text));
+}
+
+async function readUtf8File(path: string): Promise<string> {
+  if (typeof Bun !== "undefined") {
+    return Bun.file(path).text();
+  }
+  const fs = await import("node:fs/promises");
+  return fs.readFile(path, "utf8");
 }
 
 export class Encoding {
@@ -160,6 +222,117 @@ export class Encoding {
     }
   }
 
+  countTokens(text: string): number {
+    return this.count(text);
+  }
+
+  isWithinTokenLimit(text: string, tokenLimit: number): number | false {
+    if (tokenLimit < 0) {
+      throw new Error("tokenLimit must be >= 0");
+    }
+    if (!this.enableWasmBpe || !this.isReady()) {
+      const count = encodeByteFallback(text).length;
+      return count <= tokenLimit ? count : false;
+    }
+    try {
+      return this.bridge!.isWithinTokenLimitBpeFromRanks(this.rankPayload!, text, tokenLimit);
+    } catch {
+      const count = encodeByteFallback(text).length;
+      return count <= tokenLimit ? count : false;
+    }
+  }
+
+  async isWithinTokenLimitAsync(text: string, tokenLimit: number): Promise<number | false> {
+    await this.ready();
+    return this.isWithinTokenLimit(text, tokenLimit);
+  }
+
+  *encodeGenerator(text: string): Generator<number[], void, undefined> {
+    yield this.encode(text);
+  }
+
+  *decodeGenerator(tokens: readonly number[]): Generator<string, void, undefined> {
+    yield this.decode(tokens);
+  }
+
+  private *chatSegments(
+    messages: Iterable<ChatMessage>,
+    options: ChatOptions = {},
+  ): Generator<string, void, undefined> {
+    const template = resolveChatTemplate(options.template);
+    for (const message of messages) {
+      const roleValue = typeof message.name === "string" && message.name.length > 0
+        ? message.name
+        : typeof message.role === "string" && message.role.length > 0
+          ? message.role
+          : "user";
+      const content = typeof message.content === "string" ? message.content : "";
+
+      yield formatChatRole(template.messagePrefix, roleValue);
+      if (content.length > 0) {
+        yield content;
+      }
+      yield template.messageSuffix;
+    }
+
+    const prime = options.primeWithAssistantResponse ?? "assistant";
+    if (typeof prime === "string" && prime.length > 0 && template.assistantPrefix) {
+      yield formatChatRole(template.assistantPrefix, prime);
+    }
+  }
+
+  encodeChat(messages: Iterable<ChatMessage>, options: ChatOptions = {}): number[] {
+    const out: number[] = [];
+    for (const chunk of this.encodeChatGenerator(messages, options)) {
+      out.push(...chunk);
+    }
+    return out;
+  }
+
+  *encodeChatGenerator(
+    messages: Iterable<ChatMessage>,
+    options: ChatOptions = {},
+  ): Generator<number[], void, undefined> {
+    for (const segment of this.chatSegments(messages, options)) {
+      yield this.encode(segment);
+    }
+  }
+
+  countChat(messages: Iterable<ChatMessage>, options: ChatOptions = {}): number {
+    let total = 0;
+    for (const segment of this.chatSegments(messages, options)) {
+      total += this.count(segment);
+    }
+    return total;
+  }
+
+  countChatTokens(messages: Iterable<ChatMessage>, options: ChatOptions = {}): number {
+    return this.countChat(messages, options);
+  }
+
+  isChatWithinTokenLimit(
+    messages: Iterable<ChatMessage>,
+    tokenLimit: number,
+    options: ChatOptions = {},
+  ): number | false {
+    if (tokenLimit < 0) {
+      throw new Error("tokenLimit must be >= 0");
+    }
+
+    let total = 0;
+    for (const segment of this.chatSegments(messages, options)) {
+      const within = this.isWithinTokenLimit(segment, tokenLimit - total);
+      if (within === false) {
+        return false;
+      }
+      total += within;
+      if (total > tokenLimit) {
+        return false;
+      }
+    }
+    return total;
+  }
+
   async countAsync(text: string): Promise<number> {
     await this.ready();
     if (!this.enableWasmBpe) {
@@ -170,5 +343,20 @@ export class Encoding {
     } catch {
       return encodeByteFallback(text).length;
     }
+  }
+
+  async encodeFilePath(path: string): Promise<number[]> {
+    const text = await readUtf8File(path);
+    return this.encodeAsync(text);
+  }
+
+  async countFilePath(path: string): Promise<number> {
+    const text = await readUtf8File(path);
+    return this.countAsync(text);
+  }
+
+  async isFilePathWithinTokenLimit(path: string, tokenLimit: number): Promise<number | false> {
+    const text = await readUtf8File(path);
+    return this.isWithinTokenLimitAsync(text, tokenLimit);
   }
 }

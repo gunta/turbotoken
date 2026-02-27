@@ -81,7 +81,7 @@ if (probe.available !== true) {
 }
 
 const matrixScript = `
-import json,sys,time
+import json,os,sys,time
 sys.path.insert(0,'python')
 from turbotoken import _gpu
 from turbotoken import get_encoding
@@ -101,6 +101,23 @@ def mib_per_s(total_bytes, mean_ms):
     if mean_ms <= 0:
         return None
     return (total_bytes / (1024.0 * 1024.0)) / (mean_ms / 1000.0)
+
+def encode_metal_forced(piece_text):
+    prev=os.environ.get('TURBOTOKEN_METAL_FORCE_ALL_PIECES')
+    os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES']='1'
+    try:
+        return enc.encode_gpu(
+            [piece_text],
+            device='metal',
+            chunk_bytes=4096,
+            overlap_bytes=512,
+            strict_verify=False,
+        )[0]
+    finally:
+        if prev is None:
+            os.environ.pop('TURBOTOKEN_METAL_FORCE_ALL_PIECES', None)
+        else:
+            os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES']=prev
 
 encode_sizes=${JSON.stringify(encodeSizes)}
 encode_rows=[]
@@ -164,13 +181,7 @@ for size in bpe_sizes:
         overlap_bytes=512,
         strict_verify=False,
     )[0]
-    metal_tokens=enc.encode_gpu(
-        [text],
-        device='metal',
-        chunk_bytes=4096,
-        overlap_bytes=512,
-        strict_verify=False,
-    )[0]
+    metal_tokens=encode_metal_forced(text)
     cpu_ms=mean_ms(lambda: enc.encode(text), loops)
     auto_ms=mean_ms(
         lambda: enc.encode_gpu(
@@ -182,16 +193,7 @@ for size in bpe_sizes:
         ),
         loops,
     )
-    metal_ms=mean_ms(
-        lambda: enc.encode_gpu(
-            [text],
-            device='metal',
-            chunk_bytes=4096,
-            overlap_bytes=512,
-            strict_verify=False,
-        ),
-        loops,
-    )
+    metal_ms=mean_ms(lambda: encode_metal_forced(text), loops)
     bpe_rows.append({
         "chars":size,
         "bytes":size,

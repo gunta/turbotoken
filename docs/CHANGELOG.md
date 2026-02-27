@@ -30,6 +30,7 @@
 - `scripts/bench-native-byte-path.ts` to benchmark native C ABI UTF-8 byte encode/decode paths independently of scalar BPE
 - `scripts/bench-native-pretokenizer.ts` to benchmark native non-ASCII counting kernels (auto/scalar/NEON/DotProd, plus optional SME when built with `-Dexperimental-sme=true`)
 - `scripts/bench-training.ts` to benchmark BPE training throughput (`turbotoken` vs `minbpe`/`rustbpe`) on shared fixtures
+- `scripts/bench-chat.ts` to benchmark chat helper API operations (`encode`/`count`/`is-within-token-limit`) against `gpt-tokenizer`
 - `scripts/bench-pair-cache-hash.ts` to compare scalar BPE throughput across pair-cache hash strategies (`rapidhash`, ARM64 `crc32`) under identical commands
 - `scripts/bench-encoder-queue.ts` to compare scalar BPE queue strategies (`hybrid` vs `full-bucket`) under `TURBOTOKEN_ENCODER_QUEUE`
 - `scripts/bench-boundary-classifier.ts` to benchmark native ASCII boundary-classification counters (`auto`/`scalar`/`neon`)
@@ -37,12 +38,32 @@
 - `scripts/bench-gpu-memory.ts` to benchmark GPU memory telemetry rows (active bytes, bridge working-set bytes, and Metal driver-reported allocated bytes) across encode/count/BPE workloads
 - `scripts/bench-gpu-memory-cuda.ts` to benchmark CUDA GPU memory usage (`nvidia-smi` + backend allocator counters) with graceful skip records on non-NVIDIA hosts
 - `scripts/modal/bench_cuda_modal.py` to run benchmark suites on Modal NVIDIA GPUs and export a consolidated local JSON artifact (`bench/results/bench-modal-cuda-*.json`)
+- `scripts/bench-gpu-overlap.ts` to benchmark CPU-only vs Metal non-overlap vs CPU+GPU overlap routes on large-text batches
+- `bench/ci-gates.json` to define hard benchmark gate thresholds used by CI governance runs
+- `scripts/verify-npm-package.ts` to verify WASM packaging artifacts (load + roundtrip) before npm pack
+- `gpt-tokenizer` is now included as a tracked upstream repo (`upstream/gpt-tokenizer/`) and benchmarked competitor across startup/encode/decode/count/RSS rows (Bun runtime)
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
 - Python CLI coverage for `turbotoken bench` and `turbotoken info`
 - Native bridge probe in `python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
 - Native bridge wrappers for rank-based BPE encode/decode C ABI exports (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) with graceful fallback when symbols are unavailable
+- Native token-limit + cache-control C ABI exports:
+  - `turbotoken_is_within_token_limit_bpe_from_ranks(...)`
+  - `turbotoken_clear_rank_table_cache()`
+  with Python bridge/session wrappers and WASM bridge plumbing
+- Native file-path rank-BPE C ABI exports:
+  - `turbotoken_encode_bpe_file_from_ranks(...)`
+  - `turbotoken_count_bpe_file_from_ranks(...)`
+  - `turbotoken_is_within_token_limit_bpe_file_from_ranks(...)`
+  with Python bridge/session wrappers and `Encoding` convenience methods:
+  - `encode_file_native(...)`
+  - `count_file_native(...)`
+  - `is_file_within_token_limit_native(...)`
+- Native ASCII letter-space rank-BPE C ABI exports:
+  - `turbotoken_count_bpe_ascii_letter_space_from_ranks(...)`
+  - `turbotoken_encode_bpe_ascii_letter_space_from_ranks(...)`
+  with Python bridge/session wrappers
 - Training APIs in Python:
   - `train_mergeable_ranks_from_iterator(...)`
   - `train_encoding_from_iterator(...)`
@@ -64,6 +85,7 @@
 - Deterministic tiktoken parity fuzz tests in `python/tests/test_tiktoken_parity_fuzz.py`
 - Adapted upstream public test coverage in `python/tests/upstream/test_tiktoken_adapted_public.py`
 - Additional adapted upstream misc/compat coverage in `python/tests/upstream/test_tiktoken_adapted_misc.py`
+- Added selected `gpt-tokenizer` reference vectors to local encoding parity tests (`python/tests/test_encoding.py`)
 - Multi-target build steps in `build.zig` for `aarch64-macos`, `aarch64-linux`, `x86_64-linux`, and `wasm32-freestanding`
 - 4MB flat pair-cache scaffold implementation in Zig (`src/pair_cache.zig`) with `put/get/clear` tests
 - Merge-table-derived pair-cache seeding (`populateFromRankTable`) with coverage for split-derived pair mappings
@@ -87,6 +109,51 @@
 - `package.json` scripts now run real test/bench/build helpers instead of TODO placeholders
 - `js/tests/smoke.test.ts` now uses Bun test assertions instead of side-effect checks
 - Python `Encoding` now runs real regex+BPE tokenization using downloaded `.tiktoken` mergeable ranks (including `allowed_special`/`disallowed_special`, batch helpers, decode APIs, numpy export, and token-byte lookup)
+- Python `Encoding` native range-batch route remains explicitly controlled:
+  - `TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE=1` to force native route
+  - `TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE=1` to force fallback
+- Python `Encoding` now has an opt-in native route for large ASCII `cl100k_base` ordinary encode/count via the new letter-space C ABI path:
+  - size gate: `TURBOTOKEN_NATIVE_CL100K_FULL_MIN_BYTES` (default `131072`)
+  - `TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1` to force native path
+  - `TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1` to force fallback
+- Latest cold-process toggle benchmarks confirm both full-route toggles remain opt-in:
+  - `bench/results/bench-cl100k-native-full-toggle-20260228-035411.json`
+  - `bench/results/bench-o200k-native-full-toggle-20260228-035541.json`
+  because forced full routes still trail default `Encoding.count()` on the tracked 1MB ASCII workload.
+- Native ASCII full-route caches in `src/exports.zig` now avoid per-piece key-copy allocations for O200K and letter-space paths, and letter-space encode/count now stream ranges via `nextAsciiLetterSpaceRange(...)` instead of a two-pass start/end buffer materialization.
+- Native CFFI bridge encode wrappers now use one-shot output buffers (single FFI call) for:
+  - `encode_bpe_from_ranks(...)`
+  - `encode_bpe_ascii_o200k_from_ranks(...)`
+  - `encode_bpe_ascii_letter_space_from_ranks(...)`
+  reducing Python/native round-trips in hot paths (`python/turbotoken/_native.py`).
+- Native CFFI training wrappers now use one-shot output buffers sized by `vocab_size - 256` (single FFI call) for:
+  - `train_bpe_from_chunk_counts(...)`
+  - `train_bpe_ascii_o200k(...)`
+  - `train_bpe_ascii_o200k_multi(...)`
+- Native trainer initial pair-state build (`src/trainer.zig`) now has a sharded parallel path with deterministic merge, plus thread-count override `TURBOTOKEN_NATIVE_TRAIN_THREADS`.
+- Python `Encoding` now exposes additional parity-oriented APIs inspired by gpt-tokenizer:
+  - `set_merge_cache_size(...)`
+  - `clear_merge_cache()`
+  - `is_within_token_limit(...)`
+  - `count_tokens(...)` alias
+  - `encode_generator(...)` and `decode_generator(...)`
+- Python `Encoding` now also includes template-driven chat helper APIs:
+  - `encode_chat(...)`
+  - `encode_chat_generator(...)`
+  - `count_chat(...)` / `count_chat_tokens(...)`
+  - `is_chat_within_token_limit(...)`
+- Chat helper template modes now support:
+  - `turbotoken_v1` (project-native default framing)
+  - `im_tokens` (compatibility framing for `<|im_start|>` / `<|im_end|>`)
+  - custom template mappings (`message_prefix`, `message_suffix`, optional `assistant_prefix`)
+- JS `Encoding` wrapper now includes template-driven chat helper APIs mirroring the Python helper surface:
+  - `encodeChat(...)` / `encodeChatGenerator(...)`
+  - `countChat(...)` / `countChatTokens(...)`
+  - `isChatWithinTokenLimit(...)`
+- JS `Encoding` now also exposes thin file-path helpers (wrapper passes path/text only):
+  - `encodeFilePath(...)`
+  - `countFilePath(...)`
+  - `isFilePathWithinTokenLimit(...)`
 - `Encoding.count()` now shares the BPE path with `encode()` while avoiding token-list allocation by summing per-piece token counts
 - `build.zig` now supports Zig's modern build API shape (`addLibrary` + `root_module`) and local `zig build`/`zig build test` pass on Zig 0.15
 - Updated declared Zig toolchain baseline to `>= 0.15.0` in `build.zig.zon` and `AGENTS.md`
@@ -95,6 +162,7 @@
 - Compatibility smoke report now reaches zero mismatches versus `tiktoken` across `o200k_base`, `cl100k_base`, `p50k_base`, and `r50k_base` for the tracked corpus
 - `Encoding` now includes additional parity helpers (`decode_tokens_bytes`, `decode_with_offsets`) and expanded model-name mapping behavior closer to `tiktoken` expectations
 - Registry now includes `tiktoken`-style encoding aliases (`gpt2`, `p50k_edit`, `o200k_harmony`) and model mappings that resolve to those names
+- `o200k_harmony` remains an encoding-name alias only (separate from chat template modes)
 - Python `Encoding` now exposes extra internal-compat members used by upstream tests (`max_token_value`, `_encode_bytes`, `_pat_str`, `_special_tokens`, lazy `_mergeable_ranks`)
 - Python `Encoding` constructor now accepts tiktoken-style custom-encoding arguments (`name`, `pat_str`, `mergeable_ranks`, `special_tokens`) used by upstream pickle compatibility tests
 - Python BPE path now dispatches large byte pieces to native Zig rank-based encoding when available to avoid quadratic slow paths on repetitive large inputs
@@ -151,6 +219,11 @@
 - Metal autoroute calibration now ensures the O200K rank payload before BPE threshold probing, so crossover artifacts include populated BPE calibration rows (`bench/results/bench-gpu-crossover-1772204438191.json`, `bpe_use_metal_min_piece_bytes=1048576`)
 - Added native bridge hybrid export `turbotoken_metal_encode_utf8_bytes_hybrid(...)` and switched hybrid benchmark coverage from Python threadpool orchestration to native bridge orchestration (`gpu/metal/metal_bridge.m`, `python/turbotoken/_gpu.py`, `scripts/bench-gpu.ts`, `bench/results/bench-gpu-20260227-150010.json`)
 - Added canonical benchmark scorecard generator (`scripts/bench-scorecard.ts`, `bun run bench:scorecard`) and wired it into full bench runs (`scripts/bench-all.ts`) to emit a single consolidated artifact (`bench/results/bench-scorecard-*.json`) plus Markdown summary (`bench/charts/scorecard.md`)
+- Added benchmark governance CI workflow + gate runner (`.github/workflows/benchmark.yml`, `scripts/ci-benchmark.ts`) with CUDA kept off by default and explicit on-demand execution
+- Added real WASM CI workflow (`.github/workflows/wasm.yml`) and manual wheels workflow (`.github/workflows/wheels.yml`) replacing placeholder TODO steps
+- Metal autoroute cache schema is now `v5` with large-crossover routing floors so small/medium BPE pieces remain on CPU/native by default unless explicitly forced (`TURBOTOKEN_METAL_FORCE_ALL_PIECES=1`)
+- `Encoding.encode_gpu(...)` now has a large-input CPU+GPU overlap pretokenize pipeline (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, `TURBOTOKEN_GPU_OVERLAP_MIN_TEXT_BYTES`, `TURBOTOKEN_GPU_OVERLAP_PREFETCH_PIECES`) while preserving baseline token output
+- `scripts/build-wheels.ts` now clears stale wheel outputs and verifies that each repacked wheel embeds the exact expected native library bytes (SHA-256 check)
 - Core native BPE calls now use a reusable native rank session abstraction (`NativeBridge.rank_session(...)` / `NativeRankSession`) to reduce repeated Python-side bridge plumbing and keep rank-payload-bound calls more direct (`python/turbotoken/_native.py`, `python/turbotoken/core.py`)
 - `_ensure_rank_payload()` now prefers compiled native rank payload blobs by default (`*.tiktoken.native.bin`) with opt-out (`TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`), and rank parsing now supports both text `.tiktoken` payloads and native binary payloads through a unified parser (`python/turbotoken/_rank_files.py`)
 - Added native decode session path in `Encoding.decode_bytes(...)` but kept it opt-in (`TURBOTOKEN_NATIVE_DECODE_ENABLE=1`) after benchmark checks showed default-on regressions on current decode workloads; fallback Python decode semantics (including `ValueError` on unknown token id) are preserved (`python/turbotoken/core.py`, `python/tests/test_encoding.py`)

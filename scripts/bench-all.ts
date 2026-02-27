@@ -12,6 +12,7 @@ const scripts = [
   "scripts/bench-parallel.ts",
   "scripts/bench-comparison.ts",
   "scripts/bench-competitors.ts",
+  "scripts/bench-chat.ts",
   "scripts/bench-training.ts",
   "scripts/bench-scalar-fallback.ts",
   "scripts/bench-pair-cache-hash.ts",
@@ -25,6 +26,7 @@ const scripts = [
   "scripts/bench-gpu.ts",
   "scripts/bench-gpu-memory.ts",
   "scripts/bench-gpu-crossover.ts",
+  "scripts/bench-gpu-overlap.ts",
   "scripts/generate-charts.ts",
   "scripts/bench-scorecard.ts",
 ];

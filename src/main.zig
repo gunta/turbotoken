@@ -26,6 +26,7 @@ comptime {
     _ = exports.turbotoken_count_ascii_class_boundaries_utf8_neon;
     _ = exports.turbotoken_encode_utf8_bytes;
     _ = exports.turbotoken_decode_utf8_bytes;
+    _ = exports.turbotoken_clear_rank_table_cache;
     _ = exports.turbotoken_encode_bpe_from_ranks;
     _ = exports.turbotoken_train_bpe_from_chunk_counts;
     _ = exports.turbotoken_train_bpe_ascii_o200k;
@@ -36,6 +37,12 @@ comptime {
     _ = exports.turbotoken_filter_tokens_by_keep_flags;
     _ = exports.turbotoken_encode_bpe_chunked_stitched_from_ranks;
     _ = exports.turbotoken_count_bpe_from_ranks;
+    _ = exports.turbotoken_is_within_token_limit_bpe_from_ranks;
+    _ = exports.turbotoken_encode_bpe_file_from_ranks;
+    _ = exports.turbotoken_count_bpe_file_from_ranks;
+    _ = exports.turbotoken_is_within_token_limit_bpe_file_from_ranks;
+    _ = exports.turbotoken_count_bpe_ascii_letter_space_from_ranks;
+    _ = exports.turbotoken_encode_bpe_ascii_letter_space_from_ranks;
     _ = exports.turbotoken_count_bpe_ascii_o200k_from_ranks;
     _ = exports.turbotoken_encode_bpe_ascii_o200k_from_ranks;
     _ = exports.turbotoken_decode_bpe_from_ranks;

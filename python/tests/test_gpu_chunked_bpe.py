@@ -119,3 +119,30 @@ def test_encode_gpu_metal_non_strict_stays_byte_exact_for_long_piece() -> None:
         strict_verify=False,
     )[0]
     assert enc.decode(metal_tokens) == text
+
+
+def test_encode_gpu_overlap_toggle_matches_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("overlap pipeline validation " * 8192).strip()
+    baseline = enc.encode(text)
+
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ENABLE", "0")
+    no_overlap = enc.encode_gpu(
+        [text],
+        device="metal",
+        chunk_bytes=4096,
+        overlap_bytes=512,
+        strict_verify=False,
+    )[0]
+
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ENABLE", "1")
+    with_overlap = enc.encode_gpu(
+        [text],
+        device="metal",
+        chunk_bytes=4096,
+        overlap_bytes=512,
+        strict_verify=False,
+    )[0]
+
+    assert no_overlap == baseline
+    assert with_overlap == baseline

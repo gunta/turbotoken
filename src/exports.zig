@@ -57,6 +57,10 @@ fn clearRankTableCache() void {
     rank_table_cache.last_input_len = 0;
 }
 
+pub export fn turbotoken_clear_rank_table_cache() void {
+    clearRankTableCache();
+}
+
 fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
     const input_ptr = @intFromPtr(rank_slice.ptr);
     const input_len = rank_slice.len;
@@ -1518,6 +1522,135 @@ pub export fn turbotoken_count_bpe_from_ranks(
     return @as(isize, @intCast(token_count));
 }
 
+pub export fn turbotoken_is_within_token_limit_bpe_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    token_limit: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
+
+    const backend = ScalarBackend.init();
+    const token_count = backend.count(allocator, in_slice, table) catch return -1;
+    if (token_count > token_limit) {
+        return -2;
+    }
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
+}
+
+fn readFileAllocFromPath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    if (builtin.os.tag == .freestanding) {
+        return error.Unsupported;
+    }
+    if (path.len == 0 or std.mem.indexOfScalar(u8, path, 0) != null) {
+        return error.InvalidInput;
+    }
+    return std.fs.cwd().readFileAlloc(allocator, path, std.math.maxInt(usize));
+}
+
+pub export fn turbotoken_encode_bpe_file_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    file_path: [*c]const u8,
+    file_path_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or file_path == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const path_slice = file_path[0..file_path_len];
+    const file_bytes = readFileAllocFromPath(allocator, path_slice) catch return -1;
+    defer allocator.free(file_bytes);
+
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+    const tokens = backend.encode(allocator, file_bytes, table) catch return -1;
+    defer allocator.free(tokens);
+
+    if (out_tokens == null) {
+        if (tokens.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(tokens.len));
+    }
+
+    if (out_cap < tokens.len) {
+        return -1;
+    }
+
+    @memcpy(out_tokens[0..tokens.len], tokens);
+    return @as(isize, @intCast(tokens.len));
+}
+
+pub export fn turbotoken_count_bpe_file_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    file_path: [*c]const u8,
+    file_path_len: usize,
+) isize {
+    if (rank_bytes == null or file_path == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const path_slice = file_path[0..file_path_len];
+    const file_bytes = readFileAllocFromPath(allocator, path_slice) catch return -1;
+    defer allocator.free(file_bytes);
+
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+    const token_count = backend.count(allocator, file_bytes, table) catch return -1;
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
+}
+
+pub export fn turbotoken_is_within_token_limit_bpe_file_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    file_path: [*c]const u8,
+    file_path_len: usize,
+    token_limit: usize,
+) isize {
+    if (rank_bytes == null or file_path == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const path_slice = file_path[0..file_path_len];
+    const file_bytes = readFileAllocFromPath(allocator, path_slice) catch return -1;
+    defer allocator.free(file_bytes);
+
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const backend = ScalarBackend.init();
+    const token_count = backend.count(allocator, file_bytes, table) catch return -1;
+    if (token_count > token_limit) {
+        return -2;
+    }
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
+}
+
 const AsciiO200kCountCacheEntry = struct {
     count: usize,
 };
@@ -1527,6 +1660,7 @@ const AsciiO200kEncodeCacheEntry = struct {
 };
 
 const ascii_o200k_piece_cache_cap: usize = 65_536;
+const ascii_letter_space_piece_cache_cap: usize = 65_536;
 
 fn countBpeAsciiO200kFromTable(
     allocator: std.mem.Allocator,
@@ -1535,13 +1669,7 @@ fn countBpeAsciiO200kFromTable(
     table: *const rank_loader.RankTable,
 ) !usize {
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
-    defer {
-        var it = piece_cache.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
-        }
-        piece_cache.deinit(allocator);
-    }
+    defer piece_cache.deinit(allocator);
 
     var idx: usize = 0;
     var total_count: usize = 0;
@@ -1559,9 +1687,7 @@ fn countBpeAsciiO200kFromTable(
             continue;
         }
 
-        const key_copy = try allocator.alloc(u8, piece.len);
-        @memcpy(key_copy, piece);
-        try piece_cache.put(allocator, key_copy, .{ .count = piece_count });
+        try piece_cache.put(allocator, piece, .{ .count = piece_count });
     }
 
     return total_count;
@@ -1588,6 +1714,131 @@ pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
         return -1;
     }
     return @as(isize, @intCast(token_count));
+}
+
+fn countBpeAsciiLetterSpaceFromTable(
+    allocator: std.mem.Allocator,
+    backend: *const ScalarBackend,
+    in_slice: []const u8,
+    table: *const rank_loader.RankTable,
+) !usize {
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
+    defer piece_cache.deinit(allocator);
+
+    var idx: usize = 0;
+    var total_count: usize = 0;
+    while (try pretokenizer.nextAsciiLetterSpaceRange(in_slice, &idx)) |range| {
+        const piece = in_slice[range.start..range.end];
+        if (piece_cache.get(piece)) |cached| {
+            total_count += cached.count;
+            continue;
+        }
+
+        const piece_count = try backend.count(allocator, piece, table);
+        total_count += piece_count;
+
+        if (piece_cache.count() >= ascii_letter_space_piece_cache_cap) {
+            continue;
+        }
+
+        try piece_cache.put(allocator, piece, .{ .count = piece_count });
+    }
+
+    return total_count;
+}
+
+pub export fn turbotoken_count_bpe_ascii_letter_space_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
+    const backend = ScalarBackend.init();
+
+    const token_count = countBpeAsciiLetterSpaceFromTable(allocator, &backend, in_slice, table) catch return -1;
+    if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(token_count));
+}
+
+pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) isize {
+    if (rank_bytes == null or text == null) {
+        return -1;
+    }
+
+    const allocator = runtimeAllocator();
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const in_slice = text[0..text_len];
+    const backend = ScalarBackend.init();
+
+    if (out_tokens == null) {
+        const token_count = countBpeAsciiLetterSpaceFromTable(allocator, &backend, in_slice, table) catch return -1;
+        if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_count));
+    }
+
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
+    defer {
+        var it = piece_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.value_ptr.tokens);
+        }
+        piece_cache.deinit(allocator);
+    }
+
+    var idx: usize = 0;
+    var total_tokens: usize = 0;
+    while ((pretokenizer.nextAsciiLetterSpaceRange(in_slice, &idx) catch return -1)) |range| {
+        const piece = in_slice[range.start..range.end];
+
+        if (piece_cache.get(piece)) |cached| {
+            if (cached.tokens.len > out_cap -| total_tokens) {
+                return -1;
+            }
+            @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
+            total_tokens += cached.tokens.len;
+            continue;
+        }
+
+        const encoded = backend.encode(allocator, piece, table) catch return -1;
+        defer allocator.free(encoded);
+        if (encoded.len > out_cap -| total_tokens) {
+            return -1;
+        }
+        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
+        total_tokens += encoded.len;
+
+        if (piece_cache.count() < ascii_letter_space_piece_cache_cap) {
+            const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
+            errdefer allocator.free(token_copy);
+            @memcpy(token_copy, encoded);
+            piece_cache.put(allocator, piece, .{ .tokens = token_copy }) catch return -1;
+        }
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
 }
 
 pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
@@ -1620,7 +1871,6 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
     defer {
         var it = piece_cache.iterator();
         while (it.next()) |entry| {
-            allocator.free(entry.key_ptr.*);
             allocator.free(entry.value_ptr.tokens);
         }
         piece_cache.deinit(allocator);
@@ -1647,15 +1897,12 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
         @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
         total_tokens += encoded.len;
 
-        if (piece_cache.count() >= ascii_o200k_piece_cache_cap) {
-            continue;
+        if (piece_cache.count() < ascii_o200k_piece_cache_cap) {
+            const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
+            errdefer allocator.free(token_copy);
+            @memcpy(token_copy, encoded);
+            piece_cache.put(allocator, piece, .{ .tokens = token_copy }) catch return -1;
         }
-
-        const key_copy = allocator.alloc(u8, piece.len) catch return -1;
-        @memcpy(key_copy, piece);
-        const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
-        @memcpy(token_copy, encoded);
-        piece_cache.put(allocator, key_copy, .{ .tokens = token_copy }) catch return -1;
     }
 
     if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
@@ -1928,6 +2175,23 @@ test "encode/decode bpe path using provided ranks" {
     const count = turbotoken_count_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3);
     try std.testing.expectEqual(@as(isize, 2), count);
 
+    const within_limit = turbotoken_is_within_token_limit_bpe_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        "abb".ptr,
+        3,
+        2,
+    );
+    try std.testing.expectEqual(@as(isize, 2), within_limit);
+    const over_limit = turbotoken_is_within_token_limit_bpe_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        "abb".ptr,
+        3,
+        1,
+    );
+    try std.testing.expectEqual(@as(isize, -2), over_limit);
+
     var tokens: [2]u32 = undefined;
     const written = turbotoken_encode_bpe_from_ranks(ranks.ptr, ranks.len, "abb".ptr, 3, &tokens, tokens.len);
     try std.testing.expectEqual(@as(isize, 2), written);
@@ -1940,6 +2204,80 @@ test "encode/decode bpe path using provided ranks" {
     const decoded = turbotoken_decode_bpe_from_ranks(ranks.ptr, ranks.len, &tokens, tokens.len, &out, out.len);
     try std.testing.expectEqual(@as(isize, 3), decoded);
     try std.testing.expectEqualSlices(u8, "abb", &out);
+}
+
+test "file-path bpe exports encode/count/token-limit using provided ranks" {
+    if (builtin.os.tag == .freestanding) {
+        return;
+    }
+
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{
+        .sub_path = "sample.txt",
+        .data = "abb",
+    });
+
+    const allocator = std.testing.allocator;
+    const root_path = try tmp.dir.realpathAlloc(allocator, ".");
+    defer allocator.free(root_path);
+    const file_path = try std.fs.path.join(allocator, &.{ root_path, "sample.txt" });
+    defer allocator.free(file_path);
+
+    const needed = turbotoken_encode_bpe_file_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        file_path.ptr,
+        file_path.len,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 2), needed);
+
+    const counted = turbotoken_count_bpe_file_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        file_path.ptr,
+        file_path.len,
+    );
+    try std.testing.expectEqual(@as(isize, 2), counted);
+
+    const within = turbotoken_is_within_token_limit_bpe_file_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        file_path.ptr,
+        file_path.len,
+        2,
+    );
+    try std.testing.expectEqual(@as(isize, 2), within);
+
+    const over = turbotoken_is_within_token_limit_bpe_file_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        file_path.ptr,
+        file_path.len,
+        1,
+    );
+    try std.testing.expectEqual(@as(isize, -2), over);
+
+    var tokens: [2]u32 = undefined;
+    const written = turbotoken_encode_bpe_file_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        file_path.ptr,
+        file_path.len,
+        &tokens,
+        tokens.len,
+    );
+    try std.testing.expectEqual(@as(isize, 2), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1 }, &tokens);
 }
 
 test "ascii o200k full-text bpe exports match expected merges" {
@@ -1976,6 +2314,42 @@ test "ascii o200k full-text bpe exports match expected merges" {
     );
     try std.testing.expectEqual(@as(isize, 5), written);
     try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 1, 3, 2, 1 }, &tokens);
+}
+
+test "ascii letter-space full-text bpe exports match expected merges" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\IA== 3
+        \\
+    ;
+    const text = "ab ab";
+
+    const counted = turbotoken_count_bpe_ascii_letter_space_from_ranks(ranks.ptr, ranks.len, text.ptr, text.len);
+    try std.testing.expectEqual(@as(isize, 3), counted);
+
+    const needed = turbotoken_encode_bpe_ascii_letter_space_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        null,
+        0,
+    );
+    try std.testing.expectEqual(@as(isize, 3), needed);
+
+    var tokens: [3]u32 = undefined;
+    const written = turbotoken_encode_bpe_ascii_letter_space_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &tokens,
+        tokens.len,
+    );
+    try std.testing.expectEqual(@as(isize, 3), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{ 2, 3, 2 }, &tokens);
 }
 
 test "batch bpe encode from ranks returns flattened tokens and token offsets" {
@@ -2258,4 +2632,20 @@ test "rank-table cache reuses parsed table for same payload bytes" {
 
     const table_b = try ensureCachedRankTable(copied);
     try std.testing.expectEqual(initial_table_ptr, @intFromPtr(table_b));
+}
+
+test "clear rank-table cache export drops cached table state" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+    _ = try ensureCachedRankTable(ranks);
+    try std.testing.expect(rank_table_cache.table != null);
+    turbotoken_clear_rank_table_cache();
+    try std.testing.expect(rank_table_cache.table == null);
+    try std.testing.expect(rank_table_cache.payload == null);
+    try std.testing.expectEqual(@as(usize, 0), rank_table_cache.last_input_ptr);
+    try std.testing.expectEqual(@as(usize, 0), rank_table_cache.last_input_len);
 }

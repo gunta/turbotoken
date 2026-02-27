@@ -28,6 +28,12 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | CPU-010 | Native range encode/count | parallel two-pass range executor for batch/range C ABI + optional Python range-batch path | `DONE (first pass, keep optional at Python layer)` |
 | CPU-011 | Rank loader + scalar init | precomputed single-byte token rank map to avoid per-byte hash lookups in merged-node setup | `DONE (first pass)` |
 | CPU-012 | Scalar queue hot path | skip overflow-heap checks when `full-bucket` mode runs with overflow disabled | `DONE (first pass)` |
+| CPU-013 | Native API (encode/count) | expose merge-cache size/clear knobs through Zig C ABI + Python/JS wrappers for repeated-similar-input throughput tuning | `DONE (first pass)` |
+| CPU-014 | Native API (count/limits) | add early-exit token-limit counter (`is_within_token_limit`) that stops once threshold is exceeded | `DONE (first pass)` |
+| CPU-015 | Native wrapper overhead | remove extra FFI size-probe round-trips where output upper bounds are known | `DONE (first pass)` |
+| CPU-016 | Native trainer parallel init | shard pair-state initialization in Zig and merge deterministically with thread override control | `DONE (first pass)` |
+| DX-001 | Compatibility fixtures | port selected `gpt-tokenizer` chat/model fixtures into local wrapper parity tests (no perf claims) | `DONE (first pass)` |
+| DX-002 | Wrapper chat helpers | add chat encode/count/limit-check helpers in Python + JS wrappers and benchmark them against gpt-tokenizer | `DONE (first pass)` |
 | GPU-001 | Metal BPE | SIMD-group min-rank reduction in BPE merge loop | `DONE (first pass, reverted)` |
 | GPU-002 | Metal dispatch | Lower per-round dispatch overhead in BPE loop | `DONE (first pass, reverted)` |
 | GPU-003 | Metal memory | Wider byte-path loads in UTF-8 widen kernel | `DONE (first pass, reverted)` |
@@ -36,6 +42,22 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | GPU-007 | Metal stitch host path | move keep-flag token compaction from Python loop to Zig export | `DONE (first pass)` |
 | GPU-008 | Metal autoroute BPE calibration | ensure rank payload is available during BPE calibration to emit crossover rows | `DONE (first pass)` |
 | GPU-009 | Hybrid NEON+Metal encode orchestration | move split execution from Python threadpool into native Metal bridge symbol | `DONE (first pass)` |
+| GPU-010 | Metal overlap pipeline | overlap CPU pretokenization with GPU chunk processing for large-text batches only | `DONE (first pass)` |
+| DX-003 | Benchmark governance | hard CI gate runner for startup/count/encode/training/RSS/MBps/GPU memory with CUDA default-off | `DONE (first pass)` |
+| DX-004 | Packaging integrity | verify wheel-embedded native libs by hash and validate npm WASM packaging path | `DONE (first pass)` |
+
+## Competitor Study: gpt-tokenizer (2026-02-27)
+
+Reference repo: `upstream/gpt-tokenizer/`
+
+High-value ideas to port:
+- Public merge-cache controls (`setMergeCacheSize`, `clearMergeCache`) for long-running processes with repeated similar prompts.
+- Early-exit token limit checks (`isWithinTokenLimit`) to avoid full token materialization when request gating is the only goal.
+- Streaming encode/decode generator APIs to reduce peak allocations and improve UX for incremental processing.
+- Chat-format helpers + fixtures for model-specific framing behavior (useful for wrapper compatibility and regression tests).
+
+Important constraint:
+- Keep Zig core as the source of truth for perf-critical paths; JS/Python should remain thin wrappers over native exports.
 
 ## Experiment CPU-001 (2026-02-25)
 
@@ -939,3 +961,172 @@ Decode route decision:
 - final state keeps native decode path available but opt-in only (`TURBOTOKEN_NATIVE_DECODE_ENABLE=1`)
 
 Decision: `adopt` for session/native-payload refactor; `keep optional` for native decode route until it beats default Python decode on tracked workloads.
+
+## Experiment CPU-013 (2026-02-27)
+
+### Goal
+
+Cut allocator overhead in native full-ASCII BPE routes (`o200k` and `cl100k` letter-space path) by removing unnecessary key copies and range-buffer materialization.
+
+### Implementation
+
+- Updated `src/exports.zig`:
+  - removed per-piece key allocations/frees in ASCII piece caches:
+    - `countBpeAsciiO200kFromTable(...)`
+    - `countBpeAsciiLetterSpaceFromTable(...)`
+    - `turbotoken_encode_bpe_ascii_o200k_from_ranks(...)`
+    - `turbotoken_encode_bpe_ascii_letter_space_from_ranks(...)`
+  - switched letter-space encode/count to streaming iteration:
+    - `pretokenizer.nextAsciiLetterSpaceRange(...)`
+    - removed two-pass `splitAsciiLetterSpaceRanges(...)` + start/end array allocation path in these exports.
+- Trialed per-call arena scratch allocation for native piece encode/count in the same exports; reverted in the same pass after no cold-process gain on the tracked Hyperfine rows.
+- Retained Python `cl100k` full-route guard as explicit opt-in:
+  - `TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1`
+  - `TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1`
+
+### Commands
+
+```bash
+zig build test
+.venv/bin/python -m pytest -q python/tests/test_encoding.py python/tests/test_native_bridge.py
+bun test js/tests/smoke.test.ts
+hyperfine --warmup 3 --min-runs 12 \
+  --export-json bench/results/bench-cl100k-native-full-toggle-20260228-035411.json \
+  "TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('cl100k_base').count(text)\"" \
+  "TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('cl100k_base').count(text)\"" \
+  ".venv/bin/python -c \"import pathlib,tiktoken;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();len(tiktoken.get_encoding('cl100k_base').encode(text))\""
+hyperfine --warmup 3 --min-runs 12 \
+  --export-json bench/results/bench-o200k-native-full-toggle-20260228-035541.json \
+  "TURBOTOKEN_NATIVE_O200K_FULL_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').count(text)\"" \
+  "TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1 TURBOTOKEN_NATIVE_O200K_FULL_DISABLE=0 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').count(text)\"" \
+  ".venv/bin/python -c \"import pathlib,tiktoken;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();len(tiktoken.get_encoding('o200k_base').encode(text))\""
+```
+
+### Artifacts
+
+- `bench/results/bench-cl100k-native-full-toggle-20260228-035411.json`
+- `bench/results/bench-o200k-native-full-toggle-20260228-035541.json`
+
+### Result Summary
+
+Representative means:
+
+| Command | Mean |
+|---|---:|
+| `turbotoken` (`CL100K_FULL_DISABLE=1`) | `68.5 ms` |
+| `turbotoken` (`CL100K_FULL_ENABLE=1`) | `93.5 ms` |
+| `tiktoken` (`cl100k_base`, `len(encode())`) | `181.9 ms` |
+| `turbotoken` (`O200K_FULL_DISABLE=1`) | `68.0 ms` |
+| `turbotoken` (`O200K_FULL_ENABLE=1`) | `94.3 ms` |
+| `tiktoken` (`o200k_base`, `len(encode())`) | `261.6 ms` |
+
+Decision: `adopt` allocator/iterator cleanup; `keep optional` for `cl100k` full-route default.
+Reason: cold-process Hyperfine still shows forced full-route slower than default turbotoken path on both `cl100k_base` and `o200k_base`, despite correctness and reduced allocation pressure.
+
+## Experiment CPU-015 (2026-02-27)
+
+### Goal
+
+Reduce Python↔native overhead for inference hot paths by removing extra size-probe FFI calls when safe output upper bounds are known.
+
+### Implementation
+
+- Updated `python/turbotoken/_native.py` one-shot encode wrappers:
+  - `encode_bpe_from_ranks(...)`
+  - `encode_bpe_ascii_o200k_from_ranks(...)`
+  - `encode_bpe_ascii_letter_space_from_ranks(...)`
+- Each now allocates a single output buffer with `out_cap = len(data)` and performs one C ABI call.
+- Also updated one-shot training wrappers (upper bound `vocab_size - 256` merges):
+  - `train_bpe_from_chunk_counts(...)`
+  - `train_bpe_ascii_o200k(...)`
+  - `train_bpe_ascii_o200k_multi(...)`
+
+### Commands
+
+```bash
+zig build test
+.venv/bin/python -m pytest -q python/tests/test_native_bridge.py python/tests/test_training.py python/tests/test_encoding.py
+bun test js/tests/smoke.test.ts
+bun run scripts/bench-scalar-fallback.ts
+hyperfine --warmup 3 --min-runs 12 \
+  --export-json bench/results/bench-cl100k-native-full-toggle-20260228-050607.json \
+  "TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('cl100k_base').count(text)\"" \
+  "TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('cl100k_base').count(text)\""
+hyperfine --warmup 3 --min-runs 12 \
+  --export-json bench/results/bench-o200k-native-full-toggle-20260228-050621.json \
+  "TURBOTOKEN_NATIVE_O200K_FULL_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').count(text)\"" \
+  "TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1 TURBOTOKEN_NATIVE_O200K_FULL_DISABLE=0 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').count(text)\""
+```
+
+### Artifacts
+
+- `bench/results/bench-scalar-fallback-20260227-200639.json`
+- `bench/results/bench-cl100k-native-full-toggle-20260228-050607.json`
+- `bench/results/bench-o200k-native-full-toggle-20260228-050621.json`
+
+### Result Summary
+
+Compared to previous scalar snapshot (`bench-scalar-fallback-20260227-145659.json`):
+
+| Command | Before | After |
+|---|---:|---:|
+| `turbotoken-native-count-bpe-100kb` | `94.5 ms` | `92.9 ms` |
+| `turbotoken-native-encode-bpe-100kb` | `106.4 ms` | `94.0 ms` |
+
+Full-route toggle status remains unchanged on cold-process rows:
+- `cl100k_base` forced full route: `91.8 ms` vs default `66.7 ms`
+- `o200k_base` forced full route: `100.3 ms` vs default `68.1 ms`
+
+Decision: `adopt` one-shot wrapper changes; `keep optional` full-route defaults.
+
+## Experiment CPU-016 (2026-02-27)
+
+### Goal
+
+Speed up native training by parallelizing initial pair-state construction in Zig (`pair_counts` + `where_to_update`) and exposing thread control.
+
+### Implementation
+
+- Updated `src/trainer.zig`:
+  - added sharded parallel initial-state build with deterministic merge back into global maps.
+  - added worker auto-selection gates:
+    - `training_parallel_min_words = 1024`
+    - `training_parallel_min_bytes = 1_048_576`
+  - added thread override:
+    - `TURBOTOKEN_NATIVE_TRAIN_THREADS=<n>`
+  - retained sequential fallback for small corpora / single-thread / spawn-failure paths.
+- Added guard for oversized word index domain (`word_count > maxInt(u32)` -> `error.InvalidInput`) since word indices are stored as `u32` in update sets.
+
+### Commands
+
+```bash
+zig build test
+.venv/bin/python -m pytest -q python/tests/test_training.py python/tests/test_native_bridge.py python/tests/test_encoding.py
+hyperfine --warmup 2 --min-runs 8 \
+  --export-json bench/results/bench-training-direct-toggle-20260228-050720.json \
+  "TURBOTOKEN_TRAINING_BACKEND=native TURBOTOKEN_NATIVE_TRAINING_FORCE=1 TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1 TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=0 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();_,r=train_mergeable_ranks_from_iterator([text],vocab_size=320,pattern=None,min_frequency=2);assert len(r)>=256\"" \
+  "TURBOTOKEN_TRAINING_BACKEND=python TURBOTOKEN_NATIVE_TRAINING_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();_,r=train_mergeable_ranks_from_iterator([text],vocab_size=320,pattern=None,min_frequency=2);assert len(r)>=256\""
+hyperfine --warmup 2 --min-runs 8 \
+  --export-json bench/results/bench-training-native-threads-20260228-050832.json \
+  "TURBOTOKEN_TRAINING_BACKEND=native TURBOTOKEN_NATIVE_TRAINING_FORCE=1 TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1 TURBOTOKEN_NATIVE_TRAIN_THREADS=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();_,r=train_mergeable_ranks_from_iterator([text],vocab_size=320,pattern=None,min_frequency=2);assert len(r)>=256\"" \
+  "TURBOTOKEN_TRAINING_BACKEND=native TURBOTOKEN_NATIVE_TRAINING_FORCE=1 TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1 TURBOTOKEN_NATIVE_TRAIN_THREADS=8 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();_,r=train_mergeable_ranks_from_iterator([text],vocab_size=320,pattern=None,min_frequency=2);assert len(r)>=256\""
+```
+
+### Artifacts
+
+- `bench/results/bench-training-direct-toggle-20260228-050720.json`
+- `bench/results/bench-training-native-threads-20260228-050832.json`
+
+### Result Summary
+
+Representative means on 1MB/vocab320:
+
+| Command | Mean |
+|---|---:|
+| native direct (`backend=native`, force, direct-ascii) | `68.5 ms` |
+| python backend | `69.9 ms` |
+| native direct with `TURBOTOKEN_NATIVE_TRAIN_THREADS=1` | `70.4 ms` |
+| native direct with `TURBOTOKEN_NATIVE_TRAIN_THREADS=8` | `69.2 ms` |
+
+Decision: `adopt` parallel initial-state builder + thread override.
+Note: thread-count delta is small in this cold-process benchmark setup at vocab size 320.

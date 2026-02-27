@@ -17,6 +17,13 @@ interface TurbotokenWasmExports {
     outCap: number,
   ): number;
   turbotoken_count_bpe_from_ranks(rankPtr: number, rankLen: number, textPtr: number, textLen: number): number;
+  turbotoken_is_within_token_limit_bpe_from_ranks(
+    rankPtr: number,
+    rankLen: number,
+    textPtr: number,
+    textLen: number,
+    tokenLimit: number,
+  ): number;
   turbotoken_encode_bpe_from_ranks(
     rankPtr: number,
     rankLen: number,
@@ -263,6 +270,35 @@ export class WasmBridge {
           throw new Error("WASM turbotoken_count_bpe_from_ranks failed");
         }
         return count;
+      }),
+    );
+  }
+
+  isWithinTokenLimitBpeFromRanks(
+    rankPayload: Uint8Array,
+    input: string | Uint8Array,
+    tokenLimit: number,
+  ): number | false {
+    if (tokenLimit < 0) {
+      throw new Error("tokenLimit must be >= 0");
+    }
+    const bytes = this.toBytes(input);
+    return this.withBytes(rankPayload, (rankPtr, rankLen) =>
+      this.withBytes(bytes, (textPtr, textLen) => {
+        const result = this.exports.turbotoken_is_within_token_limit_bpe_from_ranks(
+          rankPtr,
+          rankLen,
+          textPtr,
+          textLen,
+          tokenLimit,
+        );
+        if (result === -2) {
+          return false;
+        }
+        if (result < 0) {
+          throw new Error("WASM turbotoken_is_within_token_limit_bpe_from_ranks failed");
+        }
+        return result;
       }),
     );
   }

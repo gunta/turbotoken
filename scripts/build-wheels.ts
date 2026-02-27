@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { commandExists, ensureDir, pythonExecutable, resolvePath, runCommand, section, writeJson, zigExecutable } from "./_lib";
 
@@ -22,6 +23,9 @@ interface TargetBuildResult {
   repackStderr: string;
   outputWheelPath: string | null;
   outputWheelBytes: number | null;
+  libSha256: string | null;
+  wheelLibSha256: string | null;
+  wheelLibPath: string | null;
 }
 
 function replaceWheelTag(filename: string, wheelTag: string): string {
@@ -41,6 +45,35 @@ function findBaseWheel(baseDir: string): string {
   return join(baseDir, candidate);
 }
 
+function clearWheels(dir: string): void {
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".whl")) {
+      continue;
+    }
+    rmSync(join(dir, name), { force: true });
+  }
+}
+
+function sha256File(path: string): string {
+  const hasher = createHash("sha256");
+  hasher.update(readFileSync(path));
+  return hasher.digest("hex");
+}
+
+function wheelEntrySha256(
+  python: string,
+  wheelPath: string,
+  entryPath: string,
+): string | null {
+  const script = `import hashlib\nimport sys\nimport zipfile\nwheel_path = sys.argv[1]\nentry_path = sys.argv[2]\nwith zipfile.ZipFile(wheel_path, "r") as zf:\n    data = zf.read(entry_path)\nprint(hashlib.sha256(data).hexdigest())\n`;
+  const result = runCommand(python, ["-c", script, wheelPath, entryPath], { allowFailure: true });
+  if (result.code !== 0) {
+    return null;
+  }
+  const digest = result.stdout.trim();
+  return digest.length > 0 ? digest : null;
+}
+
 section("Wheel build");
 
 const python = pythonExecutable();
@@ -51,6 +84,8 @@ const nativeDir = resolvePath("dist", "wheels", "native");
 ensureDir(outDir);
 ensureDir(baseDir);
 ensureDir(nativeDir);
+clearWheels(outDir);
+clearWheels(baseDir);
 
 const targets: TargetSpec[] = [
   { target: "aarch64-macos", wheelTag: "macosx_11_0_arm64", libRelativePath: "lib/libturbotoken.dylib" },
@@ -91,16 +126,20 @@ for (const item of targets) {
 
   const libSourcePath = resolvePath("dist", "wheels", "native", item.target, item.libRelativePath);
   const libBytes = existsSync(libSourcePath) ? statSync(libSourcePath).size : null;
+  const libSha256 = libBytes != null ? sha256File(libSourcePath) : null;
 
   let repackExitCode: number | null = null;
   let repackStdout = "";
   let repackStderr = "";
   let outputWheelPath: string | null = null;
   let outputWheelBytes: number | null = null;
+  let wheelLibSha256: string | null = null;
+  let wheelLibPath: string | null = null;
 
   if (crossBuild.code === 0 && libBytes !== null) {
     const outputWheelName = replaceWheelTag(baseWheelName, item.wheelTag);
     outputWheelPath = resolvePath("dist", "wheels", outputWheelName);
+    wheelLibPath = `turbotoken/.libs/${item.libRelativePath.split("/").at(-1) ?? "libturbotoken"}`;
 
     const repack = runCommand(
       python,
@@ -113,7 +152,7 @@ for (const item of targets) {
         "--lib-source",
         libSourcePath,
         "--lib-dest",
-        `turbotoken/.libs/${item.libRelativePath.split("/").at(-1) ?? "libturbotoken"}`,
+        wheelLibPath,
         "--wheel-tag",
         item.wheelTag,
       ],
@@ -126,14 +165,20 @@ for (const item of targets) {
 
     if (repack.code === 0 && outputWheelPath !== null && existsSync(outputWheelPath)) {
       outputWheelBytes = statSync(outputWheelPath).size;
+      if (wheelLibPath !== null) {
+        wheelLibSha256 = wheelEntrySha256(python, outputWheelPath, wheelLibPath);
+      }
+      if (wheelLibSha256 == null || wheelLibSha256 !== libSha256) {
+        repackExitCode = 1;
+        repackStderr = `${repackStderr}\nwheel embedded native lib hash mismatch for ${item.target}`.trim();
+      }
+      if (repackExitCode !== 0) {
+        failures += 1;
+      }
     } else {
       failures += 1;
     }
   } else {
-    failures += 1;
-  }
-
-  if (crossBuild.code !== 0) {
     failures += 1;
   }
 
@@ -150,6 +195,9 @@ for (const item of targets) {
     repackStderr,
     outputWheelPath,
     outputWheelBytes,
+    libSha256,
+    wheelLibSha256,
+    wheelLibPath,
   });
 }
 

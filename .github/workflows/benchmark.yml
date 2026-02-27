@@ -1,11 +1,106 @@
 name: Benchmark
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  benchmark:
+  benchmark-cpu-gates:
+    name: CPU Regression Gates
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO: run hyperfine benchmark suite"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Install uv + deps
+        run: |
+          python -m pip install -U pip uv
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e .[dev]
+          bun install
+
+      - name: Build native library
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Run benchmark governance gates (CPU)
+        env:
+          TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+        run: bun run scripts/ci-benchmark.ts --mode=cpu
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-cpu-results
+          path: bench/results/*.json
+
+  benchmark-metal-gates:
+    name: Metal Regression Gates
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Install uv + deps
+        run: |
+          python -m pip install -U pip uv
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e .[dev]
+          bun install
+
+      - name: Build native library
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Require GPU memory rows for Metal gate
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          src = Path('bench/ci-gates.json')
+          dst = Path('bench/ci-gates-metal.json')
+          payload = json.loads(src.read_text())
+          payload.setdefault('gpu', {})['requireGpuMemoryRows'] = True
+          dst.write_text(json.dumps(payload, indent=2) + '\n')
+          PY
+
+      - name: Run benchmark governance gates (Metal)
+        env:
+          TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+        run: bun run scripts/ci-benchmark.ts --mode=gpu --gates=bench/ci-gates-metal.json
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-metal-results
+          path: bench/results/*.json

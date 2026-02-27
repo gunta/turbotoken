@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "turbotoken monorepo scripts and JS wrapper",
+  "files": [
+    "js/src",
+    "zig-out/bin/turbotoken.wasm",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "test": "bun run scripts/test-all.ts",
     "test:js": "bun test js/tests/smoke.test.ts",
@@ -11,6 +17,7 @@
     "test:upstream-alias": "bun run scripts/test-upstream-alias.ts",
     "bench": "bun run scripts/bench-all.ts",
     "bench:cuda": "TURBOTOKEN_BENCH_INCLUDE_CUDA=1 bun run scripts/bench-all.ts",
+    "bench:chat": "bun run scripts/bench-chat.ts",
     "bench:scalar": "bun run scripts/bench-scalar-fallback.ts",
     "bench:pair-cache-hash": "bun run scripts/bench-pair-cache-hash.ts",
     "bench:encoder-queue": "bun run scripts/bench-encoder-queue.ts",
@@ -19,6 +26,7 @@
     "bench:native-pretokenizer:sme-auto": "bun run scripts/bench-native-pretokenizer.ts --mode=sme-auto",
     "bench:native-bytes": "bun run scripts/bench-native-byte-path.ts",
     "bench:gpu-crossover": "bun run scripts/bench-gpu-crossover.ts",
+    "bench:gpu-overlap": "bun run scripts/bench-gpu-overlap.ts",
     "bench:gpu-memory": "bun run scripts/bench-gpu-memory.ts",
     "bench:gpu-memory:cuda": "bun run scripts/bench-gpu-memory-cuda.ts",
     "bench:scorecard": "bun run scripts/bench-scorecard.ts",
@@ -32,12 +40,15 @@
     "build:all": "bun run scripts/build-all.ts",
     "build:wasm": "zig build wasm -Doptimize=ReleaseSmall",
     "build:wheels": "bun run scripts/build-wheels.ts",
+    "verify:npm-package": "bun run scripts/verify-npm-package.ts",
     "generate:pair-cache-seeds": "bun run scripts/generate-pair-cache-seeds.ts",
     "fixtures": "bun run scripts/generate-fixture.ts",
     "charts": "bun run scripts/generate-charts.ts",
-    "sync:upstream": "bun run scripts/sync-upstream.ts"
+    "sync:upstream": "bun run scripts/sync-upstream.ts",
+    "prepack": "bun run build:wasm && bun run verify:npm-package"
   },
   "devDependencies": {
+    "gpt-tokenizer": "3.4.0",
     "typescript": "^5.9.3"
   }
 }

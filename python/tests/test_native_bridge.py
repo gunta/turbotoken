@@ -148,6 +148,24 @@ def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     assert bridge.decode_bpe_from_ranks(ranks, encoded) == b"abb"
 
 
+def test_native_bridge_bpe_token_limit_wrapper_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    within = bridge.is_within_token_limit_bpe_from_ranks(ranks, b"abb", 2)
+    if within is None:
+        pytest.skip("native library does not expose token-limit BPE symbol")
+    assert within == 2
+    assert bridge.is_within_token_limit_bpe_from_ranks(ranks, b"abb", 1) is False
+
+    session = bridge.rank_session(ranks)
+    if session is not None:
+        assert session.is_within_token_limit_bpe(b"abb", 2) == 2
+        assert session.is_within_token_limit_bpe(b"abb", 1) is False
+
+
 def test_native_bridge_bpe_batch_wrapper_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:
@@ -255,3 +273,60 @@ def test_native_bridge_chunked_stitch_wrapper_when_available() -> None:
     if chunked is None:
         pytest.skip("native library does not expose chunked stitch symbol")
     assert chunked == exact
+
+
+def test_native_bridge_bpe_file_wrappers_when_available(tmp_path) -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    file_path = tmp_path / "sample.txt"
+    file_path.write_bytes(b"abb")
+
+    encoded = bridge.encode_bpe_file_from_ranks(ranks, file_path)
+    if encoded is None:
+        pytest.skip("native library does not expose file-path BPE symbols")
+    assert encoded == [2, 1]
+
+    counted = bridge.count_bpe_file_from_ranks(ranks, file_path)
+    if counted is None:
+        pytest.skip("native library does not expose file-path BPE count symbol")
+    assert counted == 2
+
+    within = bridge.is_within_token_limit_bpe_file_from_ranks(ranks, file_path, 2)
+    if within is None:
+        pytest.skip("native library does not expose file-path token-limit BPE symbol")
+    assert within == 2
+    assert bridge.is_within_token_limit_bpe_file_from_ranks(ranks, file_path, 1) is False
+
+    session = bridge.rank_session(ranks)
+    if session is not None:
+        assert session.encode_bpe_file(file_path) == [2, 1]
+        assert session.count_bpe_file(file_path) == 2
+        assert session.is_within_token_limit_bpe_file(file_path, 2) == 2
+        assert session.is_within_token_limit_bpe_file(file_path, 1) is False
+
+
+def test_native_bridge_ascii_letter_space_bpe_wrappers_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\nIA== 3\n"
+    data = b"ab ab"
+
+    counted = bridge.count_bpe_ascii_letter_space_from_ranks(ranks, data)
+    if counted is None:
+        pytest.skip("native library does not expose ascii-letter-space BPE count symbol")
+    assert counted == 3
+
+    encoded = bridge.encode_bpe_ascii_letter_space_from_ranks(ranks, data)
+    if encoded is None:
+        pytest.skip("native library does not expose ascii-letter-space BPE encode symbol")
+    assert encoded == [2, 3, 2]
+
+    session = bridge.rank_session(ranks)
+    if session is not None:
+        assert session.count_bpe_ascii_letter_space(data) == 3
+        assert session.encode_bpe_ascii_letter_space(data) == [2, 3, 2]

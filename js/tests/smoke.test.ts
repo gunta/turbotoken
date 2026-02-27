@@ -1,5 +1,8 @@
 import { existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { join } from "node:path";
 import { expect, test } from "bun:test";
 import {
   clearWasmCache,
@@ -15,6 +18,72 @@ test("fallback encoding roundtrip works before wasm/ranks are loaded", () => {
   const enc = getEncoding("o200k_base");
   const input = "hello";
   expect(enc.decode(enc.encode(input))).toBe(input);
+});
+
+test("fallback token-limit and generator helpers work before wasm is loaded", () => {
+  const enc = getEncoding("o200k_base");
+  const input = "hello";
+  const count = enc.countTokens(input);
+  expect(count).toBe(enc.count(input));
+  expect(enc.isWithinTokenLimit(input, count)).toBe(count);
+  expect(enc.isWithinTokenLimit(input, count - 1)).toBe(false);
+
+  const encodedChunks = [...enc.encodeGenerator(input)];
+  expect(encodedChunks.length).toBe(1);
+  const tokens = encodedChunks[0];
+  expect(tokens).toEqual(enc.encode(input));
+  expect([...enc.decodeGenerator(tokens)]).toEqual([input]);
+});
+
+test("fallback chat helpers are internally consistent", () => {
+  const enc = getEncoding("o200k_base");
+  const chat = [
+    { role: "system", content: "You are concise." },
+    { role: "user", content: "Hello tokenizer" },
+    { role: "assistant", content: "Hi." },
+  ];
+
+  const tokens = enc.encodeChat(chat);
+  const count = enc.countChat(chat);
+  expect(count).toBe(tokens.length);
+  expect(enc.countChatTokens(chat)).toBe(count);
+  expect(enc.isChatWithinTokenLimit(chat, count)).toBe(count);
+  expect(enc.isChatWithinTokenLimit(chat, count - 1)).toBe(false);
+
+  const chunks = [...enc.encodeChatGenerator(chat)];
+  const flattened = chunks.flat();
+  expect(flattened).toEqual(tokens);
+});
+
+test("chat template modes and custom templates are supported", () => {
+  const enc = getEncoding("o200k_base");
+  const chat = [{ role: "user", content: "hello" }];
+
+  const nativeTokens = enc.encodeChat(chat, { template: "turbotoken_v1" });
+  const compatTokens = enc.encodeChat(chat, { template: "im_tokens" });
+  expect(nativeTokens).not.toEqual(compatTokens);
+
+  const customTokens = enc.encodeChat(chat, {
+    template: {
+      messagePrefix: "<msg role='{role}'>",
+      messageSuffix: "</msg>",
+      assistantPrefix: "<msg role='{role}'>",
+    },
+  });
+  expect(customTokens.length).toBeGreaterThan(0);
+});
+
+test("file-path helpers are consistent with text helpers", async () => {
+  const enc = getEncoding("o200k_base");
+  const dir = mkdtempSync(join(tmpdir(), "turbotoken-js-"));
+  const filePath = join(dir, "sample.txt");
+  writeFileSync(filePath, "hello from file helper", "utf8");
+
+  const tokens = await enc.encodeFilePath(filePath);
+  const count = await enc.countFilePath(filePath);
+  expect(count).toBe(tokens.length);
+  expect(await enc.isFilePathWithinTokenLimit(filePath, count)).toBe(count);
+  expect(await enc.isFilePathWithinTokenLimit(filePath, count - 1)).toBe(false);
 });
 
 test("model helper maps GPT models", () => {

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cpu": {
+    "startupColdMaxMs": 300,
+    "encode1mbMaxMs": 450,
+    "count1mbMaxMs": 450,
+    "training100kbNativeMaxMs": 700,
+    "peakRssEncode1mbMaxMb": 700,
+    "encode1mbMinMiBPerSec": 2.0,
+    "count1mbMinMiBPerSec": 2.0
+  },
+  "gpu": {
+    "maxDeviceAllocatedMiB": 4096,
+    "minBpeDirectEncodeMiBPerSec": 1.0,
+    "requireGpuMemoryRows": false
+  }
+}

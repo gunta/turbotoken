@@ -1,9 +1,25 @@
-import { Encoding, type EncodingOptions } from "./encoding";
+import {
+  Encoding,
+  type ChatMessage,
+  type ChatOptions,
+  type ChatTemplate,
+  type ChatTemplateMode,
+  type EncodingOptions,
+} from "./encoding";
 import { listEncodingNames, modelToEncoding } from "./registry";
 import { clearWasmCache, loadWasm, type BpeMerge, type WasmLoadOptions, type WasmBridge } from "./wasm-loader";
 
 export { Encoding, listEncodingNames, loadWasm, clearWasmCache };
-export type { EncodingOptions, WasmLoadOptions, WasmBridge, BpeMerge };
+export type {
+  ChatMessage,
+  ChatOptions,
+  ChatTemplate,
+  ChatTemplateMode,
+  EncodingOptions,
+  WasmLoadOptions,
+  WasmBridge,
+  BpeMerge,
+};
 
 const textEncoder = new TextEncoder();
 

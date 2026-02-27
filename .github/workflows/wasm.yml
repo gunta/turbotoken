@@ -1,6 +1,9 @@
 name: WASM
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -8,4 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO: add wasm32-freestanding build and tests"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.1
+
+      - name: Install JS deps
+        run: bun install
+
+      - name: Build WASM
+        run: bun run build:wasm
+
+      - name: Verify npm/WASM artifact
+        run: bun run verify:npm-package
+
+      - name: Run JS smoke tests
+        run: bun test js/tests/smoke.test.ts

@@ -182,6 +182,17 @@ _hybrid_pool: ThreadPoolExecutor | None = None
 _hybrid_pool_lock = Lock()
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
 def _unpack_u32(ffi: Any, out: Any, written: int) -> list[int]:
     if written <= 0:
         return []
@@ -789,7 +800,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend accelerates UTF-8 byte-path primitives; BPE chunked stitch remains experimental and is enabled by device='metal' or by autoroute-v4 thresholds, with exactness guards to preserve baseline output when stitch kernels diverge. last_profile now includes per-op GPU memory telemetry fields.",
+        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. BPE chunked stitch remains experimental with exactness guards; last_profile includes per-op GPU memory telemetry fields.",
     }
 
 
@@ -892,14 +903,14 @@ def profile_last() -> dict[str, int] | None:
 
 def calibrate_autoroute(*, force: bool = False) -> dict[str, Any]:
     existing = _load_route_cache()
-    if existing is not None and not force and int(existing.get("version", 0)) >= 4:
+    if existing is not None and not force and int(existing.get("version", 0)) >= 5:
         return existing
 
     bridge = get_metal_bridge()
     native = get_native_bridge()
 
     payload: dict[str, Any] = {
-        "version": 4,
+        "version": 5,
         "generated_at": time.time(),
         "encode_use_metal_min_bytes": 1 << 60,
         "count_batch_use_metal_min_total_bytes": 1 << 60,
@@ -1077,12 +1088,21 @@ def _get_route_thresholds() -> tuple[int, int, int]:
         return 1 << 60, 1 << 60, 1 << 60
 
     cached = _load_route_cache()
-    if cached is None or int(cached.get("version", 0)) < 4:
+    if cached is None or int(cached.get("version", 0)) < 5:
         cached = calibrate_autoroute(force=True)
 
     encode_threshold = int(cached.get("encode_use_metal_min_bytes", 1 << 60))
     count_threshold = int(cached.get("count_batch_use_metal_min_total_bytes", 1 << 60))
     bpe_threshold = int(cached.get("bpe_use_metal_min_piece_bytes", 1 << 60))
+
+    # Default policy keeps Metal routes focused on large crossover workloads.
+    encode_floor = _env_int("TURBOTOKEN_METAL_ENCODE_MIN_BYTES", 1 << 60, minimum=1)
+    count_floor = _env_int("TURBOTOKEN_METAL_COUNT_MIN_TOTAL_BYTES", 1 << 60, minimum=1)
+    bpe_floor = _env_int("TURBOTOKEN_METAL_BPE_MIN_BYTES", 1_048_576, minimum=1)
+
+    encode_threshold = max(encode_threshold, encode_floor)
+    count_threshold = max(count_threshold, count_floor)
+    bpe_threshold = max(bpe_threshold, bpe_floor)
     return encode_threshold, count_threshold, bpe_threshold
 
 
@@ -1158,6 +1178,8 @@ def count_nonzero_bytes_batch_auto(batch: Sequence[bytes]) -> tuple[list[int] | 
 def bpe_route_backend(piece_len_bytes: int) -> str:
     if piece_len_bytes <= 0:
         return "none"
+    if os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {"1", "true", "yes"}:
+        return "metal"
     if os.environ.get("TURBOTOKEN_METAL_AUTOROUTE_DISABLE", "").strip().lower() in {"1", "true", "yes"}:
         return "native"
 

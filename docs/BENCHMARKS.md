@@ -27,6 +27,17 @@
 7. **Charts auto-generated** from JSON via `bun run scripts/generate-charts.ts`
 8. **Canonical scorecard** consolidated from latest artifacts via `bun run bench:scorecard` (`bench/results/bench-scorecard-*.json`, `bench/charts/scorecard.md`)
 
+### CI Governance
+- `scripts/ci-benchmark.ts` is the benchmark gate runner used by CI (`bun run bench:ci`).
+- CUDA is intentionally **off by default** in governance paths; enable only on demand with explicit CUDA scripts (`bench:cuda`, `bench:modal:cuda`).
+- Hard gate thresholds live in `bench/ci-gates.json` and currently cover:
+  - startup cold (`hello` first encode)
+  - encode/count 1MB latency
+  - encode/count 1MB throughput (MiB/s)
+  - training latency (native 100KB fixture)
+  - peak RSS for 1MB encode
+  - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
+
 ### Test Machine
 
 | Property | Value |
@@ -119,9 +130,9 @@ Direct queue strategy comparison from:
 Decision for now:
 - switched default queue mode to `full-bucket` (env var unset) in `src/encoder.zig`.
 - keep explicit override controls (`TURBOTOKEN_ENCODER_QUEUE=hybrid|full-bucket`).
-- latest full-pass scalar fallback (`bench/results/bench-scalar-fallback-20260227-145659.json`) remains substantially improved vs pre-switch baseline (`bench/results/bench-scalar-fallback-20260227-131921.json`):
-  - native count 100KB: `177.1 ms -> 94.5 ms` (~46.6% faster)
-  - native encode 100KB: `223.1 ms -> 106.4 ms` (~52.3% faster)
+- latest full-pass scalar fallback (`bench/results/bench-scalar-fallback-20260227-200639.json`) remains substantially improved vs pre-switch baseline (`bench/results/bench-scalar-fallback-20260227-131921.json`):
+  - native count 100KB: `177.1 ms -> 92.9 ms` (~47.5% faster)
+  - native encode 100KB: `223.1 ms -> 94.0 ms` (~57.9% faster)
 
 ---
 
@@ -249,7 +260,7 @@ Outputs include:
 - auto-route backend decisions
 - per-run low-level profile counters (CPU ns + GPU ns + dispatch geometry)
 - persisted auto-route thresholds in `~/.cache/turbotoken/metal/autoroute-v1.json`
-  - cache payload schema version: `4`
+  - cache payload schema version: `5`
 - long-mode metadata (`long_mode.enabled`, `bench_sizes`) for reproducible optional heavy runs
 
 Current calibration summary on this machine:
@@ -268,24 +279,40 @@ Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 
 ---
 
+## Latest CPU+GPU Overlap Matrix (2026-02-28, macOS ARM64)
+
+- artifact: `bench/results/bench-gpu-overlap-1772224466624.json`
+- command: `bun run scripts/bench-gpu-overlap.ts`
+- workload: 1MB `o200k_base` texts in batch mode (`TURBOTOKEN_GPU_OVERLAP_BATCH`, default `4`)
+
+What this measures:
+- CPU-only baseline: `encode_batch(...)`
+- Metal non-overlap: `encode_gpu(device=\"metal\", strict_verify=False)` with overlap pipeline disabled
+- Metal overlap: same call with CPU pretokenize overlap enabled (`TURBOTOKEN_GPU_OVERLAP_ENABLE=1`)
+
+Note:
+- This path is intentionally scoped to **large-text crossover** behavior; small/medium pieces remain routed to CPU/native by default.
+
+---
+
 ## Baseline Measurements (Competitors)
 
 > Measured on our M4 Max. These are the numbers to beat.
-> Status: `PARTIAL` -- Python competitor + startup + memory rows are now measured; JS/WASM rows remain pending.
+> Status: `PARTIAL` -- Python competitor rows plus selected Bun JS (`gpt-tokenizer`) rows, startup, and memory are measured; broader JS/WASM matrix is still pending.
 
 Artifacts for this pass:
-- `bench/results/bench-competitors-python-encode-20260227-145342.json`
-- `bench/results/bench-competitors-python-decode-20260227-145503.json`
-- `bench/results/bench-competitors-python-count-20260227-145553.json`
+- `bench/results/bench-competitors-python-encode-20260227-170426.json`
+- `bench/results/bench-competitors-python-decode-20260227-170602.json`
+- `bench/results/bench-competitors-python-count-20260227-170704.json`
 - commands:
   - `bun run scripts/bench-competitors.ts`
 Training baseline artifacts:
 - `bench/results/bench-training-python-20260227-145645.json` (english-100kb, vocab=320)
 - command: `bun run bench:training`
 Startup + memory artifacts:
-- `bench/results/bench-startup-cold-20260227-145147.json`
-- `bench/results/bench-startup-warm-20260227-145218.json`
-- `bench/results/bench-ram-1772204354545.json`
+- `bench/results/bench-startup-cold-20260227-170257.json`
+- `bench/results/bench-startup-warm-20260227-170333.json`
+- `bench/results/bench-ram-1772212098947.json`
 WASM + binary artifacts:
 - `bench/results/bench-wasm-1772204362471.json`
 - `bench/results/bench-binary-size-1772204354576.json`
@@ -299,6 +326,7 @@ Wheel build artifact:
 | tiktoken (latest) | 215.9 ms | 220.6 ms | 226.2 ms | 277.7 ms | 3.60 | `pip install tiktoken` |
 | rs-bpe | 74.4 ms | 71.6 ms | 77.1 ms | 93.0 ms | 10.75 | `pip install rs-bpe` |
 | TokenDagger (`tokendagger`) | 499.7 ms | 507.4 ms | 493.8 ms | 493.6 ms | 2.03 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| gpt-tokenizer (Bun) | 164.8 ms | 169.1 ms | 170.4 ms | 185.7 ms | 5.38 | `bun add --dev gpt-tokenizer` |
 | HuggingFace tokenizers | PENDING | PENDING | PENDING | PENDING | PENDING | `tokenizers` package installed, but no stable built-in `o200k_base` entry-point |
 | turbotoken (default CPU path) | 68.0 ms | 44.1 ms | 45.9 ms | 76.5 ms | 13.08 | local editable package (`python/`) |
 | turbotoken (Metal GPU route) | 98.2 ms | 100.3 ms | 123.6 ms | 182.0 ms | 5.50 | `Encoding.encode_gpu(device="metal", strict_verify=False)` |
@@ -310,6 +338,7 @@ Wheel build artifact:
 | tiktoken | 213.5 ms | 225.9 ms | 222.7 ms | `tiktoken.get_encoding("o200k_base").decode(...)` |
 | rs-bpe | 82.2 ms | 85.0 ms | 84.2 ms | `openai.o200k_base().decode(...)` |
 | TokenDagger (`tokendagger`) | 493.5 ms | 497.3 ms | 511.0 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| gpt-tokenizer (Bun) | 175.4 ms | 173.9 ms | 179.1 ms | `decode(tokens)` |
 | turbotoken (default CPU path) | 66.1 ms | 69.9 ms | 77.9 ms | `turbotoken.get_encoding("o200k_base").decode(...)` |
 
 ### Python Tokenizers (count-only, o200k_base)
@@ -319,7 +348,51 @@ Wheel build artifact:
 | tiktoken (via `len(encode())`) | 213.9 ms | 221.4 ms | 280.5 ms | 3.56 | `len(encode())` |
 | rs-bpe `count()` | 71.3 ms | 73.9 ms | 87.0 ms | 11.50 | `openai.o200k_base().count(...)` |
 | TokenDagger (`tokendagger`, via `len(encode())`) | 486.9 ms | 490.4 ms | 499.3 ms | 2.00 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| gpt-tokenizer (Bun, `countTokens`) | 169.2 ms | 175.9 ms | 182.6 ms | 5.48 | `countTokens(text)` |
 | turbotoken `count()` | 67.1 ms | 45.0 ms | 71.0 ms | 14.09 | No-alloc fast path |
+
+### Experimental CL100K Native-Full Toggle (count-only, 1MB ASCII)
+
+Artifact:
+- `bench/results/bench-cl100k-native-full-toggle-20260228-035411.json`
+- `bench/results/bench-cl100k-native-full-toggle-20260228-050607.json`
+
+| Command | Mean |
+|---|---:|
+| `turbotoken` (`TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1`) | `68.5 ms` |
+| `turbotoken` (`TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1`) | `93.5 ms` |
+| `tiktoken` (`cl100k_base`, `len(encode())`) | `181.9 ms` |
+
+Decision:
+- keep `TURBOTOKEN_NATIVE_CL100K_FULL_ENABLE=1` path opt-in only for now (still slower in cold-process benchmark mode).
+
+### Experimental O200K Native-Full Toggle (count-only, 1MB ASCII)
+
+Artifact:
+- `bench/results/bench-o200k-native-full-toggle-20260228-035541.json`
+- `bench/results/bench-o200k-native-full-toggle-20260228-050621.json`
+
+| Command | Mean |
+|---|---:|
+| `turbotoken` (`TURBOTOKEN_NATIVE_O200K_FULL_DISABLE=1`) | `68.0 ms` |
+| `turbotoken` (`TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1`) | `94.3 ms` |
+| `tiktoken` (`o200k_base`, `len(encode())`) | `261.6 ms` |
+
+Decision:
+- keep `TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1` path opt-in only for now (forced full route remains slower than default CPU route in cold-process benchmark mode).
+
+### Experimental Native-Direct Training Toggle (1MB, vocab size 320)
+
+Artifact:
+- `bench/results/bench-training-direct-toggle-20260228-050720.json`
+
+| Command | Mean |
+|---|---:|
+| `turbotoken` native direct (`TURBOTOKEN_TRAINING_BACKEND=native`, `TURBOTOKEN_NATIVE_TRAINING_FORCE=1`, `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1`) | `68.5 ms` |
+| `turbotoken` python backend (`TURBOTOKEN_TRAINING_BACKEND=python`) | `69.9 ms` |
+
+Threading A/B artifact:
+- `bench/results/bench-training-native-threads-20260228-050832.json` (`TURBOTOKEN_NATIVE_TRAIN_THREADS=1` vs `8`; near parity in this cold-process setup).
 
 ### Python BPE Training (regex+BPE trainer, vocab size 320)
 
@@ -336,6 +409,7 @@ Notes:
 - native-experimental toggles:
   - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1` enables native ASCII O200K range splitting before chunk counting
   - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1` enables direct native ASCII O200K `text -> train` path for single-text list inputs
+  - `TURBOTOKEN_NATIVE_TRAIN_THREADS=<n>` overrides native trainer shard worker count (default auto)
   - both remain opt-in because current benchmark rows above did not improve with these toggles enabled
   - latest direct-path artifacts:
     - `bench/results/bench-training-python-20260225-233812.json` (100kb)
@@ -348,7 +422,7 @@ Notes:
 | Competitor | 1KB | 10KB | 100KB | Runtime | WASM Size | Source |
 |-----------|-----|------|-------|---------|-----------|--------|
 | tiktoken (npm, WASM) | PENDING | PENDING | PENDING | Node.js | PENDING | `npm install tiktoken` |
-| gpt-tokenizer | PENDING | PENDING | PENDING | Node.js | N/A (pure JS) | `npm install gpt-tokenizer` |
+| gpt-tokenizer | 164.8 ms | 169.1 ms | 170.4 ms | Bun | N/A (pure JS) | `bun add --dev gpt-tokenizer` |
 | wasm-tokenizer | PENDING | PENDING | PENDING | Node.js | PENDING | `npm install wasm-tokenizer` |
 | turbotoken (Zig WASM scalar) | PENDING | PENDING | PENDING | Node.js | PENDING | Phase 3 |
 | turbotoken (Zig WASM SIMD) | PENDING | PENDING | PENDING | Node.js | PENDING | Phase 3 |
@@ -358,32 +432,55 @@ Notes:
 
 | Competitor | Cold Start | Warm Start | Notes |
 |-----------|-----------|-----------|-------|
-| tiktoken (Python) | 210.4 ms | 208.5 ms | Rust extension load + merge table |
-| rs-bpe (Python) | 68.1 ms | 66.1 ms | `openai.o200k_base().encode("hello")` |
-| turbotoken (Python) | 64.4 ms | 64.1 ms | local editable package (`python/`) |
-| TokenDagger (`tokendagger`) | 486.3 ms | 489.0 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| tiktoken (Python) | 208.6 ms | 211.8 ms | Rust extension load + merge table |
+| rs-bpe (Python) | 68.7 ms | 65.6 ms | `openai.o200k_base().encode("hello")` |
+| turbotoken (Python) | 69.7 ms | 66.4 ms | local editable package (`python/`) |
+| TokenDagger (`tokendagger`) | 489.7 ms | 485.3 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| gpt-tokenizer (Bun) | 158.4 ms | 159.2 ms | `encode("hello")` via Bun ESM import |
 | tiktoken (npm) | PENDING | PENDING | WASM instantiation |
 | turbotoken (npm WASM) | PENDING | PENDING | Zig WASM instantiation |
-| turbotoken CLI | 95.2 ms | 98.8 ms | `python -m turbotoken.cli encode hello --encoding o200k_base` |
+| turbotoken CLI | 95.4 ms | 97.3 ms | `python -m turbotoken.cli encode hello --encoding o200k_base` |
 
 Notes:
-- cold artifact: `bench/results/bench-startup-cold-20260227-145147.json`
-- warm artifact: `bench/results/bench-startup-warm-20260227-145218.json`
+- cold artifact: `bench/results/bench-startup-cold-20260227-170257.json`
+- warm artifact: `bench/results/bench-startup-warm-20260227-170333.json`
 - warm mode here means same command measured after Hyperfine warmup (`--warmup 10`), not a long-lived daemon process.
+
+### Chat Helper APIs (encode/count/token-limit)
+
+Artifact:
+- `bench/results/bench-chat-helpers-20260227-174446.json`
+- command: `bun run scripts/bench-chat.ts`
+
+| Helper operation | turbotoken (Python) | gpt-tokenizer (Bun, gpt-4o module) |
+|---|---:|---:|
+| chat encode | 72.8 ms | 160.5 ms |
+| chat count | 70.8 ms | 156.4 ms |
+| chat is-within-token-limit | 101.9 ms | 153.8 ms |
+
+Notes:
+- Fixture: `bench/fixtures/chat-sample.json`
+- Helpers are template-driven with wrapper-level APIs:
+  - Python: `Encoding.encode_chat(...)`, `count_chat(...)`, `is_chat_within_token_limit(...)`
+  - JS: `Encoding.encodeChat(...)`, `countChat(...)`, `isChatWithinTokenLimit(...)`
+- `template="turbotoken_v1"` is the project-native default framing.
+- This benchmark runs turbotoken with `template="im_tokens"` for compatibility-style comparison against `gpt-tokenizer`.
+- `o200k_harmony` is an encoding alias in the registry; it is separate from chat template framing.
 
 ### Memory Usage (Peak RSS during o200k_base encode of 1MB)
 
 | Competitor | Peak RSS | Delta over baseline | Notes |
 |-----------|----------|-------------------|-------|
-| Python baseline (empty) | 14.52 MB | -- | `python3 -c "pass"` |
-| tiktoken | 115.14 MB | +100.63 MB | `tiktoken.get_encoding("o200k_base").encode(text)` |
-| rs-bpe | 90.28 MB | +75.77 MB | `openai.o200k_base().encode(text)` |
-| TokenDagger (`tokendagger`) | 241.52 MB | +227.00 MB | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
-| turbotoken | 31.23 MB | +16.72 MB | `turbotoken.get_encoding("o200k_base").encode(text)` |
-| turbotoken CLI | 40.70 MB | +26.19 MB | `python -m turbotoken.cli encode - --encoding o200k_base` |
+| Python baseline (empty) | 14.48 MB | -- | `python3 -c "pass"` |
+| tiktoken | 114.80 MB | +100.31 MB | `tiktoken.get_encoding("o200k_base").encode(text)` |
+| rs-bpe | 90.58 MB | +76.09 MB | `openai.o200k_base().encode(text)` |
+| TokenDagger (`tokendagger`) | 242.39 MB | +227.91 MB | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| gpt-tokenizer (Bun) | 190.97 MB | +176.48 MB | `encode(text)` |
+| turbotoken | 30.53 MB | +16.05 MB | `turbotoken.get_encoding("o200k_base").encode(text)` |
+| turbotoken CLI | 39.80 MB | +25.31 MB | `python -m turbotoken.cli encode - --encoding o200k_base` |
 
 Notes:
-- artifact: `bench/results/bench-ram-1772204354545.json`
+- artifact: `bench/results/bench-ram-1772212098947.json`
 - each row is median peak RSS across 5 runs (`TURBOTOKEN_RAM_RUNS=5` default)
 
 ### Binary / Package Size

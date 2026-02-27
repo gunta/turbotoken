@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const PairKey = u64;
 
@@ -97,6 +98,263 @@ fn pairLeft(key: PairKey) u32 {
 
 fn pairRight(key: PairKey) u32 {
     return @as(u32, @intCast(key & 0xFFFF_FFFF));
+}
+
+const training_parallel_min_words: usize = 1_024;
+const training_parallel_min_bytes: usize = 1_048_576;
+
+fn trainingThreadOverride() ?usize {
+    const allocator = std.heap.page_allocator;
+    const raw = std.process.getEnvVarOwned(allocator, "TURBOTOKEN_NATIVE_TRAIN_THREADS") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => return null,
+        else => return null,
+    };
+    defer allocator.free(raw);
+    const parsed = std.fmt.parseInt(usize, raw, 10) catch return null;
+    if (parsed == 0) {
+        return null;
+    }
+    return parsed;
+}
+
+fn chooseTrainingWorkerCount(word_count: usize, total_bytes: usize) usize {
+    if (word_count == 0) {
+        return 1;
+    }
+    if (comptime builtin.single_threaded or builtin.os.tag == .freestanding) {
+        return 1;
+    }
+    if (word_count < training_parallel_min_words or total_bytes < training_parallel_min_bytes) {
+        return 1;
+    }
+
+    const cpu_count = std.Thread.getCpuCount() catch 1;
+    const capped_cpu = @max(@as(usize, 1), cpu_count);
+    const target = if (trainingThreadOverride()) |override|
+        @max(@as(usize, 1), @min(override, capped_cpu))
+    else
+        capped_cpu;
+    return @max(@as(usize, 1), @min(target, word_count));
+}
+
+fn buildInitialPairStateSequential(
+    allocator: std.mem.Allocator,
+    words: []const Word,
+    counts: []const u32,
+    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
+    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+) !void {
+    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    defer seen_pairs.deinit(allocator);
+
+    for (0..words.len) |word_idx| {
+        const weight = counts[word_idx];
+        const ids = words[word_idx].ids.items;
+        if (weight == 0 or ids.len < 2) {
+            continue;
+        }
+        seen_pairs.clearRetainingCapacity();
+        for (0..ids.len - 1) |idx| {
+            const key = pairKey(ids[idx], ids[idx + 1]);
+            const count_entry = try pair_counts.getOrPut(allocator, key);
+            if (!count_entry.found_existing) {
+                count_entry.value_ptr.* = 0;
+            }
+            count_entry.value_ptr.* += @as(i64, @intCast(weight));
+
+            const seen_entry = try seen_pairs.getOrPut(allocator, key);
+            if (!seen_entry.found_existing) {
+                const pos_entry = try where_to_update.getOrPut(allocator, key);
+                if (!pos_entry.found_existing) {
+                    pos_entry.value_ptr.* = .{};
+                }
+                _ = try pos_entry.value_ptr.getOrPut(allocator, @as(u32, @intCast(word_idx)));
+            }
+        }
+    }
+}
+
+const PairInitShard = struct {
+    start: usize,
+    end: usize,
+    words: []const Word,
+    counts: []const u32,
+    arena: std.heap.ArenaAllocator,
+    pair_counts: std.AutoHashMapUnmanaged(PairKey, i64) = .{},
+    where_to_update: std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)) = .{},
+    failed: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
+    fn init(
+        base_allocator: std.mem.Allocator,
+        words: []const Word,
+        counts: []const u32,
+        start: usize,
+        end: usize,
+    ) PairInitShard {
+        return .{
+            .start = start,
+            .end = end,
+            .words = words,
+            .counts = counts,
+            .arena = std.heap.ArenaAllocator.init(base_allocator),
+        };
+    }
+
+    fn allocator(self: *PairInitShard) std.mem.Allocator {
+        return self.arena.allocator();
+    }
+
+    fn deinit(self: *PairInitShard) void {
+        const local_allocator = self.allocator();
+        var iter = self.where_to_update.valueIterator();
+        while (iter.next()) |set_map| {
+            set_map.deinit(local_allocator);
+        }
+        self.where_to_update.deinit(local_allocator);
+        self.pair_counts.deinit(local_allocator);
+        self.arena.deinit();
+        self.* = undefined;
+    }
+};
+
+fn pairInitShardWorker(shard: *PairInitShard) void {
+    const allocator = shard.allocator();
+    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    defer seen_pairs.deinit(allocator);
+
+    var word_idx = shard.start;
+    while (word_idx < shard.end) : (word_idx += 1) {
+        const weight = shard.counts[word_idx];
+        const ids = shard.words[word_idx].ids.items;
+        if (weight == 0 or ids.len < 2) {
+            continue;
+        }
+        seen_pairs.clearRetainingCapacity();
+        for (0..ids.len - 1) |idx| {
+            const key = pairKey(ids[idx], ids[idx + 1]);
+            const count_entry = shard.pair_counts.getOrPut(allocator, key) catch {
+                shard.failed.store(1, .release);
+                return;
+            };
+            if (!count_entry.found_existing) {
+                count_entry.value_ptr.* = 0;
+            }
+            count_entry.value_ptr.* += @as(i64, @intCast(weight));
+
+            const seen_entry = seen_pairs.getOrPut(allocator, key) catch {
+                shard.failed.store(1, .release);
+                return;
+            };
+            if (!seen_entry.found_existing) {
+                const pos_entry = shard.where_to_update.getOrPut(allocator, key) catch {
+                    shard.failed.store(1, .release);
+                    return;
+                };
+                if (!pos_entry.found_existing) {
+                    pos_entry.value_ptr.* = .{};
+                }
+                _ = pos_entry.value_ptr.getOrPut(allocator, @as(u32, @intCast(word_idx))) catch {
+                    shard.failed.store(1, .release);
+                    return;
+                };
+            }
+        }
+    }
+}
+
+fn mergePairInitShard(
+    allocator: std.mem.Allocator,
+    shard: *const PairInitShard,
+    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
+    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+) !void {
+    var count_iter = shard.pair_counts.iterator();
+    while (count_iter.next()) |entry| {
+        const target = try pair_counts.getOrPut(allocator, entry.key_ptr.*);
+        if (!target.found_existing) {
+            target.value_ptr.* = 0;
+        }
+        target.value_ptr.* += entry.value_ptr.*;
+    }
+
+    var where_iter = shard.where_to_update.iterator();
+    while (where_iter.next()) |entry| {
+        const key = entry.key_ptr.*;
+        const target = try where_to_update.getOrPut(allocator, key);
+        if (!target.found_existing) {
+            target.value_ptr.* = .{};
+        }
+        var word_iter = entry.value_ptr.keyIterator();
+        while (word_iter.next()) |word_idx_ptr| {
+            _ = try target.value_ptr.getOrPut(allocator, word_idx_ptr.*);
+        }
+    }
+}
+
+fn buildInitialPairState(
+    allocator: std.mem.Allocator,
+    words: []const Word,
+    counts: []const u32,
+    total_bytes: usize,
+    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
+    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+) !void {
+    if (builtin.single_threaded or builtin.os.tag == .freestanding) {
+        try buildInitialPairStateSequential(allocator, words, counts, pair_counts, where_to_update);
+        return;
+    }
+
+    const worker_count = chooseTrainingWorkerCount(words.len, total_bytes);
+    if (worker_count <= 1 or words.len <= 1) {
+        try buildInitialPairStateSequential(allocator, words, counts, pair_counts, where_to_update);
+        return;
+    }
+
+    const shard_count = @min(worker_count, words.len);
+    const chunk = (words.len + shard_count - 1) / shard_count;
+    var shards = try allocator.alloc(PairInitShard, shard_count);
+    defer allocator.free(shards);
+    for (0..shard_count) |idx| {
+        const start = idx * chunk;
+        const end = @min(words.len, start + chunk);
+        shards[idx] = PairInitShard.init(std.heap.page_allocator, words, counts, start, end);
+    }
+    defer for (shards) |*shard| shard.deinit();
+
+    var threads = allocator.alloc(std.Thread, shard_count - 1) catch {
+        try buildInitialPairStateSequential(allocator, words, counts, pair_counts, where_to_update);
+        return;
+    };
+    defer allocator.free(threads);
+
+    var spawned: usize = 0;
+    var spawn_failed = false;
+    for (1..shard_count) |idx| {
+        threads[spawned] = std.Thread.spawn(.{}, pairInitShardWorker, .{&shards[idx]}) catch {
+            spawn_failed = true;
+            break;
+        };
+        spawned += 1;
+    }
+
+    pairInitShardWorker(&shards[0]);
+    for (threads[0..spawned]) |*thread| {
+        thread.join();
+    }
+
+    if (spawn_failed) {
+        try buildInitialPairStateSequential(allocator, words, counts, pair_counts, where_to_update);
+        return;
+    }
+    for (shards) |*shard| {
+        if (shard.failed.load(.acquire) != 0) {
+            return error.OutOfMemory;
+        }
+    }
+
+    for (shards) |*shard| {
+        try mergePairInitShard(allocator, shard, pair_counts, where_to_update);
+    }
 }
 
 const Word = struct {
@@ -222,6 +480,9 @@ pub fn trainMergesFromChunkCounts(
     if (word_count == 0) {
         return try allocator.alloc(Merge, 0);
     }
+    if (word_count > std.math.maxInt(u32)) {
+        return error.InvalidInput;
+    }
 
     // Training is allocation-heavy; use a scratch arena to amortize allocator overhead.
     var arena_state = std.heap.ArenaAllocator.init(allocator);
@@ -248,35 +509,14 @@ pub fn trainMergesFromChunkCounts(
         }
         where_to_update.deinit(work_allocator);
     }
-
-    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
-    defer seen_pairs.deinit(work_allocator);
-
-    for (0..word_count) |word_idx| {
-        const weight = counts[word_idx];
-        const ids = words[word_idx].ids.items;
-        if (weight == 0 or ids.len < 2) {
-            continue;
-        }
-        seen_pairs.clearRetainingCapacity();
-        for (0..ids.len - 1) |idx| {
-            const key = pairKey(ids[idx], ids[idx + 1]);
-            const count_entry = try pair_counts.getOrPut(work_allocator, key);
-            if (!count_entry.found_existing) {
-                count_entry.value_ptr.* = 0;
-            }
-            count_entry.value_ptr.* += @as(i64, @intCast(weight));
-
-            const seen_entry = try seen_pairs.getOrPut(work_allocator, key);
-            if (!seen_entry.found_existing) {
-                const pos_entry = try where_to_update.getOrPut(work_allocator, key);
-                if (!pos_entry.found_existing) {
-                    pos_entry.value_ptr.* = .{};
-                }
-                _ = try pos_entry.value_ptr.getOrPut(work_allocator, @as(u32, @intCast(word_idx)));
-            }
-        }
-    }
+    try buildInitialPairState(
+        work_allocator,
+        words,
+        counts,
+        chunks.len,
+        &pair_counts,
+        &where_to_update,
+    );
 
     const max_merges = vocab_size - 256;
     var merges = std.ArrayListUnmanaged(Merge){};

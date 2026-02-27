@@ -25,10 +25,19 @@ function hasPythonModule(name: string): boolean {
   return result.code === 0;
 }
 
+function hasBunModule(name: string): boolean {
+  const result = runShell(
+    `bun -e "import('${name}').then(()=>process.exit(0)).catch(()=>process.exit(1))"`,
+    { allowFailure: true },
+  );
+  return result.code === 0;
+}
+
 const availability = {
   tiktoken: hasPythonModule("tiktoken"),
   rs_bpe: hasPythonModule("rs_bpe"),
   token_dagger: hasPythonModule("token_dagger") || hasPythonModule("tokendagger"),
+  gpt_tokenizer: hasBunModule("gpt-tokenizer"),
   tokenizers: hasPythonModule("tokenizers"),
 };
 
@@ -83,6 +92,10 @@ function encodeCommandForTokenDagger(path: string): string {
   return `${python} -c "import importlib.util,pathlib;text=pathlib.Path('${path}').read_text()\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nenc.encode(text)"`;
 }
 
+function encodeCommandForGptTokenizer(path: string): string {
+  return `bun -e "import { encode } from 'gpt-tokenizer'; import { readFileSync } from 'node:fs'; const text = readFileSync('${path}', 'utf8'); encode(text);"`;
+}
+
 function decodeCommandForTurbotoken(tokens: number): string {
   return `${python} -c "import json,pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];get_encoding('o200k_base').decode(vals)"`;
 }
@@ -99,6 +112,10 @@ function decodeCommandForTokenDagger(tokens: number): string {
   return `${python} -c "import importlib.util,json,pathlib;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}]\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nenc.decode(vals)"`;
 }
 
+function decodeCommandForGptTokenizer(tokens: number): string {
+  return `bun -e "import { decode } from 'gpt-tokenizer'; import { readFileSync } from 'node:fs'; const vals = JSON.parse(readFileSync('${decodeFixturePath}', 'utf8')).slice(0, ${tokens}); decode(vals);"`;
+}
+
 function countCommandForTurbotoken(path: string): string {
   return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').count(text)"`;
 }
@@ -113,6 +130,10 @@ function countCommandForRsBpe(path: string): string {
 
 function countCommandForTokenDagger(path: string): string {
   return `${python} -c "import importlib.util,pathlib;text=pathlib.Path('${path}').read_text()\nif importlib.util.find_spec('token_dagger'):\n import token_dagger as td\n enc=td.get_encoding('o200k_base')\nelse:\n import tiktoken,tokendagger as td\n base=tiktoken.get_encoding('o200k_base')\n enc=td.Encoding('o200k_base',pat_str=base._pat_str,mergeable_ranks=base._mergeable_ranks,special_tokens=base._special_tokens)\nlen(enc.encode(text))"`;
+}
+
+function countCommandForGptTokenizer(path: string): string {
+  return `bun -e "import { countTokens } from 'gpt-tokenizer'; import { readFileSync } from 'node:fs'; const text = readFileSync('${path}', 'utf8'); countTokens(text);"`;
 }
 
 const encodeCommands: BenchCommand[] = [];
@@ -143,6 +164,12 @@ for (const fixture of textFixtures) {
     encodeCommands.push({
       name: `python-encode-${fixture.id}-token-dagger`,
       command: encodeCommandForTokenDagger(fixture.path),
+    });
+  }
+  if (availability.gpt_tokenizer) {
+    encodeCommands.push({
+      name: `js-encode-${fixture.id}-gpt-tokenizer`,
+      command: encodeCommandForGptTokenizer(fixture.path),
     });
   }
 }
@@ -179,6 +206,12 @@ for (const size of decodeTokenSizes) {
       command: decodeCommandForTokenDagger(size),
     });
   }
+  if (availability.gpt_tokenizer) {
+    decodeCommands.push({
+      name: `js-decode-${size}-tok-gpt-tokenizer`,
+      command: decodeCommandForGptTokenizer(size),
+    });
+  }
 }
 
 const countFixtures = [
@@ -210,6 +243,12 @@ for (const fixture of countFixtures) {
       command: countCommandForTokenDagger(fixture.path),
     });
   }
+  if (availability.gpt_tokenizer) {
+    countCommands.push({
+      name: `js-count-${fixture.id}-gpt-tokenizer`,
+      command: countCommandForGptTokenizer(fixture.path),
+    });
+  }
 }
 
 let failures = 0;
@@ -223,7 +262,7 @@ if (encodeCommands.length > 0) {
       fixtures: textFixtures,
       availability,
       metalAvailable,
-      note: "Competitor matrix uses Python package APIs on o200k_base where available; this repository remains in scaffold/early implementation stage.",
+      note: "Competitor matrix uses Python package APIs on o200k_base where available and Bun JS API rows for gpt-tokenizer; this repository remains in scaffold/early implementation stage.",
     },
   });
 }

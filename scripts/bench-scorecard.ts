@@ -108,9 +108,11 @@ function refreshBenchmarks(): void {
     "scripts/bench-startup.ts",
     "scripts/bench-comparison.ts",
     "scripts/bench-competitors.ts",
+    "scripts/bench-chat.ts",
     "scripts/bench-training.ts",
     "scripts/bench-ram.ts",
     "scripts/bench-gpu-memory.ts",
+    "scripts/bench-gpu-overlap.ts",
   ];
   for (const script of scripts) {
     section(`Running ${script}`);
@@ -139,9 +141,11 @@ const artifacts = {
   competitorsEncode: latestResultPath("bench-competitors-python-encode"),
   competitorsDecode: latestResultPath("bench-competitors-python-decode"),
   competitorsCount: latestResultPath("bench-competitors-python-count"),
+  chatHelpers: latestResultPath("bench-chat-helpers"),
   training: latestResultPath("bench-training-python"),
   ram: latestResultPath("bench-ram"),
   gpuMemory: latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"] }),
+  gpuOverlap: latestResultPath("bench-gpu-overlap"),
 };
 
 const startupCold = loadJson(artifacts.startupCold);
@@ -150,9 +154,11 @@ const comparison = loadJson(artifacts.comparison);
 const competitorsEncode = loadJson(artifacts.competitorsEncode);
 const competitorsDecode = loadJson(artifacts.competitorsDecode);
 const competitorsCount = loadJson(artifacts.competitorsCount);
+const chatHelpers = loadJson(artifacts.chatHelpers);
 const training = loadJson(artifacts.training);
 const ram = loadJson(artifacts.ram);
 const gpuMemory = loadJson(artifacts.gpuMemory);
+const gpuOverlap = loadJson(artifacts.gpuOverlap);
 
 const encode100kbRows: CompetitorRow[] = [
   { name: "turbotoken", meanMs: commandMeanMs(competitorsEncode, "python-encode-100kb-turbotoken") ?? Number.NaN },
@@ -160,6 +166,7 @@ const encode100kbRows: CompetitorRow[] = [
   { name: "tiktoken", meanMs: commandMeanMs(competitorsEncode, "python-encode-100kb-tiktoken") ?? Number.NaN },
   { name: "rs-bpe", meanMs: commandMeanMs(competitorsEncode, "python-encode-100kb-rs-bpe") ?? Number.NaN },
   { name: "token-dagger", meanMs: commandMeanMs(competitorsEncode, "python-encode-100kb-token-dagger") ?? Number.NaN },
+  { name: "gpt-tokenizer", meanMs: commandMeanMs(competitorsEncode, "js-encode-100kb-gpt-tokenizer") ?? Number.NaN },
 ];
 
 const encode1mbRows: CompetitorRow[] = [
@@ -171,6 +178,7 @@ const encode1mbRows: CompetitorRow[] = [
   { name: "tiktoken", meanMs: commandMeanMs(competitorsEncode, "python-encode-1mb-tiktoken") ?? Number.NaN },
   { name: "rs-bpe", meanMs: commandMeanMs(competitorsEncode, "python-encode-1mb-rs-bpe") ?? Number.NaN },
   { name: "token-dagger", meanMs: commandMeanMs(competitorsEncode, "python-encode-1mb-token-dagger") ?? Number.NaN },
+  { name: "gpt-tokenizer", meanMs: commandMeanMs(competitorsEncode, "js-encode-1mb-gpt-tokenizer") ?? Number.NaN },
 ].map((row) => ({ ...row, mibPerSec: toMiBPerSec(row.meanMs, 1.0) }));
 
 const count1mbRows: CompetitorRow[] = [
@@ -183,6 +191,10 @@ const count1mbRows: CompetitorRow[] = [
   {
     name: "token-dagger",
     meanMs: commandMeanMs(competitorsCount, "python-count-1mb-token-dagger-via-len-encode") ?? Number.NaN,
+  },
+  {
+    name: "gpt-tokenizer",
+    meanMs: commandMeanMs(competitorsCount, "js-count-1mb-gpt-tokenizer") ?? Number.NaN,
   },
 ].map((row) => ({ ...row, mibPerSec: toMiBPerSec(row.meanMs, 1.0) }));
 
@@ -203,6 +215,10 @@ const decode128kRows: CompetitorRow[] = [
     name: "token-dagger",
     meanMs: commandMeanMs(competitorsDecode, "python-decode-128000-tok-token-dagger") ?? Number.NaN,
   },
+  {
+    name: "gpt-tokenizer",
+    meanMs: commandMeanMs(competitorsDecode, "js-decode-128000-tok-gpt-tokenizer") ?? Number.NaN,
+  },
 ];
 
 const training100kbRows: CompetitorRow[] = [
@@ -218,6 +234,21 @@ const training100kbRows: CompetitorRow[] = [
   { name: "minbpe", meanMs: commandMeanMs(training, "python-train-english-100kb-minbpe-v320") ?? Number.NaN },
 ].map((row) => ({ ...row, mibPerSec: toMiBPerSec(row.meanMs, 100 / 1024) }));
 
+const chatEncodeRows: CompetitorRow[] = [
+  { name: "turbotoken", meanMs: commandMeanMs(chatHelpers, "python-chat-encode-turbotoken") ?? Number.NaN },
+  { name: "gpt-tokenizer", meanMs: commandMeanMs(chatHelpers, "js-chat-encode-gpt-tokenizer") ?? Number.NaN },
+];
+
+const chatCountRows: CompetitorRow[] = [
+  { name: "turbotoken", meanMs: commandMeanMs(chatHelpers, "python-chat-count-turbotoken") ?? Number.NaN },
+  { name: "gpt-tokenizer", meanMs: commandMeanMs(chatHelpers, "js-chat-count-gpt-tokenizer") ?? Number.NaN },
+];
+
+const chatLimitRows: CompetitorRow[] = [
+  { name: "turbotoken", meanMs: commandMeanMs(chatHelpers, "python-chat-limit-turbotoken") ?? Number.NaN },
+  { name: "gpt-tokenizer", meanMs: commandMeanMs(chatHelpers, "js-chat-limit-gpt-tokenizer") ?? Number.NaN },
+];
+
 const comparisonTurbo = commandMeanMs(comparison, "turbotoken-encode-100kb");
 const comparisonTiktoken = commandMeanMs(comparison, "tiktoken-encode-100kb");
 const comparisonSpeedup =
@@ -231,12 +262,14 @@ const startup = {
     tiktokenMs: commandMeanMs(startupCold, "python-startup-tiktoken"),
     rsBpeMs: commandMeanMs(startupCold, "python-startup-rs-bpe"),
     tokenDaggerMs: commandMeanMs(startupCold, "python-startup-token-dagger"),
+    gptTokenizerMs: commandMeanMs(startupCold, "js-startup-gpt-tokenizer"),
   },
   warm: {
     turbotokenMs: commandMeanMs(startupWarm, "python-startup-turbotoken"),
     tiktokenMs: commandMeanMs(startupWarm, "python-startup-tiktoken"),
     rsBpeMs: commandMeanMs(startupWarm, "python-startup-rs-bpe"),
     tokenDaggerMs: commandMeanMs(startupWarm, "python-startup-token-dagger"),
+    gptTokenizerMs: commandMeanMs(startupWarm, "js-startup-gpt-tokenizer"),
   },
 };
 
@@ -270,6 +303,21 @@ const gpuMemoryRows = (() => {
   }));
 })();
 
+const gpuOverlapRows = (() => {
+  if (!gpuOverlap) {
+    return [];
+  }
+  const rows = gpuOverlap["rows"];
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(isRecord).map((row) => ({
+    name: String(row["name"] ?? "unknown"),
+    meanMs: toNumber(row["mean_ms"]),
+    mibPerSec: toNumber(row["mib_per_s"]),
+  }));
+})();
+
 const payload: JsonMap = {
   generatedAt: new Date().toISOString(),
   artifacts,
@@ -289,11 +337,19 @@ const payload: JsonMap = {
     count1mbWinner: winner(count1mbRows),
     decode128k: decode128kRows,
     decode128kWinner: winner(decode128kRows),
+    chatEncode: chatEncodeRows,
+    chatEncodeWinner: winner(chatEncodeRows),
+    chatCount: chatCountRows,
+    chatCountWinner: winner(chatCountRows),
+    chatLimit: chatLimitRows,
+    chatLimitWinner: winner(chatLimitRows),
     training100kb: training100kbRows,
     training100kbWinner: winner(training100kbRows),
     ram1mbEncodePeakRss: ramRows,
     gpuMemory,
     gpuMemoryRows,
+    gpuOverlap,
+    gpuOverlapRows,
   },
 };
 
@@ -315,16 +371,25 @@ const markdownRows = [
     startup.cold.turbotokenMs == null ? "n/a" : `${round(startup.cold.turbotokenMs, 1)} ms`
   }`,
   `- cold tiktoken: ${startup.cold.tiktokenMs == null ? "n/a" : `${round(startup.cold.tiktokenMs, 1)} ms`}`,
+  `- cold gpt-tokenizer (Bun): ${
+    startup.cold.gptTokenizerMs == null ? "n/a" : `${round(startup.cold.gptTokenizerMs, 1)} ms`
+  }`,
   `- warm turbotoken: ${
     startup.warm.turbotokenMs == null ? "n/a" : `${round(startup.warm.turbotokenMs, 1)} ms`
   }`,
   `- warm tiktoken: ${startup.warm.tiktokenMs == null ? "n/a" : `${round(startup.warm.tiktokenMs, 1)} ms`}`,
+  `- warm gpt-tokenizer (Bun): ${
+    startup.warm.gptTokenizerMs == null ? "n/a" : `${round(startup.warm.gptTokenizerMs, 1)} ms`
+  }`,
   ``,
   `## Winners`,
   `- encode 100KB: ${winner(encode100kbRows)?.name ?? "n/a"}`,
   `- encode 1MB: ${winner(encode1mbRows)?.name ?? "n/a"}`,
   `- count 1MB: ${winner(count1mbRows)?.name ?? "n/a"}`,
   `- decode 128K tok: ${winner(decode128kRows)?.name ?? "n/a"}`,
+  `- chat encode: ${winner(chatEncodeRows)?.name ?? "n/a"}`,
+  `- chat count: ${winner(chatCountRows)?.name ?? "n/a"}`,
+  `- chat limit: ${winner(chatLimitRows)?.name ?? "n/a"}`,
   `- training 100KB: ${winner(training100kbRows)?.name ?? "n/a"}`,
   ``,
   `## Artifacts`,

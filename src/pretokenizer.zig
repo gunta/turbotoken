@@ -350,50 +350,53 @@ pub fn splitAsciiLetterSpaceRanges(
 
     var range_count: usize = 0;
     var idx: usize = 0;
-
-    while (idx < text.len) {
-        const byte = text[idx];
-        if (isAsciiLetter(byte)) {
-            var end = idx + 1;
-            while (end < text.len and isAsciiLetter(text[end])) : (end += 1) {}
-            try emitRange(out_starts_opt, out_ends_opt, range_count, idx, end);
-            range_count += 1;
-            idx = end;
-            continue;
-        }
-
-        if (byte == ' ') {
-            var run_end = idx + 1;
-            while (run_end < text.len and text[run_end] == ' ') : (run_end += 1) {}
-
-            // Match the common tiktoken family regex behavior for ASCII words:
-            // extra spaces stay standalone and exactly one leading space attaches to the word.
-            if (run_end < text.len and isAsciiLetter(text[run_end])) {
-                const extra_spaces = (run_end - idx) - 1;
-                if (extra_spaces > 0) {
-                    const extra_end = idx + extra_spaces;
-                    try emitRange(out_starts_opt, out_ends_opt, range_count, idx, extra_end);
-                    range_count += 1;
-                }
-
-                var word_end = run_end + 1;
-                while (word_end < text.len and isAsciiLetter(text[word_end])) : (word_end += 1) {}
-                try emitRange(out_starts_opt, out_ends_opt, range_count, run_end - 1, word_end);
-                range_count += 1;
-                idx = word_end;
-                continue;
-            }
-
-            try emitRange(out_starts_opt, out_ends_opt, range_count, idx, run_end);
-            range_count += 1;
-            idx = run_end;
-            continue;
-        }
-
-        return error.UnsupportedInput;
+    while (try nextAsciiLetterSpaceRange(text, &idx)) |range| {
+        try emitRange(out_starts_opt, out_ends_opt, range_count, range.start, range.end);
+        range_count += 1;
     }
 
     return range_count;
+}
+
+pub fn nextAsciiLetterSpaceRange(text: []const u8, idx: *usize) SplitError!?AsciiRange {
+    if (idx.* >= text.len) {
+        return null;
+    }
+
+    const start = idx.*;
+    const byte = text[start];
+    if (isAsciiLetter(byte)) {
+        var end = start + 1;
+        while (end < text.len and isAsciiLetter(text[end])) : (end += 1) {}
+        idx.* = end;
+        return AsciiRange{ .start = start, .end = end };
+    }
+
+    if (byte == ' ') {
+        var run_end = start + 1;
+        while (run_end < text.len and text[run_end] == ' ') : (run_end += 1) {}
+
+        // Match the common tiktoken family regex behavior for ASCII words:
+        // extra spaces stay standalone and exactly one leading space attaches to the word.
+        if (run_end < text.len and isAsciiLetter(text[run_end])) {
+            const extra_spaces = (run_end - start) - 1;
+            if (extra_spaces > 0) {
+                const extra_end = start + extra_spaces;
+                idx.* = extra_end;
+                return AsciiRange{ .start = start, .end = extra_end };
+            }
+
+            var word_end = run_end + 1;
+            while (word_end < text.len and isAsciiLetter(text[word_end])) : (word_end += 1) {}
+            idx.* = word_end;
+            return AsciiRange{ .start = run_end - 1, .end = word_end };
+        }
+
+        idx.* = run_end;
+        return AsciiRange{ .start = start, .end = run_end };
+    }
+
+    return error.UnsupportedInput;
 }
 
 pub fn splitAsciiO200kRanges(
@@ -530,6 +533,23 @@ test "split ascii letter/space ranges rejects unsupported bytes" {
         error.UnsupportedInput,
         splitAsciiLetterSpaceRanges("hello, world", &starts, &ends),
     );
+}
+
+test "next ascii letter/space range iterator matches split helper output" {
+    const input = "hello  world   again";
+    var starts: [8]u32 = undefined;
+    var ends: [8]u32 = undefined;
+    const written = try splitAsciiLetterSpaceRanges(input, &starts, &ends);
+
+    var idx: usize = 0;
+    var out_idx: usize = 0;
+    while (try nextAsciiLetterSpaceRange(input, &idx)) |range| {
+        try std.testing.expect(out_idx < written);
+        try std.testing.expectEqual(@as(usize, starts[out_idx]), range.start);
+        try std.testing.expectEqual(@as(usize, ends[out_idx]), range.end);
+        out_idx += 1;
+    }
+    try std.testing.expectEqual(written, out_idx);
 }
 
 test "split ascii o200k ranges handles words punctuation and newlines" {

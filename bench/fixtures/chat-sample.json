@@ -1,0 +1,18 @@
+[
+  {
+    "role": "system",
+    "content": "You are a helpful assistant that writes concise benchmark notes."
+  },
+  {
+    "role": "user",
+    "content": "Summarize tokenizer benchmark priorities in 2 bullet points."
+  },
+  {
+    "role": "assistant",
+    "content": "- Max throughput on common corpora.\n- Strict compatibility and predictable memory use."
+  },
+  {
+    "role": "user",
+    "content": "Now include startup latency and memory metrics."
+  }
+]
