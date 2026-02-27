@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#if defined(__ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 static NSString *const kKernelSource =
     @"#include <metal_stdlib>\n"
@@ -666,6 +669,39 @@ static uint32_t bpe_rounds_per_submit(void) {
     return (uint32_t)parsed;
 }
 
+static void cpu_widen_u8_to_u32(
+    const unsigned char *input,
+    size_t input_len,
+    uint32_t *out_tokens
+) {
+    if (input_len == 0 || input == NULL || out_tokens == NULL) {
+        return;
+    }
+#if defined(__ARM_NEON)
+    size_t idx = 0;
+    for (; idx + 16 <= input_len; idx += 16) {
+        const uint8x16_t bytes = vld1q_u8(input + idx);
+        const uint16x8_t lo16 = vmovl_u8(vget_low_u8(bytes));
+        const uint16x8_t hi16 = vmovl_u8(vget_high_u8(bytes));
+        const uint32x4_t lo0 = vmovl_u16(vget_low_u16(lo16));
+        const uint32x4_t lo1 = vmovl_u16(vget_high_u16(lo16));
+        const uint32x4_t hi0 = vmovl_u16(vget_low_u16(hi16));
+        const uint32x4_t hi1 = vmovl_u16(vget_high_u16(hi16));
+        vst1q_u32(out_tokens + idx, lo0);
+        vst1q_u32(out_tokens + idx + 4, lo1);
+        vst1q_u32(out_tokens + idx + 8, hi0);
+        vst1q_u32(out_tokens + idx + 12, hi1);
+    }
+    for (; idx < input_len; idx += 1) {
+        out_tokens[idx] = (uint32_t)input[idx];
+    }
+#else
+    for (size_t idx = 0; idx < input_len; idx += 1) {
+        out_tokens[idx] = (uint32_t)input[idx];
+    }
+#endif
+}
+
 static bool init_metal_locked(void) {
     if (g_initialized) {
         return g_device != nil &&
@@ -1101,6 +1137,126 @@ long turbotoken_metal_encode_utf8_bytes(
     g_last_encode_bytes = (uint64_t)in_bytes;
     g_last_encode_dispatch_threads = (uint64_t)dispatch_threads;
     update_memory_profile_locked((uint64_t)in_bytes + (uint64_t)out_bytes);
+    pthread_mutex_unlock(&g_state_lock);
+    return (long)input_len;
+}
+
+long turbotoken_metal_encode_utf8_bytes_hybrid(
+    const unsigned char *input,
+    size_t input_len,
+    size_t split_index,
+    uint32_t *out_tokens,
+    size_t out_cap
+) {
+    if (input_len > UINT32_MAX) {
+        return -1;
+    }
+    if (input_len > 0 && input == NULL) {
+        return -1;
+    }
+    if (out_tokens == NULL || out_cap == 0) {
+        return (long)input_len;
+    }
+    if (out_cap < input_len) {
+        return -1;
+    }
+    if (input_len == 0) {
+        return 0;
+    }
+    if (split_index == 0 || split_index >= input_len) {
+        return turbotoken_metal_encode_utf8_bytes(input, input_len, out_tokens, out_cap);
+    }
+
+    const size_t left_len = split_index;
+    const size_t right_len = input_len - split_index;
+
+    pthread_mutex_lock(&g_state_lock);
+    if (!init_metal_locked()) {
+        pthread_mutex_unlock(&g_state_lock);
+        return -1;
+    }
+
+    const NSUInteger in_bytes = (NSUInteger)right_len;
+    const NSUInteger out_bytes = (NSUInteger)right_len * sizeof(uint32_t);
+    const uint64_t cpu_start_ns = monotonic_now_ns();
+
+    id<MTLBuffer> input_buffer = [g_device newBufferWithBytesNoCopy:(void *)(input + split_index)
+                                                              length:in_bytes
+                                                             options:MTLResourceStorageModeShared
+                                                         deallocator:nil];
+    if (input_buffer == nil) {
+        if (!ensure_buffer_locked(&g_input_buffer, &g_input_capacity, in_bytes, "input")) {
+            pthread_mutex_unlock(&g_state_lock);
+            return -1;
+        }
+        memcpy([g_input_buffer contents], input + split_index, in_bytes);
+        input_buffer = g_input_buffer;
+    }
+
+    bool needs_output_copy = false;
+    id<MTLBuffer> output_buffer = [g_device newBufferWithBytesNoCopy:(void *)(out_tokens + split_index)
+                                                               length:out_bytes
+                                                              options:MTLResourceStorageModeShared
+                                                          deallocator:nil];
+    if (output_buffer == nil) {
+        if (!ensure_buffer_locked(&g_output_u32_buffer, &g_output_u32_capacity, out_bytes, "output")) {
+            pthread_mutex_unlock(&g_state_lock);
+            return -1;
+        }
+        output_buffer = g_output_u32_buffer;
+        needs_output_copy = true;
+    }
+
+    id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
+    if (command_buffer == nil) {
+        set_error_locked("failed to create command buffer");
+        pthread_mutex_unlock(&g_state_lock);
+        return -1;
+    }
+
+    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+    if (encoder == nil) {
+        set_error_locked("failed to create compute command encoder");
+        pthread_mutex_unlock(&g_state_lock);
+        return -1;
+    }
+
+    const uint32_t total_len_u32 = (uint32_t)right_len;
+    [encoder setComputePipelineState:g_encode_pipeline];
+    [encoder setBuffer:input_buffer offset:0 atIndex:0];
+    [encoder setBuffer:output_buffer offset:0 atIndex:1];
+    [encoder setBytes:&total_len_u32 length:sizeof(total_len_u32) atIndex:2];
+
+    const NSUInteger bytes_per_thread = kEncodeBytesPerThread;
+    const NSUInteger dispatch_threads = (in_bytes + bytes_per_thread - 1) / bytes_per_thread;
+    const MTLSize grid = MTLSizeMake(dispatch_threads, 1, 1);
+    const MTLSize threads = encode_threads_per_group_for(g_encode_pipeline);
+    [encoder dispatchThreads:grid threadsPerThreadgroup:threads];
+    [encoder endEncoding];
+
+    [command_buffer commit];
+
+    cpu_widen_u8_to_u32(input, left_len, out_tokens);
+
+    [command_buffer waitUntilCompleted];
+    if ([command_buffer status] != MTLCommandBufferStatusCompleted) {
+        NSError *error = [command_buffer error];
+        set_error_ns_locked("hybrid encode command failed", error);
+        pthread_mutex_unlock(&g_state_lock);
+        return -1;
+    }
+
+    if (needs_output_copy) {
+        memcpy(out_tokens + split_index, [output_buffer contents], out_bytes);
+    }
+
+    const uint64_t cpu_end_ns = monotonic_now_ns();
+    g_last_encode_cpu_ns = (cpu_end_ns >= cpu_start_ns) ? (cpu_end_ns - cpu_start_ns) : 0;
+    g_last_encode_gpu_ns = command_buffer_gpu_ns(command_buffer);
+    g_last_encode_bytes = (uint64_t)input_len;
+    g_last_encode_dispatch_threads = (uint64_t)dispatch_threads;
+    update_memory_profile_locked(
+        (uint64_t)input_len + ((uint64_t)input_len * (uint64_t)sizeof(uint32_t)));
     pthread_mutex_unlock(&g_state_lock);
     return (long)input_len;
 }

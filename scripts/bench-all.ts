@@ -24,10 +24,21 @@ const scripts = [
   "scripts/bench-wasm.ts",
   "scripts/bench-gpu.ts",
   "scripts/bench-gpu-memory.ts",
-  "scripts/bench-gpu-memory-cuda.ts",
   "scripts/bench-gpu-crossover.ts",
   "scripts/generate-charts.ts",
 ];
+
+const includeCuda = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_BENCH_INCLUDE_CUDA ?? "").trim().toLowerCase(),
+);
+
+if (includeCuda) {
+  const crossoverIndex = scripts.indexOf("scripts/bench-gpu-crossover.ts");
+  const insertAt = crossoverIndex >= 0 ? crossoverIndex : scripts.length;
+  scripts.splice(insertAt, 0, "scripts/bench-gpu-memory-cuda.ts");
+} else {
+  console.log("Skipping CUDA benchmark by default (set TURBOTOKEN_BENCH_INCLUDE_CUDA=1 to enable)");
+}
 
 let failures = 0;
 

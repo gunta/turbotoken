@@ -16,7 +16,9 @@
 - **`wc -c`** -- binary/wheel size comparison
 
 ### Principles
-1. **All benchmarks are reproducible** via `bun run scripts/bench-all.ts`
+1. **Core local benchmarks are reproducible** via `bun run scripts/bench-all.ts` (`bun run bench`)
+   - CUDA rows are opt-in via `bun run bench:cuda`
+   - Paid Modal CUDA runs are opt-in via `bun run bench:modal:cuda`
 2. **Hyperfine runs minimum 10 iterations** with 3 warmup runs
 3. **Shell overhead correction** enabled (Hyperfine's `--shell=none` for fast commands)
 4. **Same input data** for all competitors (fixtures in `bench/fixtures/`)
@@ -47,94 +49,102 @@ Local benchmark host details (from `sysctl` / `uname`):
 
 ---
 
-## Latest Measured Run (2026-02-26, macOS ARM64)
+## Latest Measured Run (2026-02-27, macOS ARM64)
 
-This is the latest full `bench-all` pass after decode + ASCII-path optimization loops. Artifacts:
+This is the latest full default `bench-all` pass (`bun run bench`, CUDA skipped by default). Artifacts:
 
-- `bench/results/bench-startup-cold-20260226-104547.json`
-- `bench/results/bench-count-20260226-104658.json`
-- `bench/results/bench-encode-20260226-104702.json`
-- `bench/results/bench-bigfile-20260226-104721.json`
-- `bench/results/bench-comparison-20260226-104730.json`
-- `bench/results/bench-competitors-python-encode-20260226-104738.json`
-- `bench/results/bench-competitors-python-decode-20260226-104857.json`
-- `bench/results/bench-competitors-python-count-20260226-104947.json`
-- `bench/results/bench-training-python-20260226-105038.json`
+- `bench/results/bench-startup-cold-20260227-145147.json`
+- `bench/results/bench-startup-warm-20260227-145218.json`
+- `bench/results/bench-count-20260227-145300.json`
+- `bench/results/bench-encode-20260227-145305.json`
+- `bench/results/bench-decode-20260227-145309.json`
+- `bench/results/bench-bigfile-20260227-145324.json`
+- `bench/results/bench-parallel-20260227-145329.json`
+- `bench/results/bench-comparison-20260227-145334.json`
+- `bench/results/bench-competitors-python-encode-20260227-145342.json`
+- `bench/results/bench-competitors-python-decode-20260227-145503.json`
+- `bench/results/bench-competitors-python-count-20260227-145553.json`
+- `bench/results/bench-training-python-20260227-145645.json`
 
 | Workload | Mean |
 |---|---:|
-| startup (import + first encode) | 61.5 ms |
-| count 100KB | 44.6 ms |
-| encode 100KB | 40.8 ms |
-| encode 1MB | 68.4 ms |
+| startup cold (import + first encode) | 64.4 ms |
+| startup warm | 64.1 ms |
+| count 100KB | 44.5 ms |
+| encode 100KB | 46.1 ms |
+| decode 100KB-equivalent | 59.7 ms |
+| encode 1MB | 72.4 ms |
+| parallel count (512 items, 4 workers) | 206.0 ms |
 
-Comparison (`bench-comparison-20260226-104730.json`):
-- turbotoken encode 100KB: 40.1 ms
-- tiktoken encode 100KB: 202.5 ms
-- turbotoken ran ~5.05x faster on this workload in this run.
+Comparison (`bench-comparison-20260227-145334.json`):
+- turbotoken encode 100KB: 43.4 ms
+- tiktoken encode 100KB: 215.9 ms
+- turbotoken ran ~4.98x faster on this workload in this run.
 
 ---
 
-## Latest Pair-Cache Hash A/B (2026-02-25, macOS ARM64)
+## Latest Pair-Cache Hash A/B (2026-02-27, macOS ARM64)
 
 Direct hash strategy comparison from:
-- `bench/results/bench-pair-cache-hash-20260225-182315.json`
+- `bench/results/bench-pair-cache-hash-20260227-145710.json`
 - run command: `bun run scripts/bench-pair-cache-hash.ts`
 - env switch used per row: `TURBOTOKEN_PAIR_CACHE_HASH=rapidhash|crc32`
 
 | Operation | `rapidhash` mean | `crc32` mean | Relative |
 |---|---:|---:|---:|
-| native count BPE 100KB | 1.147 s | 1.104 s | crc32 ~3.8% faster in this run |
-| native encode BPE 100KB | 1.463 s | 1.429 s | crc32 ~2.3% faster in this run |
+| native count BPE 100KB | 148.1 ms | 162.6 ms | rapidhash ~8.9% faster in this run |
+| native encode BPE 100KB | 158.7 ms | 159.3 ms | rapidhash ~0.4% faster in this run |
 
 Decision for now:
-- default to `crc32` on AArch64+CRC and `rapidhash` on other targets.
+- default remains `crc32` on AArch64+CRC and `rapidhash` on other targets.
 - keep both explicit overrides for A/B checks (`TURBOTOKEN_PAIR_CACHE_HASH=rapidhash|crc32`).
+- this 100KB pass favors `rapidhash`; larger-file A/B still favors the current default policy.
 
 ---
 
-## Latest Encoder Queue A/B (2026-02-25, macOS ARM64)
+## Latest Encoder Queue A/B (2026-02-27, macOS ARM64)
 
 Direct queue strategy comparison from:
-- `bench/results/bench-encoder-queue-20260225-180932.json`
-- `bench/results/bench-encoder-queue-20260225-181051.json`
+- `bench/results/bench-encoder-queue-20260227-145729.json`
 - run command: `bun run scripts/bench-encoder-queue.ts`
 - env switch used per row: `TURBOTOKEN_ENCODER_QUEUE=hybrid|full-bucket`
 
-Representative rerun (`...181051.json`):
-
 | Operation | `hybrid` mean | `full-bucket` mean | Relative |
 |---|---:|---:|---:|
-| native count BPE 100KB | 1.110 s | 1.113 s | full-bucket ~0.3% slower |
-| native encode BPE 100KB | 1.478 s | 1.465 s | full-bucket ~0.9% faster |
+| native count BPE 100KB | 146.4 ms | 142.6 ms | full-bucket ~2.6% faster |
+| native encode BPE 100KB | 162.0 ms | 152.8 ms | full-bucket ~5.7% faster |
 
 Decision for now:
-- keep `hybrid` as default.
-- keep `full-bucket` as opt-in experiment only (`TURBOTOKEN_ENCODER_QUEUE=full-bucket`).
+- switched default queue mode to `full-bucket` (env var unset) in `src/encoder.zig`.
+- keep explicit override controls (`TURBOTOKEN_ENCODER_QUEUE=hybrid|full-bucket`).
+- latest full-pass scalar fallback (`bench/results/bench-scalar-fallback-20260227-145659.json`) remains substantially improved vs pre-switch baseline (`bench/results/bench-scalar-fallback-20260227-131921.json`):
+  - native count 100KB: `177.1 ms -> 94.5 ms` (~46.6% faster)
+  - native encode 100KB: `223.1 ms -> 106.4 ms` (~52.3% faster)
 
 ---
 
-## Latest ASCII Boundary Classifier (2026-02-26, macOS ARM64)
+## Latest ASCII Boundary Classifier (2026-02-27, macOS ARM64)
 
 Experimental boundary-classification benchmark from:
-- `bench/results/bench-boundary-classifier-20260226-105327.json`
+- `bench/results/bench-boundary-classifier-20260227-145815.json`
 - run command: `bun run scripts/bench-boundary-classifier.ts`
 
-| Operation | Auto mean | Scalar mean | Relative |
+| Operation | Auto mean | Scalar mean | Relative (Auto vs Scalar) |
 |---|---:|---:|---:|
-| boundary-class english-1mb | 1.586 s | 2.776 s | auto ~1.75x faster |
-| boundary-class unicode-1mb | 1.632 s | 3.556 s | auto ~2.18x faster |
+| boundary-class english-1mb | 283.2 ms | 775.6 ms | auto ~2.74x faster |
+| boundary-class unicode-1mb | 301.5 ms | 802.4 ms | auto ~2.66x faster |
 
 Note:
-- This is a new additive pretokenizer primitive (`count_ascii_class_boundaries`), not a replacement of the core BPE path.
+- This is an additive pretokenizer primitive (`count_ascii_class_boundaries`), not a replacement of the core BPE path.
+- In this run, `auto` and explicit NEON are near parity.
 
 ---
 
-## Latest Native Byte-Path Comparison (2026-02-26, macOS ARM64)
+## Latest Native Byte-Path Comparison (2026-02-27, macOS ARM64)
 
 Direct ARM64 byte-kernel comparison from:
-- `bench/results/bench-native-byte-path-20260226-105615.json`
-- `bench/results/bench-native-byte-path-20260226-105615.meta.json`
+- `bench/results/bench-native-byte-path-20260227-145853.json`
+- `bench/results/bench-native-byte-path-20260227-145853.meta.json`
 
 Benchmark setup:
 - Fixture: `bench/fixtures/english-1mb.txt` (+ generated `english-1mb.u32le.bin` for decode)
@@ -143,21 +153,21 @@ Benchmark setup:
 
 | Operation | NEON mean | Scalar mean | Speedup |
 |---|---:|---:|---:|
-| encode UTF-8 bytes (1MB x 128) | 75.5 ms | 376.9 ms | 4.99x |
-| decode UTF-8 bytes (1MB x 128) | 72.9 ms | 387.0 ms | 5.31x |
+| encode UTF-8 bytes (1MB x 128) | 81.0 ms | 109.9 ms | 1.36x |
+| decode UTF-8 bytes (1MB x 128) | 80.5 ms | 116.7 ms | 1.45x |
 
 Approx throughput from the same means:
-- encode NEON: ~1694.5 MB/s vs scalar ~339.6 MB/s
-- decode NEON: ~1756.4 MB/s vs scalar ~331.1 MB/s
+- encode NEON: ~1579.5 MiB/s vs scalar ~1164.2 MiB/s
+- decode NEON: ~1589.4 MiB/s vs scalar ~1096.9 MiB/s
 
 ---
 
-## Latest Native Pretokenizer Comparison (2026-02-26, macOS ARM64)
+## Latest Native Pretokenizer Comparison (2026-02-27, macOS ARM64)
 
 Direct non-ASCII byte-count kernel comparison from:
 - baseline mode:
-  - `bench/results/bench-native-pretokenizer-20260226-105256.json`
-  - `bench/results/bench-native-pretokenizer-20260226-105256.meta.json`
+  - `bench/results/bench-native-pretokenizer-20260227-145747.json`
+  - `bench/results/bench-native-pretokenizer-20260227-145747.meta.json`
 
 Benchmark setup:
 - Fixtures:
@@ -170,18 +180,17 @@ Benchmark setup:
 
 | Operation | Mean | Relative |
 |---|---:|---:|
-| count non-ascii english-1mb NEON | 94.0 ms | baseline |
-| count non-ascii unicode-1mb NEON | 94.7 ms | 1.01x slower |
-| count non-ascii english-1mb auto | 95.1 ms | 1.01x slower |
-| count non-ascii unicode-1mb auto | 95.2 ms | 1.01x slower |
-| count non-ascii english-1mb DotProd | 103.1 ms | 1.10x slower |
-| count non-ascii unicode-1mb DotProd | 108.5 ms | 1.15x slower |
-| count non-ascii unicode-1mb scalar | 391.8 ms | 4.17x slower |
-| count non-ascii english-1mb scalar | 392.5 ms | 4.18x slower |
+| count non-ascii unicode-1mb NEON | 97.0 ms | baseline |
+| count non-ascii english-1mb NEON | 97.3 ms | 1.00x slower |
+| count non-ascii english-1mb auto | 99.1 ms | 1.02x slower |
+| count non-ascii unicode-1mb auto | 100.0 ms | 1.03x slower |
+| count non-ascii english-1mb DotProd | 110.4 ms | 1.14x slower |
+| count non-ascii unicode-1mb DotProd | 111.4 ms | 1.15x slower |
+| count non-ascii unicode-1mb scalar | 169.3 ms | 1.75x slower |
+| count non-ascii english-1mb scalar | 171.4 ms | 1.77x slower |
 
 SME tuning note:
-- The latest SME pass (4x streaming-vector unroll + prefetch in `asm/arm64/sme_pretokenizer.S`) improved micro-kernel throughput, but end-to-end Hyperfine means still vary across runs by roughly `~7-11 ms`; treat sub-2% deltas as noise unless confirmed by repeated quiet-system runs.
-- In the separate `sme-auto` artifact above, auto-dispatch remained NEON-leaning and did not show a stable auto-route win.
+- The latest SME pass (4x streaming-vector unroll + prefetch in `asm/arm64/sme_pretokenizer.S`) improved micro-kernel throughput, but end-to-end Hyperfine means still vary across runs; treat very small deltas as noise unless repeated.
 
 Runtime dispatch probe (same build):
 - `turbotoken_arm64_feature_mask() = 4095` (`NEON/FP16/DotProd/BF16/I8MM/AES+PMULL/SHA3/LSE/LSE2/SME/SME2`)
@@ -189,11 +198,11 @@ Runtime dispatch probe (same build):
 
 ---
 
-## Latest Metal Byte-Path Comparison (2026-02-26, macOS ARM64)
+## Latest Metal Byte-Path Comparison (2026-02-27, macOS ARM64)
 
 Experimental Metal backend benchmark from:
-- `bench/results/bench-gpu-20260226-105646.json`
-- `bench/results/bench-gpu-20260226-105646.meta.json`
+- `bench/results/bench-gpu-20260227-150010.json`
+- `bench/results/bench-gpu-20260227-150010.meta.json`
 
 Benchmark setup:
 - Encode fixture: `bench/fixtures/english-1mb.txt`
@@ -204,19 +213,19 @@ Benchmark setup:
 
 | Operation | Mean | Relative |
 |---|---:|---:|
-| Metal encode UTF-8 bytes (1MB x 128) | 161.7 ms | baseline (metal encode) |
-| Native NEON encode UTF-8 bytes (1MB x 128) | 74.7 ms | 2.16x faster than metal encode |
-| Hybrid NEON+Metal encode UTF-8 bytes (1MB x 128) | 165.4 ms | 1.02x slower than metal encode |
-| Metal count non-zero batch (4096 x 1KB, x512 loops) | 228.8 ms | baseline (metal batch count) |
-| Python CPU count non-zero batch (4096 x 1KB, x512 loops) | 738.9 ms | 3.23x slower than metal batch count |
+| Metal encode UTF-8 bytes (1MB x 128) | 193.8 ms | baseline (metal encode) |
+| Native NEON encode UTF-8 bytes (1MB x 128) | 73.8 ms | 2.63x faster than metal encode |
+| Hybrid NEON+Metal encode UTF-8 bytes (1MB x 128) | 170.6 ms | 1.14x faster than metal encode |
+| Metal count non-zero batch (4096 x 1KB, x512 loops) | 261.0 ms | baseline (metal batch count) |
+| Python CPU count non-zero batch (4096 x 1KB, x512 loops) | 748.7 ms | 2.87x slower than metal batch count |
 
 Notes:
 - This measures experimental Metal kernels and routing only.
 - Full-piece GPU BPE merge path is currently capped to small inputs by default (`TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES=16384`) and larger pieces fall back to chunk/native-verified paths.
 - Throughput equivalents from the same run:
-  - encode: native NEON ~1714.1 MiB/s, metal ~792.2 MiB/s, hybrid ~774.8 MiB/s
-  - batch count (aggregate): metal ~8952.0 MiB/s vs Python CPU ~2772.9 MiB/s
-- Current conclusion on parallel CPU+GPU split for byte-path: this hybrid was slower than pure NEON and pure metal on this machine/workload.
+  - encode: native NEON ~1734.1 MiB/s, metal ~660.5 MiB/s, hybrid ~750.3 MiB/s
+  - batch count (aggregate): metal ~7845.9 MiB/s vs Python CPU ~2735.5 MiB/s
+- Current conclusion on parallel CPU+GPU split for byte-path: this native-bridge hybrid beats pure metal in this run, but remains much slower than pure NEON on this machine/workload.
 - Additional first-pass GPU optimization trials on 2026-02-25 (wide-load encode variants plus BPE loop dispatch/min-rank changes) regressed crossover means and were rolled back as-is:
   - `bench/results/bench-gpu-20260225-182512.json`
   - `bench/results/bench-gpu-crossover-1772043937345.json`
@@ -225,10 +234,10 @@ Notes:
 
 ---
 
-## Latest Metal Crossover Matrix (2026-02-26, macOS ARM64)
+## Latest Metal Crossover Matrix (2026-02-27, macOS ARM64)
 
 Matrix benchmark from:
-- standard: `bench/results/bench-gpu-crossover-1772103430630.json`
+- standard: `bench/results/bench-gpu-crossover-1772204438191.json`
 - run command: `bun run scripts/bench-gpu-crossover.ts`
 - default: `TURBOTOKEN_BENCH_LONG=0` (long mode disabled)
 - optional long-run row (adds `10,485,760` bytes/chars): `TURBOTOKEN_BENCH_LONG=1 bun run scripts/bench-gpu-crossover.ts` (not run in this pass)
@@ -244,16 +253,16 @@ Outputs include:
 Current calibration summary on this machine:
 - encode auto-route threshold: effectively "never Metal" for byte encode (`2^60` bytes sentinel)
 - count auto-route threshold: effectively "never Metal" for current non-zero count benchmark (`2^60` bytes sentinel)
-- bpe auto-route threshold: effectively "never Metal" for current long-piece BPE benchmark (`2^60` bytes sentinel)
-- practical implication: current byte-path Metal kernels are useful infrastructure, but auto-route still stays on native/Python paths at current calibration gates.
+- bpe auto-route threshold: `1,048,576` bytes (auto-route can pick Metal for long-piece BPE at/above this size in current calibration payload)
+- practical implication: current byte/count auto-route still stays on native/Python at these gates; BPE now has calibrated rows and an explicit threshold, but remains experimental and workload-sensitive.
 
 Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 
 | Input Size | CPU encode | `encode_gpu(device="auto", strict_verify=False)` | `encode_gpu(device="metal", strict_verify=False)` | Correctness |
 |---|---:|---:|---:|---|
-| 65,536 chars | 0.126 ms | 133.8 ms | 438.8 ms | auto matches baseline, metal matches baseline |
-| 262,144 chars | 0.482 ms | 571.1 ms | 1813.6 ms | auto matches baseline, metal matches baseline |
-| 1,048,576 chars | 1.948 ms | 2521.4 ms | 7229.5 ms | auto matches baseline, metal matches baseline |
+| 65,536 chars | 0.124 ms | 1.153 ms | 29.9 ms | auto matches baseline, metal matches baseline |
+| 262,144 chars | 0.479 ms | 4.065 ms | 107.0 ms | auto matches baseline, metal matches baseline |
+| 1,048,576 chars | 1.930 ms | 105.0 ms | 167.2 ms | auto matches baseline, metal matches baseline |
 
 ---
 
@@ -263,29 +272,21 @@ Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 > Status: `PARTIAL` -- Python competitor + startup + memory rows are now measured; JS/WASM rows remain pending.
 
 Artifacts for this pass:
-- `bench/results/bench-competitors-stable-20260226-104538.json` (3-pass median summary)
-- pass files:
-  - `bench/results/bench-competitors-python-encode-20260226-103633.json`
-  - `bench/results/bench-competitors-python-decode-20260226-103754.json`
-  - `bench/results/bench-competitors-python-count-20260226-103844.json`
-  - `bench/results/bench-competitors-python-encode-20260226-103936.json`
-  - `bench/results/bench-competitors-python-decode-20260226-104057.json`
-  - `bench/results/bench-competitors-python-count-20260226-104146.json`
-  - `bench/results/bench-competitors-python-encode-20260226-104238.json`
-  - `bench/results/bench-competitors-python-decode-20260226-104357.json`
-  - `bench/results/bench-competitors-python-count-20260226-104448.json`
+- `bench/results/bench-competitors-python-encode-20260227-145342.json`
+- `bench/results/bench-competitors-python-decode-20260227-145503.json`
+- `bench/results/bench-competitors-python-count-20260227-145553.json`
 - commands:
   - `bun run scripts/bench-competitors.ts`
-  - `bun run bench:competitors:stable`
 Training baseline artifacts:
-- `bench/results/bench-training-python-20260226-105038.json` (english-100kb, vocab=320)
+- `bench/results/bench-training-python-20260227-145645.json` (english-100kb, vocab=320)
 - command: `bun run bench:training`
 Startup + memory artifacts:
-- `bench/results/bench-startup-cold-20260226-104547.json`
-- `bench/results/bench-startup-warm-20260226-104618.json`
-- `bench/results/bench-ram-1772103399585.json`
-Encoding matrix artifact:
-- `bench/results/bench-encoding-matrix-1772093253.json`
+- `bench/results/bench-startup-cold-20260227-145147.json`
+- `bench/results/bench-startup-warm-20260227-145218.json`
+- `bench/results/bench-ram-1772204354545.json`
+WASM + binary artifacts:
+- `bench/results/bench-wasm-1772204362471.json`
+- `bench/results/bench-binary-size-1772204354576.json`
 Wheel build artifact:
 - `dist/wheels/build-wheels-1772103454490.json`
 
@@ -293,36 +294,36 @@ Wheel build artifact:
 
 | Competitor | 1KB | 10KB | 100KB | 1MB | 1MB Throughput (MiB/s) | Source |
 |-----------|-----|------|-------|-----|------------------------|--------|
-| tiktoken (latest) | 213.9 ms | 211.2 ms | 220.6 ms | 277.6 ms | 3.60 | `pip install tiktoken` |
-| rs-bpe | 71.7 ms | 72.1 ms | 71.8 ms | 91.0 ms | 10.99 | `pip install rs-bpe` |
-| TokenDagger (`tokendagger`) | 479.6 ms | 470.8 ms | 473.4 ms | 510.1 ms | 1.96 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| tiktoken (latest) | 215.9 ms | 220.6 ms | 226.2 ms | 277.7 ms | 3.60 | `pip install tiktoken` |
+| rs-bpe | 74.4 ms | 71.6 ms | 77.1 ms | 93.0 ms | 10.75 | `pip install rs-bpe` |
+| TokenDagger (`tokendagger`) | 499.7 ms | 507.4 ms | 493.8 ms | 493.6 ms | 2.03 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
 | HuggingFace tokenizers | PENDING | PENDING | PENDING | PENDING | PENDING | `tokenizers` package installed, but no stable built-in `o200k_base` entry-point |
-| turbotoken (default CPU path) | 64.8 ms | 40.4 ms | 43.8 ms | 75.1 ms | 13.32 | local editable package (`python/`) |
-| turbotoken (Metal GPU route) | 106.0 ms | 96.0 ms | 118.7 ms | 191.4 ms | 5.22 | `Encoding.encode_gpu(device="metal", strict_verify=False)` |
+| turbotoken (default CPU path) | 68.0 ms | 44.1 ms | 45.9 ms | 76.5 ms | 13.08 | local editable package (`python/`) |
+| turbotoken (Metal GPU route) | 98.2 ms | 100.3 ms | 123.6 ms | 182.0 ms | 5.50 | `Encoding.encode_gpu(device="metal", strict_verify=False)` |
 
 ### Python Tokenizers (decode, o200k_base)
 
 | Competitor | 1K tok | 10K tok | 128K tok | Source |
 |-----------|--------|---------|----------|--------|
-| tiktoken | 217.3 ms | 219.8 ms | 213.9 ms | `tiktoken.get_encoding("o200k_base").decode(...)` |
-| rs-bpe | 82.8 ms | 80.9 ms | 83.2 ms | `openai.o200k_base().decode(...)` |
-| TokenDagger (`tokendagger`) | 492.2 ms | 489.4 ms | 500.2 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
-| turbotoken (default CPU path) | 68.4 ms | 68.8 ms | 71.6 ms | `turbotoken.get_encoding("o200k_base").decode(...)` |
+| tiktoken | 213.5 ms | 225.9 ms | 222.7 ms | `tiktoken.get_encoding("o200k_base").decode(...)` |
+| rs-bpe | 82.2 ms | 85.0 ms | 84.2 ms | `openai.o200k_base().decode(...)` |
+| TokenDagger (`tokendagger`) | 493.5 ms | 497.3 ms | 511.0 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| turbotoken (default CPU path) | 66.1 ms | 69.9 ms | 77.9 ms | `turbotoken.get_encoding("o200k_base").decode(...)` |
 
 ### Python Tokenizers (count-only, o200k_base)
 
-| Competitor | 1KB | 100KB | 673K tok equiv | 1MB Throughput (MiB/s) | Source |
+| Competitor | 1KB | 100KB | 1MB | 1MB Throughput (MiB/s) | Source |
 |-----------|-----|-------|----------------|------------------------|--------|
-| tiktoken (via `len(encode())`) | 215.2 ms | 217.1 ms | 277.7 ms | 3.60 | `len(encode())` |
-| rs-bpe `count()` | 71.2 ms | 73.7 ms | 85.5 ms | 11.69 | `openai.o200k_base().count(...)` |
-| TokenDagger (`tokendagger`, via `len(encode())`) | 478.9 ms | 495.9 ms | 479.5 ms | 2.09 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
-| turbotoken `count()` | 65.1 ms | 41.8 ms | 71.4 ms | 14.00 | No-alloc fast path |
+| tiktoken (via `len(encode())`) | 213.9 ms | 221.4 ms | 280.5 ms | 3.56 | `len(encode())` |
+| rs-bpe `count()` | 71.3 ms | 73.9 ms | 87.0 ms | 11.50 | `openai.o200k_base().count(...)` |
+| TokenDagger (`tokendagger`, via `len(encode())`) | 486.9 ms | 490.4 ms | 499.3 ms | 2.00 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| turbotoken `count()` | 67.1 ms | 45.0 ms | 71.0 ms | 14.09 | No-alloc fast path |
 
 ### Python BPE Training (regex+BPE trainer, vocab size 320)
 
 | Corpus | turbotoken (Python backend) | turbotoken (Zig native backend prototype) | rustbpe | minbpe |
 |---|---:|---:|---:|---:|
-| english-100kb | 50.0 ms (1.95 MiB/s) | 47.3 ms (2.06 MiB/s) | 55.4 ms (1.76 MiB/s) | 696.6 ms (0.14 MiB/s) |
+| english-100kb | 49.1 ms (1.99 MiB/s) | 49.4 ms (1.98 MiB/s) | 55.7 ms (1.75 MiB/s) | 703.2 ms (0.14 MiB/s) |
 
 Notes:
 - `turbotoken` training API is now available via `train_mergeable_ranks_from_iterator(...)` and `train_encoding_from_iterator(...)`.
@@ -338,7 +339,7 @@ Notes:
     - `bench/results/bench-training-python-20260225-233812.json` (100kb)
     - `bench/results/bench-training-python-20260225-234514.json` (1mb)
 - `minbpe` was benchmarked from local source checkout (`/tmp/minbpe`) because it is not published on PyPI.
-- In this pass, turbotoken training leads `rustbpe` on the measured 100KB corpus (`~1.11x` for native prototype and `~1.06x` for Python fallback).
+- In this pass, both turbotoken training backends lead `rustbpe` on the measured 100KB corpus.
 
 ### JavaScript/WASM Tokenizers (encode, o200k_base)
 
@@ -355,32 +356,32 @@ Notes:
 
 | Competitor | Cold Start | Warm Start | Notes |
 |-----------|-----------|-----------|-------|
-| tiktoken (Python) | 206.1 ms | 204.1 ms | Rust extension load + merge table |
-| rs-bpe (Python) | 68.7 ms | 62.9 ms | `openai.o200k_base().encode("hello")` |
-| turbotoken (Python) | 61.5 ms | 65.3 ms | local editable package (`python/`) |
-| TokenDagger (`tokendagger`) | 480.0 ms | 482.6 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| tiktoken (Python) | 210.4 ms | 208.5 ms | Rust extension load + merge table |
+| rs-bpe (Python) | 68.1 ms | 66.1 ms | `openai.o200k_base().encode("hello")` |
+| turbotoken (Python) | 64.4 ms | 64.1 ms | local editable package (`python/`) |
+| TokenDagger (`tokendagger`) | 486.3 ms | 489.0 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
 | tiktoken (npm) | PENDING | PENDING | WASM instantiation |
 | turbotoken (npm WASM) | PENDING | PENDING | Zig WASM instantiation |
-| turbotoken CLI | 94.5 ms | 91.6 ms | `python -m turbotoken.cli encode hello --encoding o200k_base` |
+| turbotoken CLI | 95.2 ms | 98.8 ms | `python -m turbotoken.cli encode hello --encoding o200k_base` |
 
 Notes:
-- cold artifact: `bench/results/bench-startup-cold-20260226-104547.json`
-- warm artifact: `bench/results/bench-startup-warm-20260226-104618.json`
+- cold artifact: `bench/results/bench-startup-cold-20260227-145147.json`
+- warm artifact: `bench/results/bench-startup-warm-20260227-145218.json`
 - warm mode here means same command measured after Hyperfine warmup (`--warmup 10`), not a long-lived daemon process.
 
 ### Memory Usage (Peak RSS during o200k_base encode of 1MB)
 
 | Competitor | Peak RSS | Delta over baseline | Notes |
 |-----------|----------|-------------------|-------|
-| Python baseline (empty) | 14.45 MB | -- | `python3 -c "pass"` |
-| tiktoken | 114.58 MB | +100.12 MB | `tiktoken.get_encoding("o200k_base").encode(text)` |
-| rs-bpe | 90.41 MB | +75.95 MB | `openai.o200k_base().encode(text)` |
-| TokenDagger (`tokendagger`) | 241.94 MB | +227.49 MB | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
-| turbotoken | 31.22 MB | +16.77 MB | `turbotoken.get_encoding("o200k_base").encode(text)` |
-| turbotoken CLI | 39.69 MB | +25.24 MB | `python -m turbotoken.cli encode - --encoding o200k_base` |
+| Python baseline (empty) | 14.52 MB | -- | `python3 -c "pass"` |
+| tiktoken | 115.14 MB | +100.63 MB | `tiktoken.get_encoding("o200k_base").encode(text)` |
+| rs-bpe | 90.28 MB | +75.77 MB | `openai.o200k_base().encode(text)` |
+| TokenDagger (`tokendagger`) | 241.52 MB | +227.00 MB | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
+| turbotoken | 31.23 MB | +16.72 MB | `turbotoken.get_encoding("o200k_base").encode(text)` |
+| turbotoken CLI | 40.70 MB | +26.19 MB | `python -m turbotoken.cli encode - --encoding o200k_base` |
 
 Notes:
-- artifact: `bench/results/bench-ram-1772103399585.json`
+- artifact: `bench/results/bench-ram-1772204354545.json`
 - each row is median peak RSS across 5 runs (`TURBOTOKEN_RAM_RUNS=5` default)
 
 ### Binary / Package Size
@@ -495,8 +496,8 @@ Notes:
 
 | Operation | tiktoken | turbotoken | Speedup | Date |
 |-----------|----------|-----------|---------|------|
-| encode 100KB | PENDING | PENDING | PENDING | -- |
-| decode 128K tok | PENDING | PENDING | PENDING | -- |
+| encode 100KB | 215.9 ms | 43.4 ms | 4.98x | 2026-02-27 |
+| decode 128K tok | 222.7 ms | 77.9 ms | 2.86x | 2026-02-27 |
 
 ### Linux ARM64 (Graviton3)
 
@@ -518,7 +519,34 @@ Notes:
 |-----------|------------|---------------|----------------|-----------------|------|
 | encode 100KB | PENDING | PENDING | PENDING | PENDING | -- |
 
-### NVIDIA GPU (RTX 4090)
+### NVIDIA GPU (Modal B200, CUDA 13.1.1)
+
+Latest measured remote CUDA run (Modal) from:
+
+- `bench/results/bench-modal-cuda-1772191604329.json`
+- command: `bun run bench:modal:cuda --runs 5`
+- detected GPU: `NVIDIA B200` (`nvidia-smi`)
+
+CUDA workload rows embedded in the artifact:
+
+| Operation | Workload | Median | Throughput | Median backend peak alloc | Date |
+|-----------|----------|-------:|-----------:|--------------------------:|------|
+| `cuda-cupy-encode-u8-to-u32-1mb` | 1 MiB encode cast | 0.827 ms | 1208.7 MiB/s | 10 MiB | 2026-02-27 |
+| `cuda-cupy-count-nonzero-batch-4096x1kb` | 4 MiB aggregate count | 0.674 ms | 5934.6 MiB/s | 9 MiB | 2026-02-27 |
+
+From the same Modal run summary:
+- startup cold winner: `python-startup-rs-bpe` (84.28 ms)
+- startup warm winner: `python-startup-rs-bpe` (55.32 ms)
+- encode winner: `python-encode-10kb-turbotoken` (36.71 ms)
+- decode winner: `python-decode-1000-tok-rs-bpe` (79.42 ms)
+- count winner: `python-count-100kb-turbotoken` (40.69 ms)
+- training winner: `python-train-english-100kb-turbotoken-py-fallback-v320` (47.96 ms)
+
+Notes:
+- This CUDA table currently reflects CUDA memory/throughput microbench rows (`scripts/bench-gpu-memory-cuda.ts`), not full GPU BPE kernel throughput (Phase 5 work remains TODO).
+- First-sample CUDA initialization outliers are present in raw samples; medians above are reported for stable comparison.
+
+### NVIDIA GPU (RTX 4090 dedicated host)
 
 | Operation | Batch Size | turbotoken CUDA | Per-string | Date |
 |-----------|-----------|-----------------|------------|------|

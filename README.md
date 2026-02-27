@@ -11,7 +11,7 @@ SIMD backends, and a compatibility-focused Python API.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
 - Native Zig CPU acceleration is available for key byte-path primitives; broader backend work (AVX/GPU full BPE) is still in progress.
 - Apple Metal backend is now wired as an experimental UTF-8 byte-path accelerator (full GPU BPE merge path is still pending).
-- Modal NVIDIA remote benchmark runner is available via `scripts/modal/bench_cuda_modal.py` for CUDA-hosted baseline runs (`L40S`/`A100`/`H100` class on Modal).
+- Modal NVIDIA remote benchmark runner is available via `scripts/modal/bench_cuda_modal.py` for CUDA-hosted baseline runs (`B200` default; also supports `B200+`/`H200`/`H100`/`A100`/`L40S` on Modal). Paid Modal CUDA runs are explicit opt-in (`--confirm-paid`).
 - First-pass Python training APIs are available (`train_mergeable_ranks_from_iterator`, `train_encoding_from_iterator`) for custom regex+BPE vocab training (CPU path only).
 - Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`
   on the tracked compatibility corpus.
@@ -81,7 +81,11 @@ Notes:
 
 ```bash
 bun install
-python3 -m pip install -e ".[dev]"
+# fastest Python path (recommended if uv is installed)
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e ".[dev]"
+# fallback:
+# python3 -m pip install -e ".[dev]"
 
 zig build
 zig build test
@@ -91,23 +95,31 @@ bun run test:upstream-alias
 bun run build:wheels
 ```
 
-## Latest Benchmark Snapshot (2026-02-24, macOS ARM64)
+Benchmark entrypoints:
+
+```bash
+bun run bench       # default local suite (CUDA excluded)
+bun run bench:cuda  # include local CUDA rows explicitly
+bun run bench:modal:cuda  # paid remote Modal CUDA run (explicitly confirmed)
+```
+
+## Latest Benchmark Snapshot (2026-02-27, macOS ARM64)
 
 All numbers below come from Hyperfine output in `bench/results/`.
 
 | Workload | Mean time |
 |---|---:|
-| startup (`bench-startup`) | 139.3 ms |
-| count 100KB (`bench-count`) | 144.3 ms |
-| encode 100KB (`bench-encode`) | 148.7 ms |
-| decode 100KB-equivalent (`bench-decode`) | 181.9 ms |
-| encode 1MB (`bench-bigfile`) | 198.8 ms |
-| parallel count (512 items, 4 workers) (`bench-parallel`) | 1.570 s |
+| startup (`bench-startup-cold`, first encode) | 64.4 ms |
+| count 100KB (`bench-count`) | 44.5 ms |
+| encode 100KB (`bench-encode`) | 46.1 ms |
+| decode 100KB-equivalent (`bench-decode`) | 59.7 ms |
+| encode 1MB (`bench-bigfile`) | 72.4 ms |
+| parallel count (512 items, 4 workers) (`bench-parallel`) | 206.0 ms |
 
-Comparison snapshot (`bench-comparison`):
-- `turbotoken-encode-100kb`: 147.1 ms
-- `tiktoken-encode-100kb`: 195.0 ms
-- Speedup in this run: ~1.33x for turbotoken on the measured workload.
+Comparison snapshot (`bench-comparison-20260227-145334.json`):
+- `turbotoken-encode-100kb`: 43.4 ms
+- `tiktoken-encode-100kb`: 215.9 ms
+- Speedup in this run: ~4.98x for turbotoken on the measured workload.
 
 ## Planned Backends
 

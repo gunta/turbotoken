@@ -364,6 +364,13 @@ class MetalBridge:
                 uint32_t *out_tokens,
                 size_t out_cap
             );
+            long turbotoken_metal_encode_utf8_bytes_hybrid(
+                const unsigned char *input,
+                size_t input_len,
+                size_t split_index,
+                uint32_t *out_tokens,
+                size_t out_cap
+            );
             long turbotoken_metal_count_nonzero_segments(
                 const unsigned char *input,
                 size_t input_len,
@@ -488,6 +495,44 @@ class MetalBridge:
 
         out = self._ffi.new("uint32_t[]", needed)
         written = int(self._lib.turbotoken_metal_encode_utf8_bytes(in_buf, len(data), out, needed))
+        if written < 0:
+            return None
+        return _unpack_u32(self._ffi, out, written)
+
+    def encode_utf8_bytes_hybrid(self, data: bytes, split_index: int) -> list[int] | None:
+        self.load()
+        if not self._available or self._lib is None or self._ffi is None:
+            return None
+        if not data:
+            return []
+        if split_index <= 0 or split_index >= len(data):
+            return None
+
+        in_buf = self._ffi.from_buffer("const unsigned char[]", data)
+        needed = int(
+            self._lib.turbotoken_metal_encode_utf8_bytes_hybrid(
+                in_buf,
+                len(data),
+                split_index,
+                self._ffi.NULL,
+                0,
+            )
+        )
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        out = self._ffi.new("uint32_t[]", needed)
+        written = int(
+            self._lib.turbotoken_metal_encode_utf8_bytes_hybrid(
+                in_buf,
+                len(data),
+                split_index,
+                out,
+                needed,
+            )
+        )
         if written < 0:
             return None
         return _unpack_u32(self._ffi, out, written)
@@ -781,6 +826,9 @@ def encode_utf8_bytes_hybrid(
     bounded_ratio = min(0.9, max(0.1, split_ratio))
     split = int(len(data) * bounded_ratio)
     split = min(len(data) - 1, max(1, split))
+    bridge_result = bridge.encode_utf8_bytes_hybrid(data, split)
+    if bridge_result is not None:
+        return bridge_result
     if native._ffi is None or native._lib is None or bridge._ffi is None or bridge._lib is None:
         return None
 
@@ -939,6 +987,8 @@ def calibrate_autoroute(*, force: bool = False) -> dict[str, Any]:
         enc = get_encoding("o200k_base")
         enc.load_mergeable_ranks()
         rank_payload = enc._rank_payload_cache
+        if not rank_payload:
+            rank_payload = enc._ensure_rank_payload()
     except Exception as exc:
         payload["bpe_reason"] = f"failed to load o200k_base ranks: {exc}"
         _write_route_cache(payload)

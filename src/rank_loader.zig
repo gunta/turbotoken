@@ -3,6 +3,7 @@ const std = @import("std");
 const binary_magic = "TTKRBIN1";
 const binary_version: u32 = 1;
 const binary_missing_len: u32 = std.math.maxInt(u32);
+const missing_single_byte_rank: u32 = std.math.maxInt(u32);
 
 pub const RankEntry = struct {
     token: []u8,
@@ -15,6 +16,8 @@ pub const RankTable = struct {
     by_token: std.StringHashMapUnmanaged(u32) = .{},
     by_rank: std.AutoHashMapUnmanaged(u32, []u8) = .{},
     by_rank_dense: std.ArrayListUnmanaged(?[]u8) = .{},
+    single_byte_ranks: [256]u32 = [_]u32{missing_single_byte_rank} ** 256,
+    single_byte_rank_count: u16 = 0,
 
     pub fn init(allocator: std.mem.Allocator) RankTable {
         return .{ .allocator = allocator };
@@ -46,6 +49,15 @@ pub const RankTable = struct {
             }
         }
         return self.by_rank.get(rank);
+    }
+
+    pub fn singleByteTokenRank(self: *const RankTable, byte: u8) ?u32 {
+        const rank = self.single_byte_ranks[byte];
+        return if (rank == missing_single_byte_rank) null else rank;
+    }
+
+    pub fn hasAllSingleByteTokens(self: *const RankTable) bool {
+        return self.single_byte_rank_count == 256;
     }
 
     pub fn maxRankPlusOne(self: *const RankTable) usize {
@@ -90,6 +102,18 @@ pub const RankTable = struct {
             .token = token,
             .rank = rank,
         });
+        self.recordSingleByteRank(token, rank);
+    }
+
+    fn recordSingleByteRank(self: *RankTable, token: []const u8, rank: u32) void {
+        if (token.len != 1) {
+            return;
+        }
+        const idx: usize = token[0];
+        if (self.single_byte_ranks[idx] == missing_single_byte_rank) {
+            self.single_byte_rank_count +%= 1;
+        }
+        self.single_byte_ranks[idx] = rank;
     }
 };
 
@@ -229,6 +253,7 @@ fn loadFromBinaryPayload(allocator: std.mem.Allocator, payload: []const u8) !Ran
             .token = token_copy,
             .rank = rank,
         });
+        table.recordSingleByteRank(token_copy, rank);
         parsed_entries += 1;
     }
 
@@ -306,6 +331,23 @@ test "loadFromBytes supports sparse high rank lookups" {
     try std.testing.expectEqualStrings("b", table.tokenForRank(1024).?);
     try std.testing.expect(table.tokenForRank(1023) == null);
     try std.testing.expectEqual(@as(usize, 1025), table.maxRankPlusOne());
+}
+
+test "loadFromBytes tracks single-byte token ranks" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 10
+        \\Yg== 20
+        \\
+    ;
+
+    var table = try loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(?u32, 10), table.singleByteTokenRank('a'));
+    try std.testing.expectEqual(@as(?u32, 20), table.singleByteTokenRank('b'));
+    try std.testing.expectEqual(@as(?u32, null), table.singleByteTokenRank('c'));
+    try std.testing.expect(!table.hasAllSingleByteTokens());
 }
 
 test "loadFromBytes rejects malformed lines" {

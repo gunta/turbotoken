@@ -33,20 +33,42 @@ export function pythonExecutable(): string {
 
 export function ensurePythonDevEnvironment(): string {
   const venvPython = resolvePath(".venv", "bin", "python");
+  const preferUv = commandExists("uv") && process.env.TURBOTOKEN_PY_INSTALLER !== "pip";
 
   if (!existsSync(venvPython)) {
-    if (!commandExists("python3")) {
-      throw new Error("python3 is required to bootstrap .venv");
+    if (preferUv) {
+      section("Bootstrap Python virtual environment (.venv) with uv");
+      const uvVenv = runCommand("uv", ["venv", "--python", "python3", ".venv"], { allowFailure: true });
+      if (uvVenv.code !== 0) {
+        throw new Error(`uv failed to bootstrap .venv:\n${uvVenv.stderr || uvVenv.stdout}`);
+      }
+    } else {
+      if (!commandExists("python3")) {
+        throw new Error("python3 is required to bootstrap .venv");
+      }
+      section("Bootstrap Python virtual environment (.venv)");
+      runCommand("python3", ["-m", "venv", ".venv"]);
     }
-    section("Bootstrap Python virtual environment (.venv)");
-    runCommand("python3", ["-m", "venv", ".venv"]);
   }
 
   const pytestCheck = runCommand(venvPython, ["-m", "pytest", "--version"], { allowFailure: true });
   if (pytestCheck.code !== 0) {
     section("Install Python dev dependencies into .venv");
-    runCommand(venvPython, ["-m", "pip", "install", "-U", "pip"]);
-    runCommand(venvPython, ["-m", "pip", "install", "-e", ".[dev]"]);
+    if (preferUv) {
+      const uvInstall = runCommand(
+        "uv",
+        ["pip", "install", "--python", venvPython, "-e", ".[dev]"],
+        { allowFailure: true },
+      );
+      if (uvInstall.code !== 0) {
+        console.warn("uv install failed, falling back to pip");
+        runCommand(venvPython, ["-m", "pip", "install", "-U", "pip"]);
+        runCommand(venvPython, ["-m", "pip", "install", "-e", ".[dev]"]);
+      }
+    } else {
+      runCommand(venvPython, ["-m", "pip", "install", "-U", "pip"]);
+      runCommand(venvPython, ["-m", "pip", "install", "-e", ".[dev]"]);
+    }
   }
 
   return venvPython;

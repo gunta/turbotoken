@@ -18,7 +18,7 @@ pub const Encoder = struct {
         full_bucket,
     };
 
-    var selected_queue_mode: QueueMode = .hybrid;
+    var selected_queue_mode: QueueMode = .full_bucket;
     var queue_mode_once = std.once(initQueueMode);
 
     const NodeArena = struct {
@@ -208,6 +208,13 @@ pub const Encoder = struct {
         }
 
         fn removeOrNull(self: *BucketQueue) ?Candidate {
+            if (!self.overflow_enabled) {
+                const idx = self.popBucketHead() orelse return null;
+                const candidate = self.pool.get(idx);
+                self.pool.release(idx);
+                return candidate;
+            }
+
             const bucket_idx_opt = self.peekBucketHead();
             const overflow_idx_opt = self.peekOverflowHead();
 
@@ -238,6 +245,13 @@ pub const Encoder = struct {
         }
 
         fn peekOrNull(self: *BucketQueue) ?Candidate {
+            if (!self.overflow_enabled) {
+                if (self.peekBucketHead()) |idx| {
+                    return self.pool.get(idx);
+                }
+                return null;
+            }
+
             const bucket_idx_opt = self.peekBucketHead();
             const overflow_idx_opt = self.peekOverflowHead();
 
@@ -389,7 +403,7 @@ pub const Encoder = struct {
 
     fn initQueueMode() void {
         const mode = std.process.getEnvVarOwned(std.heap.page_allocator, "TURBOTOKEN_ENCODER_QUEUE") catch {
-            selected_queue_mode = .hybrid;
+            selected_queue_mode = .full_bucket;
             return;
         };
         defer std.heap.page_allocator.free(mode);
@@ -401,7 +415,11 @@ pub const Encoder = struct {
             selected_queue_mode = .full_bucket;
             return;
         }
-        selected_queue_mode = .hybrid;
+        if (std.ascii.eqlIgnoreCase(mode, "hybrid")) {
+            selected_queue_mode = .hybrid;
+            return;
+        }
+        selected_queue_mode = .full_bucket;
     }
 
     fn queueMode() QueueMode {
@@ -495,7 +513,9 @@ pub const Encoder = struct {
             return;
         }
 
-        const rank = try pairRank(allocator, table, cache, scratch, arena.token[left_idx], arena.token[right_usize]) orelse return;
+        const left_token = arena.token[left_idx];
+        const right_token = arena.token[right_usize];
+        const rank = try pairRank(allocator, table, cache, scratch, left_token, right_token) orelse return;
 
         try queue.add(.{
             .left = @as(NodeIndex, @intCast(left_idx)),
@@ -517,15 +537,28 @@ pub const Encoder = struct {
         var arena = try NodeArena.init(allocator, text.len);
         errdefer arena.deinit(allocator);
 
-        for (text, 0..) |_, idx| {
-            const byte_token = table.get(text[idx .. idx + 1]) orelse return error.UnknownToken;
-            const idx_u32 = @as(u32, @intCast(idx));
-            arena.start[idx] = idx_u32;
-            arena.end[idx] = idx_u32 + 1;
-            arena.token[idx] = byte_token;
-            arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
-            arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
-            arena.version[idx] = 0;
+        if (table.hasAllSingleByteTokens()) {
+            for (text, 0..) |byte, idx| {
+                const byte_token = table.singleByteTokenRank(byte).?;
+                const idx_u32 = @as(u32, @intCast(idx));
+                arena.start[idx] = idx_u32;
+                arena.end[idx] = idx_u32 + 1;
+                arena.token[idx] = byte_token;
+                arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
+                arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
+                arena.version[idx] = 0;
+            }
+        } else {
+            for (text, 0..) |byte, idx| {
+                const byte_token = table.singleByteTokenRank(byte) orelse table.get(text[idx .. idx + 1]) orelse return error.UnknownToken;
+                const idx_u32 = @as(u32, @intCast(idx));
+                arena.start[idx] = idx_u32;
+                arena.end[idx] = idx_u32 + 1;
+                arena.token[idx] = byte_token;
+                arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
+                arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
+                arena.version[idx] = 0;
+            }
         }
 
         const cache = try allocator.create(pair_cache.PairCache);
@@ -665,6 +698,7 @@ pub const Encoder = struct {
 
         var out = std.ArrayListUnmanaged(u32){};
         errdefer out.deinit(allocator);
+        try out.ensureTotalCapacity(allocator, text.len);
 
         var cursor = merged.head_idx;
         while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {

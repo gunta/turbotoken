@@ -26,12 +26,16 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | CPU-008 | Rank loader | pre-size rank table/hash maps before decode/insert to reduce cold parse overhead | `DONE (first pass)` |
 | CPU-009 | Native rank payload | binary rank payload cache for native bridge cold-start paths | `DONE (first pass)` |
 | CPU-010 | Native range encode/count | parallel two-pass range executor for batch/range C ABI + optional Python range-batch path | `DONE (first pass, keep optional at Python layer)` |
+| CPU-011 | Rank loader + scalar init | precomputed single-byte token rank map to avoid per-byte hash lookups in merged-node setup | `DONE (first pass)` |
+| CPU-012 | Scalar queue hot path | skip overflow-heap checks when `full-bucket` mode runs with overflow disabled | `DONE (first pass)` |
 | GPU-001 | Metal BPE | SIMD-group min-rank reduction in BPE merge loop | `DONE (first pass, reverted)` |
 | GPU-002 | Metal dispatch | Lower per-round dispatch overhead in BPE loop | `DONE (first pass, reverted)` |
 | GPU-003 | Metal memory | Wider byte-path loads in UTF-8 widen kernel | `DONE (first pass, reverted)` |
 | GPU-005 | Metal byte/count kernels | larger encode chunk and deeper count unroll in `metal-byte-path-v7` | `DONE (first pass)` |
 | GPU-006 | Metal BPE dispatch | batch multiple BPE rounds per submit with single-encoder path | `DONE (first pass, keep optional)` |
 | GPU-007 | Metal stitch host path | move keep-flag token compaction from Python loop to Zig export | `DONE (first pass)` |
+| GPU-008 | Metal autoroute BPE calibration | ensure rank payload is available during BPE calibration to emit crossover rows | `DONE (first pass)` |
+| GPU-009 | Hybrid NEON+Metal encode orchestration | move split execution from Python threadpool into native Metal bridge symbol | `DONE (first pass)` |
 
 ## Experiment CPU-001 (2026-02-25)
 
@@ -75,7 +79,7 @@ bun run scripts/bench-pair-cache-hash.ts
 Decision: `adopt` (`crc32` default on supported AArch64; `rapidhash` otherwise).
 Reason: larger-file A/B runs showed repeatable wins for ARM64 `crc32` in this environment while preserving `rapidhash` as the portable fallback.
 
-## Experiment CPU-002 (2026-02-25)
+## Experiment CPU-002 (2026-02-25, updated 2026-02-27)
 
 ### Goal
 
@@ -84,8 +88,8 @@ Test an alternate queue mode for rank-BPE merges to reduce overflow-heap pressur
 ### Implementation
 
 - Added queue mode selector in `src/encoder.zig`:
-  - `TURBOTOKEN_ENCODER_QUEUE=hybrid` (default)
-  - `TURBOTOKEN_ENCODER_QUEUE=full-bucket` (optional experiment)
+  - `TURBOTOKEN_ENCODER_QUEUE=full-bucket` (default)
+  - `TURBOTOKEN_ENCODER_QUEUE=hybrid` (override)
 - Added rank-table helper `RankTable.maxRankPlusOne()` in `src/rank_loader.zig`.
 - Added benchmark runner: `scripts/bench-encoder-queue.ts`.
 
@@ -99,12 +103,153 @@ bun run scripts/bench-encoder-queue.ts
 
 - `bench/results/bench-encoder-queue-20260225-180932.json`
 - `bench/results/bench-encoder-queue-20260225-181051.json`
+- `bench/results/bench-encoder-queue-20260227-145729.json`
+- `bench/results/bench-scalar-fallback-20260227-131921.json`
+- `bench/results/bench-scalar-fallback-20260227-145659.json`
 
 ### Result Summary
 
-Mixed/near-noise:
-- encode row showed small `full-bucket` edge in one pass (~1%).
-- count row showed no stable win across reruns.
+2026-02-27 refresh:
+- queue A/B on 100KB:
+  - count: `146.4 ms` (`hybrid`) vs `142.6 ms` (`full-bucket`) (`full-bucket` ~2.6% faster)
+  - encode: `162.0 ms` (`hybrid`) vs `152.8 ms` (`full-bucket`) (`full-bucket` ~5.7% faster)
+- latest scalar fallback artifact remains substantially better than pre-switch baseline:
+  - count 100KB: `177.1 ms -> 94.5 ms` (~46.6% faster)
+  - encode 100KB: `223.1 ms -> 106.4 ms` (~52.3% faster)
+
+Decision: `adopt` (`full-bucket` default; keep `hybrid` override).
+
+## Experiment CPU-011 (2026-02-27)
+
+### Goal
+
+Reduce scalar rank-BPE startup work in `buildMergedNodes` by removing per-byte hash-map lookups when mapping input bytes to initial token ranks.
+
+### Implementation
+
+- Added precomputed single-byte rank metadata in `src/rank_loader.zig`:
+  - `single_byte_ranks: [256]u32`
+  - `singleByteTokenRank(byte)` lookup
+  - `hasAllSingleByteTokens()` fast capability check
+- Updated `src/encoder.zig` merged-node initialization:
+  - direct byte-rank lookup path when all 256 byte tokens are present
+  - mixed fallback path still supports sparse/custom rank tables safely
+- Added output-capacity pre-sizing in `encodeWithRanks` (`ensureTotalCapacity(text.len)`) to avoid append-growth reallocations on the encode path.
+
+### Commands
+
+```bash
+zig build test
+bun run scripts/bench-scalar-fallback.ts
+```
+
+### Artifacts
+
+- baseline before this pass: `bench/results/bench-scalar-fallback-20260227-141645.json`
+- post-pass focused rerun: `bench/results/bench-scalar-fallback-20260227-142803.json`
+- latest full-suite scalar check: `bench/results/bench-scalar-fallback-20260227-145659.json`
+
+### Result Summary
+
+Focused rerun (`141645 -> 142803`):
+- count 100KB: `96.1 ms -> 90.8 ms` (~5.5% faster)
+- encode 100KB: `106.3 ms -> 105.2 ms` (~1.0% faster)
+
+Full-suite scalar check remained in the same performance band (`94.5 ms` count / `106.4 ms` encode), confirming no regression under normal benchmark load.
+
+Decision: `adopt`.
+
+## Experiment CPU-012 (2026-02-27)
+
+### Goal
+
+Reduce scalar queue overhead in default `full-bucket` mode by skipping overflow-heap checks when overflow buckets are disabled.
+
+### Implementation
+
+- Updated `BucketQueue.removeOrNull` / `peekOrNull` in `src/encoder.zig`:
+  - fast path for `overflow_enabled == false` that pops/peeks only bucket heads.
+- Trialed an additional `enqueueCandidate` prefetch tweak in the same pass, then removed it after regression.
+
+### Commands
+
+```bash
+zig build test
+bun run scripts/bench-scalar-fallback.ts
+bun run scripts/bench-encoder-queue.ts
+```
+
+### Artifacts
+
+- regressing trial (with extra prefetch): `bench/results/bench-scalar-fallback-20260227-144941.json`
+- corrected trial (queue fast path only): `bench/results/bench-scalar-fallback-20260227-145125.json`
+- full-suite verification: `bench/results/bench-scalar-fallback-20260227-145659.json`
+- queue A/B refresh: `bench/results/bench-encoder-queue-20260227-145729.json`
+
+### Result Summary
+
+- regressing combined pass (`144941`): count `99.6 ms`, encode `114.0 ms`.
+- corrected queue-only pass (`145125`): count `94.8 ms`, encode `104.9 ms`.
+- full-suite scalar verification (`145659`): count `94.5 ms`, encode `106.4 ms`.
+
+Decision: `adopt` queue fast path; `revert` prefetch sub-change.
+
+## Experiment GPU-008 (2026-02-27)
+
+### Goal
+
+Fix Metal autoroute BPE calibration so long-piece BPE rows are actually measured and persisted.
+
+### Implementation
+
+- Updated `python/turbotoken/_gpu.py` calibration path:
+  - after `enc.load_mergeable_ranks()`, call `enc._ensure_rank_payload()` when `_rank_payload_cache` is empty.
+  - this addresses payload reset behavior that previously left `bpe_rows` empty with `bpe_reason` set.
+
+### Commands
+
+```bash
+bun run scripts/bench-gpu-crossover.ts
+```
+
+### Artifacts
+
+- first verification after fix: `bench/results/bench-gpu-crossover-1772203780649.json`
+- full-suite verification: `bench/results/bench-gpu-crossover-1772204438191.json`
+
+### Result Summary
+
+- `autoroute.bpe_rows` is now populated (`3` rows) with `bpe_reason = null`.
+- calibrated BPE threshold is now explicit: `bpe_use_metal_min_piece_bytes = 1048576`.
+
+Decision: `adopt`.
+
+## Experiment GPU-009 (2026-02-27)
+
+### Goal
+
+Move hybrid NEON+Metal byte encode split orchestration from Python threadpool overhead into a native bridge path.
+
+### Implementation
+
+- Added `turbotoken_metal_encode_utf8_bytes_hybrid(...)` in `gpu/metal/metal_bridge.m`.
+- Added CFFI binding + wrapper in `python/turbotoken/_gpu.py`, and route `encode_utf8_bytes_hybrid(...)` to this symbol first.
+- Updated `scripts/bench-gpu.ts` hybrid row to call the native hybrid bridge symbol.
+
+### Commands
+
+```bash
+bun run scripts/bench-gpu.ts
+```
+
+### Artifacts
+
+- post-change benchmark: `bench/results/bench-gpu-20260227-150010.json`
+
+### Result Summary
+
+- hybrid encode row improved vs pure Metal in this run (`170.6 ms` vs `193.8 ms`).
+- pure NEON encode remains substantially faster (`73.8 ms`), so hybrid stays an optional/experimental path.
 
 Decision: `keep optional`.
 
@@ -344,15 +489,15 @@ bun run bench:competitors:stable
 ### Artifacts
 
 - `bench/results/bench-competitors-stable-20260226-062057.json`
-- `bench/results/bench-competitors-python-encode-20260226-061439.json`
-- `bench/results/bench-competitors-python-decode-20260226-061559.json`
-- `bench/results/bench-competitors-python-count-20260226-061649.json`
-- `bench/results/bench-competitors-python-encode-20260226-061740.json`
-- `bench/results/bench-competitors-python-decode-20260226-061859.json`
-- `bench/results/bench-competitors-python-count-20260226-061949.json`
-- `bench/results/bench-competitors-python-encode-20260226-062040.json`
-- `bench/results/bench-competitors-python-decode-20260226-062200.json`
-- `bench/results/bench-competitors-python-count-20260226-062250.json`
+- `bench/results/bench-competitors-python-encode-20260226-061155.json`
+- `bench/results/bench-competitors-python-decode-20260226-061313.json`
+- `bench/results/bench-competitors-python-count-20260226-061404.json`
+- `bench/results/bench-competitors-python-encode-20260226-061454.json`
+- `bench/results/bench-competitors-python-decode-20260226-061614.json`
+- `bench/results/bench-competitors-python-count-20260226-061704.json`
+- `bench/results/bench-competitors-python-encode-20260226-061757.json`
+- `bench/results/bench-competitors-python-decode-20260226-061917.json`
+- `bench/results/bench-competitors-python-count-20260226-062007.json`
 
 ### Result Summary
 
