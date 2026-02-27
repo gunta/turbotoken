@@ -41,7 +41,7 @@ jobs:
       - name: Run benchmark governance gates (CPU)
         env:
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
-        run: bun run scripts/ci-benchmark.ts --mode=cpu
+        run: bun run scripts/ci-benchmark.ts --mode=cpu --profile=linux-x64-cpu
 
       - name: Upload benchmark artifacts
         if: always()
@@ -81,22 +81,10 @@ jobs:
       - name: Build native library
         run: zig build -Doptimize=ReleaseFast
 
-      - name: Require GPU memory rows for Metal gate
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          src = Path('bench/ci-gates.json')
-          dst = Path('bench/ci-gates-metal.json')
-          payload = json.loads(src.read_text())
-          payload.setdefault('gpu', {})['requireGpuMemoryRows'] = True
-          dst.write_text(json.dumps(payload, indent=2) + '\n')
-          PY
-
       - name: Run benchmark governance gates (Metal)
         env:
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
-        run: bun run scripts/ci-benchmark.ts --mode=gpu --gates=bench/ci-gates-metal.json
+        run: bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal
 
       - name: Upload benchmark artifacts
         if: always()

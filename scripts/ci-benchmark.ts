@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
+import os from "node:os";
 import { join } from "node:path";
 import { readdirSync } from "node:fs";
 import { resolvePath, runCommand, section, writeJson } from "./_lib";
@@ -28,6 +29,8 @@ interface GateConfig {
   version: number;
   cpu: CpuGates;
   gpu: GpuGates;
+  relative?: RelativeGatesConfig;
+  profiles?: Record<string, GateProfileOverride>;
 }
 
 interface GateFailure {
@@ -35,6 +38,47 @@ interface GateFailure {
   observed: number | null;
   expectation: string;
   artifact: string | null;
+}
+
+interface RelativeMaxGate {
+  baseline: number;
+  maxRegressionPct: number;
+}
+
+interface RelativeMinGate {
+  baseline: number;
+  maxDropPct: number;
+}
+
+interface CpuRelativeGates {
+  startupColdMs?: RelativeMaxGate;
+  encode1mbMs?: RelativeMaxGate;
+  count1mbMs?: RelativeMaxGate;
+  training100kbNativeMs?: RelativeMaxGate;
+  peakRssEncode1mbMb?: RelativeMaxGate;
+  encode1mbMiBPerSec?: RelativeMinGate;
+  count1mbMiBPerSec?: RelativeMinGate;
+}
+
+interface GpuRelativeGates {
+  maxDeviceAllocatedMiB?: RelativeMaxGate;
+  directBpeEncodeMiBPerSec?: RelativeMinGate;
+}
+
+interface RelativeGatesConfig {
+  enabled?: boolean;
+  cpu?: CpuRelativeGates;
+  gpu?: GpuRelativeGates;
+}
+
+interface GateProfileOverride {
+  cpu?: Partial<CpuGates>;
+  gpu?: Partial<GpuGates>;
+  relative?: RelativeGatesConfig;
+  host?: {
+    platform?: string;
+    arch?: string;
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -61,6 +105,16 @@ function parseGatesPath(argv: string[]): string {
   }
   const raw = arg.slice("--gates=".length).trim();
   return raw.length > 0 ? resolvePath(raw) : resolvePath("bench", "ci-gates.json");
+}
+
+function parseProfileName(argv: string[]): string | null {
+  const arg = argv.find((item) => item.startsWith("--profile="));
+  if (arg) {
+    const raw = arg.slice("--profile=".length).trim();
+    return raw.length > 0 ? raw : null;
+  }
+  const env = (process.env.TURBOTOKEN_CI_GATES_PROFILE ?? "").trim();
+  return env.length > 0 ? env : null;
 }
 
 function latestResultPath(prefix: string, options: { excludes?: string[] } = {}): string | null {
@@ -261,6 +315,127 @@ function addMinGate(
   }
 }
 
+function addRelativeMaxGate(
+  failures: GateFailure[],
+  metric: string,
+  observed: number | null,
+  gate: RelativeMaxGate | undefined,
+  artifact: string | null,
+): void {
+  if (!gate) {
+    return;
+  }
+  if (!Number.isFinite(gate.baseline) || gate.baseline < 0) {
+    throw new Error(`invalid relative max gate baseline for ${metric}`);
+  }
+  if (!Number.isFinite(gate.maxRegressionPct) || gate.maxRegressionPct < 0) {
+    throw new Error(`invalid relative max gate regression pct for ${metric}`);
+  }
+  const maxAllowed = gate.baseline * (1 + gate.maxRegressionPct / 100);
+  if (observed == null || observed > maxAllowed) {
+    failures.push({
+      metric: `${metric} (relative)`,
+      observed,
+      expectation: `<= ${maxAllowed} (${gate.maxRegressionPct}% over baseline ${gate.baseline})`,
+      artifact,
+    });
+  }
+}
+
+function addRelativeMinGate(
+  failures: GateFailure[],
+  metric: string,
+  observed: number | null,
+  gate: RelativeMinGate | undefined,
+  artifact: string | null,
+): void {
+  if (!gate) {
+    return;
+  }
+  if (!Number.isFinite(gate.baseline) || gate.baseline <= 0) {
+    throw new Error(`invalid relative min gate baseline for ${metric}`);
+  }
+  if (!Number.isFinite(gate.maxDropPct) || gate.maxDropPct < 0 || gate.maxDropPct >= 100) {
+    throw new Error(`invalid relative min gate drop pct for ${metric}`);
+  }
+  const minAllowed = gate.baseline * (1 - gate.maxDropPct / 100);
+  if (observed == null || observed < minAllowed) {
+    failures.push({
+      metric: `${metric} (relative)`,
+      observed,
+      expectation: `>= ${minAllowed} (${gate.maxDropPct}% below baseline ${gate.baseline})`,
+      artifact,
+    });
+  }
+}
+
+function mergeRelativeGates(
+  base: RelativeGatesConfig | undefined,
+  override: RelativeGatesConfig | undefined,
+): RelativeGatesConfig | undefined {
+  if (!base && !override) {
+    return undefined;
+  }
+  const merged: RelativeGatesConfig = {};
+  if (base) {
+    merged.enabled = base.enabled;
+    merged.cpu = base.cpu ? { ...base.cpu } : undefined;
+    merged.gpu = base.gpu ? { ...base.gpu } : undefined;
+  }
+  if (override) {
+    if (override.enabled !== undefined) {
+      merged.enabled = override.enabled;
+    }
+    if (override.cpu) {
+      merged.cpu = {
+        ...(merged.cpu ?? {}),
+        ...override.cpu,
+      };
+    }
+    if (override.gpu) {
+      merged.gpu = {
+        ...(merged.gpu ?? {}),
+        ...override.gpu,
+      };
+    }
+  }
+  return merged;
+}
+
+function applyProfile(base: GateConfig, profileName: string | null): {
+  effective: GateConfig;
+  selectedProfile: string | null;
+} {
+  if (!profileName) {
+    return { effective: base, selectedProfile: null };
+  }
+  const profiles = base.profiles;
+  if (!isRecord(profiles)) {
+    throw new Error(`gate profile ${JSON.stringify(profileName)} requested but no profiles are defined`);
+  }
+  const rawOverride = profiles[profileName];
+  if (!isRecord(rawOverride)) {
+    const available = Object.keys(profiles).sort();
+    throw new Error(
+      `gate profile ${JSON.stringify(profileName)} not found; available profiles: ${available.join(", ")}`,
+    );
+  }
+  const override = rawOverride as GateProfileOverride;
+  const effective: GateConfig = {
+    ...base,
+    cpu: {
+      ...base.cpu,
+      ...(override.cpu ?? {}),
+    },
+    gpu: {
+      ...base.gpu,
+      ...(override.gpu ?? {}),
+    },
+    relative: mergeRelativeGates(base.relative, override.relative),
+  };
+  return { effective, selectedProfile: profileName };
+}
+
 function runScripts(mode: Mode): void {
   const cpuScripts = [
     "scripts/generate-fixture.ts",
@@ -303,6 +478,7 @@ function runScripts(mode: Mode): void {
 
 const mode = parseMode(process.argv.slice(2));
 const gatesPath = parseGatesPath(process.argv.slice(2));
+const profileName = parseProfileName(process.argv.slice(2));
 const noRun = process.argv.includes("--no-run");
 const includeCuda = ["1", "true", "yes", "on"].includes(
   (process.env.TURBOTOKEN_BENCH_INCLUDE_CUDA ?? "").trim().toLowerCase(),
@@ -316,10 +492,12 @@ if (!noRun) {
   runScripts(mode);
 }
 
-const gates = JSON.parse(readFileSync(gatesPath, "utf8")) as GateConfig;
-if (!isRecord(gates) || !isRecord(gates.cpu) || !isRecord(gates.gpu)) {
+const parsedGates = JSON.parse(readFileSync(gatesPath, "utf8")) as GateConfig;
+if (!isRecord(parsedGates) || !isRecord(parsedGates.cpu) || !isRecord(parsedGates.gpu)) {
   throw new Error(`invalid gates config: ${gatesPath}`);
 }
+const { effective: gates, selectedProfile } = applyProfile(parsedGates, profileName);
+const relativeEnabled = gates.relative?.enabled === true;
 
 const artifacts = {
   startupCold: latestResultPath("bench-startup-cold"),
@@ -399,6 +577,58 @@ if (mode === "all" || mode === "cpu") {
     gates.cpu.count1mbMinMiBPerSec,
     artifacts.competitorsCount,
   );
+  if (relativeEnabled) {
+    const cpuRelative = gates.relative?.cpu;
+    addRelativeMaxGate(
+      failures,
+      "startup cold ms",
+      startupColdMs,
+      cpuRelative?.startupColdMs,
+      artifacts.startupCold,
+    );
+    addRelativeMaxGate(
+      failures,
+      "encode 1mb ms",
+      encode1mbMs,
+      cpuRelative?.encode1mbMs,
+      artifacts.competitorsEncode,
+    );
+    addRelativeMaxGate(
+      failures,
+      "count 1mb ms",
+      count1mbMs,
+      cpuRelative?.count1mbMs,
+      artifacts.competitorsCount,
+    );
+    addRelativeMaxGate(
+      failures,
+      "training 100kb native ms",
+      training100kbNativeMs,
+      cpuRelative?.training100kbNativeMs,
+      artifacts.training,
+    );
+    addRelativeMaxGate(
+      failures,
+      "peak RSS encode 1mb MB",
+      peakRssEncode1mbMb,
+      cpuRelative?.peakRssEncode1mbMb,
+      artifacts.ram,
+    );
+    addRelativeMinGate(
+      failures,
+      "encode 1mb MiB/s",
+      encode1mbMiBPerSec,
+      cpuRelative?.encode1mbMiBPerSec,
+      artifacts.competitorsEncode,
+    );
+    addRelativeMinGate(
+      failures,
+      "count 1mb MiB/s",
+      count1mbMiBPerSec,
+      cpuRelative?.count1mbMiBPerSec,
+      artifacts.competitorsCount,
+    );
+  }
 }
 
 if (mode === "all" || mode === "gpu") {
@@ -426,12 +656,37 @@ if (mode === "all" || mode === "gpu") {
       gates.gpu.minBpeDirectEncodeMiBPerSec,
       artifacts.gpuMemory,
     );
+    if (relativeEnabled) {
+      const gpuRelative = gates.relative?.gpu;
+      addRelativeMaxGate(
+        failures,
+        "gpu max device allocated MiB",
+        gpuParsed.maxDeviceAllocatedMiB,
+        gpuRelative?.maxDeviceAllocatedMiB,
+        artifacts.gpuMemory,
+      );
+      addRelativeMinGate(
+        failures,
+        "gpu direct bpe encode MiB/s",
+        gpuParsed.bestBpeDirectMiBPerSec,
+        gpuRelative?.directBpeEncodeMiBPerSec,
+        artifacts.gpuMemory,
+      );
+    }
   }
 }
 
 const summary = {
   mode,
   cudaDefaultOff: !includeCuda,
+  selectedProfile,
+  relativeEnabled,
+  host: {
+    platform: process.platform,
+    arch: process.arch,
+    release: os.release(),
+    hostname: os.hostname(),
+  },
   gatesPath,
   artifacts,
   metrics: {
@@ -447,7 +702,12 @@ const summary = {
   failures,
 };
 
-const outPath = resolvePath("bench", "results", `ci-benchmark-${Date.now()}.json`);
+const profileTag = selectedProfile ? selectedProfile.replace(/[^a-zA-Z0-9_-]+/g, "_") : "default";
+const outPath = resolvePath(
+  "bench",
+  "results",
+  `ci-benchmark-${mode}-${profileTag}-${Date.now()}-${process.pid}.json`,
+);
 writeJson(outPath, summary);
 console.log(`Wrote CI benchmark summary: ${outPath}`);
 

@@ -31,5 +31,17 @@ jobs:
       - name: Verify npm/WASM artifact
         run: bun run verify:npm-package
 
+      - name: Smoke-install packed npm artifact
+        run: bun run smoke:npm-install
+
       - name: Run JS smoke tests
         run: bun test js/tests/smoke.test.ts
+
+      - name: Upload npm smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-smoke
+          path: |
+            dist/npm/verify-npm-package-*.json
+            dist/npm/smoke-npm-install-*.json

@@ -146,3 +146,51 @@ def test_encode_gpu_overlap_toggle_matches_baseline(monkeypatch: pytest.MonkeyPa
 
     assert no_overlap == baseline
     assert with_overlap == baseline
+
+
+def test_encode_gpu_range_batch_toggle_matches_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("range batch validation " * 16_384).strip()
+    baseline = enc.encode(text)
+
+    monkeypatch.setenv("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ENABLE", "0")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_MIN_TEXT_BYTES", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_MIN_METAL_PIECES", "1")
+    ranged = enc.encode_gpu(
+        [text],
+        device="metal",
+        chunk_bytes=4096,
+        overlap_bytes=512,
+        strict_verify=False,
+    )[0]
+    assert ranged == baseline
+
+
+def test_chunked_stitch_many_toy_ranges_match_exact_when_native_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native bridge unavailable")
+
+    ranks = b"YQ== 0\nYg== 1\nYw== 2\nYWI= 3\nYmM= 4\nYWJj 5\n"
+    data = b"abcabc|abcabc|abcabc"
+    ranges = [(0, 6), (7, 13), (14, len(data))]
+    exact_batch = bridge.encode_bpe_ranges_from_ranks(ranks, data, ranges)
+    if exact_batch is None:
+        pytest.skip("native bridge does not expose range symbols")
+    exact_flat, exact_offsets = exact_batch
+
+    many = _gpu.encode_bpe_chunked_stitched_many(
+        ranks,
+        data,
+        ranges,
+        chunk_bytes=4,
+        overlap_bytes=4,
+        strict_verify=True,
+        prefer_metal_stitch=True,
+    )
+    assert many is not None
+    many_flat, many_offsets = many
+    assert many_offsets == exact_offsets
+    assert many_flat == exact_flat

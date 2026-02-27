@@ -41,6 +41,9 @@
 - `scripts/bench-gpu-overlap.ts` to benchmark CPU-only vs Metal non-overlap vs CPU+GPU overlap routes on large-text batches
 - `bench/ci-gates.json` to define hard benchmark gate thresholds used by CI governance runs
 - `scripts/verify-npm-package.ts` to verify WASM packaging artifacts (load + roundtrip) before npm pack
+- `scripts/smoke-wheel-install.ts` to install the host wheel artifact into an isolated venv and verify import + native bridge load
+- `scripts/smoke-npm-install.ts` to pack/install npm artifacts into a temp project and verify installed WASM bridge roundtrip
+- `scripts/refresh-ci-gates-baselines.ts` to auto-refresh per-runner relative gate baselines from latest successful `ci-benchmark` artifacts (with host matching safeguards)
 - `gpt-tokenizer` is now included as a tracked upstream repo (`upstream/gpt-tokenizer/`) and benchmarked competitor across startup/encode/decode/count/RSS rows (Bun runtime)
 - `scripts/generate-pair-cache-seeds.ts` plus generated seed artifact `src/generated/pair_cache_seeds.zig` for merge-table-driven pair-cache warmup
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
@@ -220,9 +223,15 @@
 - Added native bridge hybrid export `turbotoken_metal_encode_utf8_bytes_hybrid(...)` and switched hybrid benchmark coverage from Python threadpool orchestration to native bridge orchestration (`gpu/metal/metal_bridge.m`, `python/turbotoken/_gpu.py`, `scripts/bench-gpu.ts`, `bench/results/bench-gpu-20260227-150010.json`)
 - Added canonical benchmark scorecard generator (`scripts/bench-scorecard.ts`, `bun run bench:scorecard`) and wired it into full bench runs (`scripts/bench-all.ts`) to emit a single consolidated artifact (`bench/results/bench-scorecard-*.json`) plus Markdown summary (`bench/charts/scorecard.md`)
 - Added benchmark governance CI workflow + gate runner (`.github/workflows/benchmark.yml`, `scripts/ci-benchmark.ts`) with CUDA kept off by default and explicit on-demand execution
+- `scripts/ci-benchmark.ts` now supports relative regression gates (baseline + allowed drift) in addition to absolute thresholds, wired through `bench/ci-gates.json`
+- `scripts/ci-benchmark.ts` now supports runner profile selection (`--profile=...` / `TURBOTOKEN_CI_GATES_PROFILE`) with per-runner gate overrides; benchmark workflow uses:
+  - `linux-x64-cpu` for Ubuntu CPU gates
+  - `macos-arm64-metal` for macOS Metal gates
 - Added real WASM CI workflow (`.github/workflows/wasm.yml`) and manual wheels workflow (`.github/workflows/wheels.yml`) replacing placeholder TODO steps
+- Wheels and WASM workflows now include artifact smoke-install checks (`bun run smoke:wheel-install`, `bun run smoke:npm-install`) and upload smoke JSON artifacts
 - Metal autoroute cache schema is now `v5` with large-crossover routing floors so small/medium BPE pieces remain on CPU/native by default unless explicitly forced (`TURBOTOKEN_METAL_FORCE_ALL_PIECES=1`)
 - `Encoding.encode_gpu(...)` now has a large-input CPU+GPU overlap pretokenize pipeline (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, `TURBOTOKEN_GPU_OVERLAP_MIN_TEXT_BYTES`, `TURBOTOKEN_GPU_OVERLAP_PREFETCH_PIECES`) while preserving baseline token output
+- `Encoding.encode_gpu(...)` now includes an optional range-batched GPU route for large texts with Metal-eligible pieces (`TURBOTOKEN_GPU_RANGE_BATCH_*`), plus multi-range chunk-stitch helper (`encode_bpe_chunked_stitched_many`) and parity tests
 - `scripts/build-wheels.ts` now clears stale wheel outputs and verifies that each repacked wheel embeds the exact expected native library bytes (SHA-256 check)
 - Core native BPE calls now use a reusable native rank session abstraction (`NativeBridge.rank_session(...)` / `NativeRankSession`) to reduce repeated Python-side bridge plumbing and keep rank-payload-bound calls more direct (`python/turbotoken/_native.py`, `python/turbotoken/core.py`)
 - `_ensure_rank_payload()` now prefers compiled native rank payload blobs by default (`*.tiktoken.native.bin`) with opt-out (`TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`), and rank parsing now supports both text `.tiktoken` payloads and native binary payloads through a unified parser (`python/turbotoken/_rank_files.py`)

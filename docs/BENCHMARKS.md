@@ -37,6 +37,17 @@
   - training latency (native 100KB fixture)
   - peak RSS for 1MB encode
   - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
+- Relative regression gates are also enabled in `bench/ci-gates.json` (`relative.enabled=true`) so CI enforces bounded drift against baselines for the same metric set (latency, throughput, RSS, GPU memory).
+- Runner-specific profiles are now supported via `scripts/ci-benchmark.ts --profile=...`:
+  - `linux-x64-cpu` for Ubuntu CPU gate runners
+  - `macos-arm64-metal` for macOS Metal gate runners
+  This keeps relative baselines host-aware instead of sharing one global baseline across dissimilar runners.
+- Baseline refresh tooling:
+  - `bun run bench:ci:refresh-baselines` refreshes profile relative baselines from the latest successful per-profile CI benchmark artifacts.
+  - host guard is enabled by default (profile host must match artifact host); use `--allow-host-mismatch` only for explicit local experimentation.
+- Packaging smoke checks are now CI-wired:
+  - wheels workflow installs the host wheel into an isolated venv and verifies import + native bridge load.
+  - wasm workflow packs npm tarball, installs it into a temp project, and validates installed WASM roundtrip.
 
 ### Test Machine
 
@@ -281,7 +292,7 @@ Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 
 ## Latest CPU+GPU Overlap Matrix (2026-02-28, macOS ARM64)
 
-- artifact: `bench/results/bench-gpu-overlap-1772224466624.json`
+- artifact: `bench/results/bench-gpu-overlap-1772226423191.json`
 - command: `bun run scripts/bench-gpu-overlap.ts`
 - workload: 1MB `o200k_base` texts in batch mode (`TURBOTOKEN_GPU_OVERLAP_BATCH`, default `4`)
 
@@ -292,6 +303,7 @@ What this measures:
 
 Note:
 - This path is intentionally scoped to **large-text crossover** behavior; small/medium pieces remain routed to CPU/native by default.
+- Latest run still shows CPU-only ahead on this machine/workload (`~38.2 MiB/s` CPU vs `~9.7 MiB/s` Metal non-overlap vs `~9.3 MiB/s` overlap), so overlap remains experimental and off by default for broad workloads.
 
 ---
 

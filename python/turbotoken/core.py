@@ -644,6 +644,44 @@ class Encoding:
             return 32
         return max(2, value)
 
+    def _gpu_range_batch_enabled(self) -> bool:
+        raw = os.environ.get("TURBOTOKEN_GPU_RANGE_BATCH_ENABLE", "").strip().lower()
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        return True
+
+    def _gpu_range_batch_min_text_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_GPU_RANGE_BATCH_MIN_TEXT_BYTES", "").strip()
+        if not raw:
+            return 262_144
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 262_144
+        return max(1, value)
+
+    def _gpu_range_batch_min_metal_pieces(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_GPU_RANGE_BATCH_MIN_METAL_PIECES", "").strip()
+        if not raw:
+            return 2
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 2
+        return max(1, value)
+
+    def _gpu_range_batch_max_ranges(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_GPU_RANGE_BATCH_MAX_RANGES", "").strip()
+        if not raw:
+            return 8192
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 8192
+        return max(1, value)
+
     def _native_rank_session(self) -> Any | None:
         rank_payload = self._rank_payload_cache
         if rank_payload is None:
@@ -907,12 +945,116 @@ class Encoding:
             except Exception:
                 gpu = None
         bpe_cache = self._bpe_cache
+        text_bytes_len = len(text.encode("utf-8"))
         use_overlap_pretokenize = (
             gpu is not None
             and not strict_verify
             and self._gpu_overlap_enabled()
-            and len(text.encode("utf-8")) >= self._gpu_overlap_min_text_bytes()
+            and text_bytes_len >= self._gpu_overlap_min_text_bytes()
         )
+
+        use_gpu_range_batch = (
+            gpu is not None
+            and session is not None
+            and rank_payload is not None
+            and not strict_verify
+            and self._gpu_range_batch_enabled()
+            and text_bytes_len >= self._gpu_range_batch_min_text_bytes()
+        )
+        if use_gpu_range_batch:
+            piece_ranges = self._ordinary_piece_ranges_bytes(text)
+            if piece_ranges is not None:
+                data, ranges = piece_ranges
+                if not ranges:
+                    return []
+                if len(ranges) > self._gpu_range_batch_max_ranges():
+                    ranges = []
+
+                force_all_metal = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                }
+
+                cpu_indices: list[int] = []
+                cpu_ranges: list[tuple[int, int]] = []
+                metal_indices: list[int] = []
+                metal_ranges: list[tuple[int, int]] = []
+
+                for idx, (start, end) in enumerate(ranges):
+                    piece_len = end - start
+                    if piece_len <= 0:
+                        continue
+                    if force_all_metal:
+                        route_backend = "metal"
+                    else:
+                        route_backend = gpu.bpe_route_backend(piece_len)
+                    if route_backend == "metal" and piece_len >= (chunk_bytes * 2):
+                        metal_indices.append(idx)
+                        metal_ranges.append((start, end))
+                    else:
+                        cpu_indices.append(idx)
+                        cpu_ranges.append((start, end))
+
+                min_metal_ranges = self._gpu_range_batch_min_metal_pieces()
+                if not metal_ranges or len(metal_ranges) < min_metal_ranges:
+                    ranges = []
+                    cpu_indices = []
+                    cpu_ranges = []
+                    metal_indices = []
+                    metal_ranges = []
+
+                tokens_by_piece: list[list[int] | None] = [None] * len(ranges) if ranges else []
+
+                if cpu_ranges:
+                    cpu_batch = session.encode_bpe_ranges(data, cpu_ranges)
+                    if cpu_batch is None:
+                        tokens_by_piece = []
+                    else:
+                        flat_tokens, token_offsets = cpu_batch
+                        if len(token_offsets) != len(cpu_ranges) + 1:
+                            tokens_by_piece = []
+                        else:
+                            for local_idx, piece_idx in enumerate(cpu_indices):
+                                token_start = token_offsets[local_idx]
+                                token_end = token_offsets[local_idx + 1]
+                                if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+                                    tokens_by_piece = []
+                                    break
+                                tokens_by_piece[piece_idx] = flat_tokens[token_start:token_end]
+
+                if tokens_by_piece and metal_ranges:
+                    metal_batch = gpu.encode_bpe_chunked_stitched_many(
+                        rank_payload,
+                        data,
+                        metal_ranges,
+                        chunk_bytes=chunk_bytes,
+                        overlap_bytes=overlap_bytes,
+                        strict_verify=strict_verify,
+                        prefer_metal_stitch=True,
+                    )
+                    if metal_batch is None:
+                        tokens_by_piece = []
+                    else:
+                        flat_tokens, token_offsets = metal_batch
+                        if len(token_offsets) != len(metal_ranges) + 1:
+                            tokens_by_piece = []
+                        else:
+                            for local_idx, piece_idx in enumerate(metal_indices):
+                                token_start = token_offsets[local_idx]
+                                token_end = token_offsets[local_idx + 1]
+                                if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+                                    tokens_by_piece = []
+                                    break
+                                tokens_by_piece[piece_idx] = flat_tokens[token_start:token_end]
+
+                if tokens_by_piece and all(piece_tokens is not None for piece_tokens in tokens_by_piece):
+                    out: list[int] = []
+                    for piece_tokens in tokens_by_piece:
+                        if piece_tokens:
+                            out.extend(piece_tokens)
+                    return out
+
         if use_overlap_pretokenize:
             piece_iter: Iterable[bytes] = self._ordinary_piece_bytes_pipelined_iter(
                 text,

@@ -43,8 +43,11 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | GPU-008 | Metal autoroute BPE calibration | ensure rank payload is available during BPE calibration to emit crossover rows | `DONE (first pass)` |
 | GPU-009 | Hybrid NEON+Metal encode orchestration | move split execution from Python threadpool into native Metal bridge symbol | `DONE (first pass)` |
 | GPU-010 | Metal overlap pipeline | overlap CPU pretokenization with GPU chunk processing for large-text batches only | `DONE (first pass)` |
-| DX-003 | Benchmark governance | hard CI gate runner for startup/count/encode/training/RSS/MBps/GPU memory with CUDA default-off | `DONE (first pass)` |
+| GPU-011 | Metal range batching | batch multi-piece chunk-window stitching through shared range submissions and host-side ordered assembly | `DONE (second pass, keep optional)` |
+| DX-003 | Benchmark governance | hard CI gate runner for startup/count/encode/training/RSS/MBps/GPU memory with CUDA default-off | `DONE (second pass, runner-profile baselines)` |
 | DX-004 | Packaging integrity | verify wheel-embedded native libs by hash and validate npm WASM packaging path | `DONE (first pass)` |
+| DX-005 | Packaging smoke CI | install/load smoke checks for built wheel and packed npm artifact in workflows | `DONE (second pass)` |
+| DX-006 | Baseline refresh tooling | auto-update per-runner relative baselines from latest successful profile-matched CI artifacts | `DONE (first pass)` |
 
 ## Competitor Study: gpt-tokenizer (2026-02-27)
 

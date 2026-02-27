@@ -1,17 +1,125 @@
 {
-  "version": 1,
+  "version": 2,
   "cpu": {
     "startupColdMaxMs": 300,
     "encode1mbMaxMs": 450,
     "count1mbMaxMs": 450,
     "training100kbNativeMaxMs": 700,
     "peakRssEncode1mbMaxMb": 700,
-    "encode1mbMinMiBPerSec": 2.0,
-    "count1mbMinMiBPerSec": 2.0
+    "encode1mbMinMiBPerSec": 2,
+    "count1mbMinMiBPerSec": 2
   },
   "gpu": {
     "maxDeviceAllocatedMiB": 4096,
-    "minBpeDirectEncodeMiBPerSec": 1.0,
+    "minBpeDirectEncodeMiBPerSec": 1,
     "requireGpuMemoryRows": false
+  },
+  "relative": {
+    "enabled": true,
+    "cpu": {
+      "startupColdMs": {
+        "baseline": 240,
+        "maxRegressionPct": 25
+      },
+      "encode1mbMs": {
+        "baseline": 360,
+        "maxRegressionPct": 25
+      },
+      "count1mbMs": {
+        "baseline": 360,
+        "maxRegressionPct": 25
+      },
+      "training100kbNativeMs": {
+        "baseline": 560,
+        "maxRegressionPct": 25
+      },
+      "peakRssEncode1mbMb": {
+        "baseline": 560,
+        "maxRegressionPct": 25
+      },
+      "encode1mbMiBPerSec": {
+        "baseline": 2.5,
+        "maxDropPct": 20
+      },
+      "count1mbMiBPerSec": {
+        "baseline": 2.5,
+        "maxDropPct": 20
+      }
+    },
+    "gpu": {
+      "maxDeviceAllocatedMiB": {
+        "baseline": 3072,
+        "maxRegressionPct": 33.4
+      },
+      "directBpeEncodeMiBPerSec": {
+        "baseline": 1.25,
+        "maxDropPct": 20
+      }
+    }
+  },
+  "profiles": {
+    "linux-x64-cpu": {
+      "host": {
+        "platform": "linux",
+        "arch": "x64"
+      },
+      "relative": {
+        "enabled": true,
+        "cpu": {
+          "startupColdMs": {
+            "baseline": 220,
+            "maxRegressionPct": 35
+          },
+          "encode1mbMs": {
+            "baseline": 320,
+            "maxRegressionPct": 35
+          },
+          "count1mbMs": {
+            "baseline": 320,
+            "maxRegressionPct": 35
+          },
+          "training100kbNativeMs": {
+            "baseline": 500,
+            "maxRegressionPct": 35
+          },
+          "peakRssEncode1mbMb": {
+            "baseline": 520,
+            "maxRegressionPct": 30
+          },
+          "encode1mbMiBPerSec": {
+            "baseline": 2.5,
+            "maxDropPct": 20
+          },
+          "count1mbMiBPerSec": {
+            "baseline": 2.5,
+            "maxDropPct": 20
+          }
+        }
+      }
+    },
+    "macos-arm64-metal": {
+      "host": {
+        "platform": "darwin",
+        "arch": "arm64"
+      },
+      "gpu": {
+        "maxDeviceAllocatedMiB": 256,
+        "minBpeDirectEncodeMiBPerSec": 6,
+        "requireGpuMemoryRows": true
+      },
+      "relative": {
+        "enabled": true,
+        "gpu": {
+          "maxDeviceAllocatedMiB": {
+            "baseline": 40.453125,
+            "maxRegressionPct": 50
+          },
+          "directBpeEncodeMiBPerSec": {
+            "baseline": 14.515969,
+            "maxDropPct": 40
+          }
+        }
+      }
+    }
   }
 }

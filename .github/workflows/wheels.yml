@@ -34,6 +34,9 @@ jobs:
       - name: Build and verify platform-tagged wheels
         run: bun run build:wheels
 
+      - name: Smoke-install host wheel artifact
+        run: bun run smoke:wheel-install
+
       - name: Upload wheel artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -42,3 +45,4 @@ jobs:
           path: |
             dist/wheels/*.whl
             dist/wheels/build-wheels-*.json
+            dist/wheels/smoke-wheel-install-*.json

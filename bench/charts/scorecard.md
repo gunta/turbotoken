@@ -1,6 +1,6 @@
 # Scorecard
 
-Generated: 2026-02-27T20:34:37.468Z
+Generated: 2026-02-27T21:07:21.844Z
 
 ## Comparison (100KB encode)
 - turbotoken: 44.9 ms
@@ -35,6 +35,6 @@ Generated: 2026-02-27T20:34:37.468Z
 - chatHelpers: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-chat-helpers-20260227-174446.json
 - training: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-training-python-20260227-145645.json
 - ram: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-ram-1772212098947.json
-- gpuMemory: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-memory-1772224066302.json
-- gpuOverlap: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-overlap-1772224466624.json
+- gpuMemory: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-memory-1772225926523.json
+- gpuOverlap: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-overlap-1772226423191.json
 

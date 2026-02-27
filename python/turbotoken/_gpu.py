@@ -1401,6 +1401,223 @@ def _token_total_bytes(tokens: Sequence[int], token_lens: dict[int, int]) -> int
     return total
 
 
+def _normalize_ranges(
+    ranges: Sequence[tuple[int, int]],
+    *,
+    data_len: int,
+) -> list[tuple[int, int]] | None:
+    normalized: list[tuple[int, int]] = []
+    for item in ranges:
+        if len(item) != 2:
+            return None
+        start = int(item[0])
+        end = int(item[1])
+        if start < 0 or end < start or end > data_len:
+            return None
+        normalized.append((start, end))
+    return normalized
+
+
+def _encode_bpe_ranges_exact_pieces(
+    bridge: Any,
+    rank_payload: bytes,
+    data: bytes,
+    ranges: Sequence[tuple[int, int]],
+) -> list[list[int]] | None:
+    if not ranges:
+        return []
+
+    batch = bridge.encode_bpe_ranges_from_ranks(rank_payload, data, list(ranges))
+    if batch is not None:
+        flat_tokens, token_offsets = batch
+        if len(token_offsets) == len(ranges) + 1:
+            pieces: list[list[int]] = []
+            for idx in range(len(ranges)):
+                token_start = token_offsets[idx]
+                token_end = token_offsets[idx + 1]
+                if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+                    return None
+                pieces.append(flat_tokens[token_start:token_end])
+            return pieces
+
+    pieces_fallback: list[list[int]] = []
+    for start, end in ranges:
+        tokens = bridge.encode_bpe_from_ranks(rank_payload, data[start:end])
+        if tokens is None:
+            return None
+        pieces_fallback.append(tokens)
+    return pieces_fallback
+
+
+def _flatten_token_pieces(pieces: Sequence[Sequence[int]]) -> tuple[list[int], list[int]]:
+    flat_tokens: list[int] = []
+    token_offsets = [0]
+    for piece in pieces:
+        if piece:
+            flat_tokens.extend(piece)
+        token_offsets.append(len(flat_tokens))
+    return flat_tokens, token_offsets
+
+
+def _encode_bpe_chunked_stitched_metal_many(
+    rank_payload: bytes,
+    data: bytes,
+    *,
+    ranges: Sequence[tuple[int, int]],
+    chunk_bytes: int,
+    overlap_bytes: int,
+) -> list[list[int]] | None:
+    native_bridge = get_native_bridge()
+    metal_bridge = get_metal_bridge()
+    if not native_bridge.available or not metal_bridge.available:
+        return None
+    if not ranges:
+        return []
+
+    token_lens = _rank_token_lens_from_payload(rank_payload)
+    full_piece_max_bytes = int(os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384"))
+    full_piece_gpu_ready = _ensure_metal_bpe_rank_table(rank_payload)
+
+    per_piece: list[list[int] | None] = [None] * len(ranges)
+    long_piece_indices: list[int] = []
+    long_piece_ranges: list[tuple[int, int]] = []
+    long_piece_num_chunks: list[int] = []
+
+    for piece_idx, (piece_start, piece_end) in enumerate(ranges):
+        piece_len = piece_end - piece_start
+        piece_bytes = data[piece_start:piece_end]
+
+        if piece_len <= full_piece_max_bytes and full_piece_gpu_ready:
+            gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
+            if gpu_tokens is not None:
+                gpu_total = _token_total_bytes(gpu_tokens, token_lens)
+                if gpu_total == piece_len:
+                    per_piece[piece_idx] = gpu_tokens
+                    continue
+
+        num_chunks = (piece_len + chunk_bytes - 1) // chunk_bytes
+        if num_chunks <= 1:
+            exact = native_bridge.encode_bpe_from_ranks(rank_payload, piece_bytes)
+            if exact is None:
+                return None
+            per_piece[piece_idx] = exact
+            continue
+
+        long_piece_indices.append(piece_idx)
+        long_piece_ranges.append((piece_start, piece_end))
+        long_piece_num_chunks.append(num_chunks)
+
+    if not long_piece_indices:
+        if any(piece_tokens is None for piece_tokens in per_piece):
+            return None
+        return [piece_tokens or [] for piece_tokens in per_piece]
+
+    window_piece_indices: list[int] = []
+    window_piece_starts: list[int] = []
+    window_ext_starts: list[int] = []
+    window_ext_ends: list[int] = []
+    window_chunk_indices: list[int] = []
+    window_num_chunks: list[int] = []
+
+    for idx, (piece_start, piece_end) in enumerate(long_piece_ranges):
+        piece_idx = long_piece_indices[idx]
+        num_chunks = long_piece_num_chunks[idx]
+        for local_chunk_idx in range(num_chunks):
+            chunk_start = piece_start + (local_chunk_idx * chunk_bytes)
+            chunk_end = min(piece_end, chunk_start + chunk_bytes)
+            ext_start = max(piece_start, chunk_start - overlap_bytes)
+            ext_end = min(piece_end, chunk_end + overlap_bytes)
+            window_piece_indices.append(piece_idx)
+            window_piece_starts.append(piece_start)
+            window_ext_starts.append(ext_start)
+            window_ext_ends.append(ext_end)
+            window_chunk_indices.append(local_chunk_idx)
+            window_num_chunks.append(num_chunks)
+
+    ext_bytes_per_chunk = max(1, chunk_bytes + (2 * overlap_bytes))
+    chunks_per_batch = max(1, min(512, (8 * 1024 * 1024) // ext_bytes_per_chunk))
+
+    piece_flat_tokens: dict[int, list[int]] = {piece_idx: [] for piece_idx in long_piece_indices}
+    piece_token_starts: dict[int, list[int]] = {piece_idx: [] for piece_idx in long_piece_indices}
+    piece_source_chunks: dict[int, list[int]] = {piece_idx: [] for piece_idx in long_piece_indices}
+
+    for batch_start in range(0, len(window_ext_starts), chunks_per_batch):
+        batch_end = min(len(window_ext_starts), batch_start + chunks_per_batch)
+        window_ranges = [
+            (window_ext_starts[window_idx], window_ext_ends[window_idx]) for window_idx in range(batch_start, batch_end)
+        ]
+        batch = native_bridge.encode_bpe_ranges_from_ranks(rank_payload, data, window_ranges)
+        if batch is None:
+            return None
+
+        flat_tokens, token_offsets = batch
+        if len(token_offsets) != len(window_ranges) + 1:
+            return None
+
+        for local_window_idx in range(len(window_ranges)):
+            token_start = token_offsets[local_window_idx]
+            token_end = token_offsets[local_window_idx + 1]
+            if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+                return None
+
+            window_idx = batch_start + local_window_idx
+            piece_idx = window_piece_indices[window_idx]
+            piece_start = window_piece_starts[window_idx]
+            ext_start = window_ext_starts[window_idx]
+            ext_end = window_ext_ends[window_idx]
+            local_chunk_idx = window_chunk_indices[window_idx]
+            num_chunks = window_num_chunks[window_idx]
+            if local_chunk_idx < 0 or local_chunk_idx >= num_chunks:
+                return None
+
+            cursor = 0
+            ext_len = ext_end - ext_start
+            for token in flat_tokens[token_start:token_end]:
+                token_len = token_lens.get(token)
+                if token_len is None:
+                    return None
+                next_cursor = cursor + token_len
+                if next_cursor > ext_len:
+                    return None
+                token_start_local = (ext_start + cursor) - piece_start
+                piece_token_starts[piece_idx].append(token_start_local)
+                piece_source_chunks[piece_idx].append(local_chunk_idx)
+                piece_flat_tokens[piece_idx].append(token)
+                cursor = next_cursor
+            if cursor != ext_len:
+                return None
+
+    for idx, piece_idx in enumerate(long_piece_indices):
+        num_chunks = long_piece_num_chunks[idx]
+        token_starts = piece_token_starts[piece_idx]
+        source_chunks = piece_source_chunks[piece_idx]
+        tokens = piece_flat_tokens[piece_idx]
+        flags = metal_bridge.chunk_owner_flags(
+            token_starts,
+            source_chunks,
+            chunk_bytes=chunk_bytes,
+            num_chunks=num_chunks,
+        )
+        if flags is None or len(flags) != len(tokens):
+            return None
+
+        filtered = native_bridge.filter_tokens_by_keep_flags(tokens, flags)
+        if filtered is not None:
+            kept = filtered
+        else:
+            kept = [token for token, keep in zip(tokens, flags) if keep != 0]
+
+        piece_start, piece_end = long_piece_ranges[idx]
+        kept_total = _token_total_bytes(kept, token_lens)
+        if kept_total is None or kept_total != (piece_end - piece_start):
+            return None
+        per_piece[piece_idx] = kept
+
+    if any(piece_tokens is None for piece_tokens in per_piece):
+        return None
+    return [piece_tokens or [] for piece_tokens in per_piece]
+
+
 def _repair_chunk_boundaries(
     rank_payload: bytes,
     data: bytes,
@@ -1650,3 +1867,69 @@ def encode_bpe_chunked_stitched(
             return full_tokens
 
     return stitched
+
+
+def encode_bpe_chunked_stitched_many(
+    rank_payload: bytes,
+    data: bytes,
+    ranges: Sequence[tuple[int, int]],
+    *,
+    chunk_bytes: int = 16_384,
+    overlap_bytes: int = 512,
+    strict_verify: bool = True,
+    prefer_metal_stitch: bool = False,
+) -> tuple[list[int], list[int]] | None:
+    if chunk_bytes <= 0:
+        raise ValueError("chunk_bytes must be > 0")
+    if overlap_bytes <= 0:
+        raise ValueError("overlap_bytes must be > 0")
+
+    normalized = _normalize_ranges(ranges, data_len=len(data))
+    if normalized is None:
+        return None
+    if not normalized:
+        return [], [0]
+
+    bridge = get_native_bridge()
+    if not bridge.available:
+        return None
+
+    if len(normalized) == 1:
+        start, end = normalized[0]
+        tokens = encode_bpe_chunked_stitched(
+            rank_payload,
+            data[start:end],
+            chunk_bytes=chunk_bytes,
+            overlap_bytes=overlap_bytes,
+            strict_verify=strict_verify,
+            prefer_metal_stitch=prefer_metal_stitch,
+        )
+        if tokens is None:
+            return None
+        return tokens, [0, len(tokens)]
+
+    pieces: list[list[int]] | None = None
+    if prefer_metal_stitch:
+        pieces = _encode_bpe_chunked_stitched_metal_many(
+            rank_payload,
+            data,
+            ranges=normalized,
+            chunk_bytes=chunk_bytes,
+            overlap_bytes=overlap_bytes,
+        )
+
+    if pieces is None:
+        pieces = _encode_bpe_ranges_exact_pieces(bridge, rank_payload, data, normalized)
+        if pieces is None:
+            return None
+    elif strict_verify:
+        exact = _encode_bpe_ranges_exact_pieces(bridge, rank_payload, data, normalized)
+        if exact is None:
+            return None
+        if len(exact) != len(pieces):
+            return None
+        for idx in range(len(pieces)):
+            if pieces[idx] != exact[idx]:
+                pieces[idx] = exact[idx]
+
+    return _flatten_token_pieces(pieces)
