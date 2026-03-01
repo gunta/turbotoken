@@ -9,6 +9,7 @@ import {
   runCommand,
   runShell,
   section,
+  withBenchmarkLock,
   writeJson,
 } from "./_lib";
 
@@ -101,64 +102,66 @@ function resolveHyperfineCommand(): string | null {
 }
 
 export function runBench(options: BenchOptions): number {
-  const warmup = options.warmup ?? 3;
-  const minRuns = options.minRuns ?? 10;
+  return withBenchmarkLock(options.name, () => {
+    const warmup = options.warmup ?? 3;
+    const minRuns = options.minRuns ?? 10;
 
-  if (options.commands.length === 0) {
-    throw new Error("runBench requires at least one command");
-  }
-
-  const resultsDir = resolvePath("bench", "results");
-  ensureDir(resultsDir);
-
-  const taggedName = `${options.name}-${dateTag()}`;
-  const jsonPath = resolve(resultsDir, `${taggedName}.json`);
-
-  const hyperfine = resolveHyperfineCommand();
-  if (hyperfine !== null) {
-    section(`Hyperfine: ${options.name}`);
-
-    const args = [
-      "--warmup",
-      String(warmup),
-      "--min-runs",
-      String(minRuns),
-      "--export-json",
-      jsonPath,
-    ];
-
-    for (const item of options.commands) {
-      args.push("--command-name", item.name, item.command);
+    if (options.commands.length === 0) {
+      throw new Error("runBench requires at least one command");
     }
 
-    const result = runCommand(hyperfine, args, { allowFailure: true });
-    const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
-    if (output.length > 0) {
-      console.log(output);
-    }
+    const resultsDir = resolvePath("bench", "results");
+    ensureDir(resultsDir);
 
-    if (result.code === 0) {
-      if (options.metadata) {
-        const metaPath = resolve(resultsDir, `${taggedName}.meta.json`);
-        writeJson(metaPath, options.metadata);
+    const taggedName = `${options.name}-${dateTag()}`;
+    const jsonPath = resolve(resultsDir, `${taggedName}.json`);
+
+    const hyperfine = resolveHyperfineCommand();
+    if (hyperfine !== null) {
+      section(`Hyperfine: ${options.name}`);
+
+      const args = [
+        "--warmup",
+        String(warmup),
+        "--min-runs",
+        String(minRuns),
+        "--export-json",
+        jsonPath,
+      ];
+
+      for (const item of options.commands) {
+        args.push("--command-name", item.name, item.command);
       }
-      console.log(`Wrote Hyperfine JSON: ${jsonPath}`);
-      return 0;
+
+      const result = runCommand(hyperfine, args, { allowFailure: true });
+      const output = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+      if (output.length > 0) {
+        console.log(output);
+      }
+
+      if (result.code === 0) {
+        if (options.metadata) {
+          const metaPath = resolve(resultsDir, `${taggedName}.meta.json`);
+          writeJson(metaPath, options.metadata);
+        }
+        console.log(`Wrote Hyperfine JSON: ${jsonPath}`);
+        return 0;
+      }
+
+      console.warn("hyperfine failed, falling back to manual timing");
+    } else {
+      console.warn("hyperfine not found, falling back to manual timing");
     }
 
-    console.warn("hyperfine failed, falling back to manual timing");
-  } else {
-    console.warn("hyperfine not found, falling back to manual timing");
-  }
-
-  const manualResults = runManualBench(options.commands, warmup, minRuns);
-  writeJson(jsonPath, {
-    tool: "manual",
-    generatedAt: new Date().toISOString(),
-    name: options.name,
-    metadata: options.metadata ?? {},
-    results: manualResults,
+    const manualResults = runManualBench(options.commands, warmup, minRuns);
+    writeJson(jsonPath, {
+      tool: "manual",
+      generatedAt: new Date().toISOString(),
+      name: options.name,
+      metadata: options.metadata ?? {},
+      results: manualResults,
+    });
+    console.log(`Wrote manual benchmark JSON: ${jsonPath}`);
+    return 0;
   });
-  console.log(`Wrote manual benchmark JSON: ${jsonPath}`);
-  return 0;
 }

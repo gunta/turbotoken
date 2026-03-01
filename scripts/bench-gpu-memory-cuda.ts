@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { commandExists, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, commandExists, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("CUDA GPU memory benchmark");
+acquireBenchmarkLock({ label: "bench-gpu-memory-cuda" });
 ensureFixtures();
 
 const python = pythonExecutable();

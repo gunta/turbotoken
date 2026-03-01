@@ -14,6 +14,10 @@
 - `scripts/bench-gpu-bpe-direct.ts` for explicit Metal direct-route A/B comparisons (direct toggle on/off) with crossover + GPU-memory artifact capture.
 - `scripts/bench-gpu-bpe-direct.ts` now runs a profile matrix (`low-entropy`, `normal-text`) and records per-profile direct safety comparisons (slowdown/throughput/parity/route-kind).
 - `scripts/ci-benchmark.ts` now enforces Metal direct-route A/B safety gates from `bench/ci-gates.json` and runs the direct A/B benchmark in GPU governance mode.
+- Local benchmark lock tooling:
+  - `acquireBenchmarkLock` / `withBenchmarkLock` in `scripts/_lib.ts`
+  - `scripts/bench-lock-status.ts` with `bench:lock:status` and `bench:lock:wait`
+  - lock-aware queue artifact `bench/results/bench-queue-*.json` from `scripts/bench-all.ts`
 - `scripts/bench-cuda-bpe-prototype.ts` as an explicit opt-in CUDA BPE kernel prototype benchmark (`TURBOTOKEN_CUDA_BPE_PROTOTYPE_ENABLE=1`).
 - Route-level Metal GPU memory benchmark row (`metal-bpe-route-encode-gpu`) with route-kind tagging (`direct` vs `stitched`) in `scripts/bench-gpu-memory.ts`.
 - WASM benchmark output now includes explicit Node runtime rows and browser placeholder rows in `scripts/bench-wasm.ts`; scorecard now tracks Node/Browser row groups.
@@ -109,6 +113,7 @@
 - GPU crossover benchmark supports quick mode (`TURBOTOKEN_GPU_CROSSOVER_QUICK=1`) with reduced workload sizes/loops for faster A/B iteration.
 - Scorecard artifact selection now uses file modification time (instead of lexicographic filename ordering) to pick latest benchmark outputs reliably.
 - Scorecard now ingests `bench-gpu-bpe-direct` artifacts and ignores `bench-wasm-raw` exports when selecting canonical WASM benchmark inputs.
+- Local benchmark runners now serialize by default via a shared machine lock (`bench/.locks/local-machine`) to avoid concurrent local noise from multiple agents/processes; nested benchmark subprocesses inherit the lock state instead of deadlocking.
 - GitHub Actions workflows now target current free-tier runner/toolchain baselines:
   - benchmark/CI/wheels/WASM on `ubuntu-24.04` for Linux jobs
   - benchmark Metal gates on `macos-14`

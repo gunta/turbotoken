@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { commandExists, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, commandExists, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("CUDA BPE prototype benchmark");
+acquireBenchmarkLock({ label: "bench-cuda-bpe-prototype" });
 ensureFixtures();
 
 const outputPath = resolvePath("bench", "results", `bench-cuda-bpe-prototype-${Date.now()}.json`);

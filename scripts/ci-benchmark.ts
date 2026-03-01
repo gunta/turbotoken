@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { readdirSync } from "node:fs";
-import { resolvePath, runCommand, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, resolvePath, runCommand, section, writeJson } from "./_lib";
 
 type JsonMap = Record<string, unknown>;
+
+acquireBenchmarkLock({ label: "ci-benchmark" });
 
 type Mode = "all" | "cpu" | "gpu";
 

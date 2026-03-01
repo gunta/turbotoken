@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from "node:fs";
-import { resolvePath, runCommand, section, writeJson, commandExists, zigExecutable } from "./_lib";
+import { acquireBenchmarkLock, resolvePath, runCommand, section, writeJson, commandExists, zigExecutable } from "./_lib";
 
 section("Binary size benchmark");
+acquireBenchmarkLock({ label: "bench-binary-size" });
 
 const outputPath = resolvePath("bench", "results", `bench-binary-size-${Date.now()}.json`);
 const zig = zigExecutable();

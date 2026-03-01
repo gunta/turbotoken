@@ -3,7 +3,16 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname } from "node:path";
 import { performance } from "node:perf_hooks";
 import { ensureFixtures } from "./_fixtures";
-import { commandExists, resolvePath, runCommand, runShell, section, writeJson, zigExecutable } from "./_lib";
+import {
+  acquireBenchmarkLock,
+  commandExists,
+  resolvePath,
+  runCommand,
+  runShell,
+  section,
+  writeJson,
+  zigExecutable,
+} from "./_lib";
 
 interface BenchCase {
   name: string;
@@ -57,6 +66,8 @@ interface MemoryRow {
   maxRssKb: number | null;
   samples: MemorySample[];
 }
+
+acquireBenchmarkLock({ label: "bench-wasm" });
 
 function mean(values: readonly number[]): number {
   if (values.length === 0) {

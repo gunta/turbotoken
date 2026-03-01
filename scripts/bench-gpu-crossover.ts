@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU crossover matrix benchmark");
+acquireBenchmarkLock({ label: "bench-gpu-crossover" });
 const python = pythonExecutable();
 ensureFixtures();
 

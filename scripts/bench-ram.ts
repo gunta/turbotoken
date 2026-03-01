@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { pythonExecutable, resolvePath, runShell, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, pythonExecutable, resolvePath, runShell, section, writeJson } from "./_lib";
 import { ensureFixtures } from "./_fixtures";
 
 interface MemoryCommand {
@@ -59,6 +59,7 @@ function median(values: number[]): number | null {
 
 ensureFixtures();
 section("Memory benchmark");
+acquireBenchmarkLock({ label: "bench-ram" });
 const python = pythonExecutable();
 const runsRaw = process.env.TURBOTOKEN_RAM_RUNS?.trim();
 const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 5) : 5;

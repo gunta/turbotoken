@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePath, runCommand, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, resolvePath, runCommand, section, writeJson } from "./_lib";
 
 type JsonMap = Record<string, unknown>;
 type TextKind = "low-entropy" | "normal-text";
@@ -334,6 +334,7 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
 }
 
 section("GPU BPE direct A/B benchmark");
+acquireBenchmarkLock({ label: "bench-gpu-bpe-direct" });
 const outputPath = resolvePath("bench", "results", `bench-gpu-bpe-direct-${Date.now()}.json`);
 
 const workloads: Record<string, JsonMap> = {};

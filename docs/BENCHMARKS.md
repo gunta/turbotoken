@@ -16,7 +16,9 @@
 - **`wc -c`** -- binary/wheel size comparison
 
 ### Principles
-1. **Core local benchmarks are reproducible** via `bun run scripts/bench-all.ts` (`bun run bench`)
+1. **Core local benchmarks are reproducible** via `bun run scripts/bench-all.ts` (`bun run bench` / `bun run bench:queue`)
+   - Local runs now use a machine lock (`bench/.locks/local-machine`) so only one local benchmark job can run at a time.
+   - Queue runner emits `bench/results/bench-queue-*.json` with per-step timing + exit codes.
    - CUDA rows are opt-in via `bun run bench:cuda`
    - Paid Modal CUDA runs are opt-in via `bun run bench:modal:cuda`
 2. **Hyperfine runs minimum 10 iterations** with 3 warmup runs
@@ -26,6 +28,10 @@
 6. **JSON export** for every run (`bench/results/*.json`)
 7. **Charts auto-generated** from JSON via `bun run scripts/generate-charts.ts`
 8. **Canonical scorecard** consolidated from latest artifacts via `bun run bench:scorecard` (`bench/results/bench-scorecard-*.json`, `bench/charts/scorecard.md`)
+9. **Lock visibility tools**:
+   - `bun run bench:lock:status` to inspect current local lock owner.
+   - `bun run bench:lock:wait` to block until the local lock is released.
+   - `TURBOTOKEN_BENCH_LOCK_DISABLE=1` for explicit lock bypass on non-local isolated hosts.
 
 ### CI Governance
 - `scripts/ci-benchmark.ts` is the benchmark gate runner used by CI (`bun run bench:ci`).

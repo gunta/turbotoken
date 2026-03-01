@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU memory benchmark");
+acquireBenchmarkLock({ label: "bench-gpu-memory" });
 ensureFixtures();
 
 const python = pythonExecutable();

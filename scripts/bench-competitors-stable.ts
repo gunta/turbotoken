@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { readdirSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { dateTag, resolvePath, runCommand, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, dateTag, resolvePath, runCommand, section, writeJson } from "./_lib";
+
+acquireBenchmarkLock({ label: "bench-competitors-stable" });
 
 type HyperfineResult = {
   command: string;

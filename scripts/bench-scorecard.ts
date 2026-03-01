@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePath, runCommand, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, resolvePath, runCommand, section, writeJson } from "./_lib";
 
 type JsonMap = Record<string, unknown>;
 
@@ -14,6 +14,8 @@ interface CompetitorRow {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+
+acquireBenchmarkLock({ label: "bench-scorecard" });
 
 function toNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;

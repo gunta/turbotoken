@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU overlap benchmark (CPU pretokenize + Metal overlap)");
+acquireBenchmarkLock({ label: "bench-gpu-overlap" });
 ensureFixtures();
 
 const python = pythonExecutable();

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { runCommand, section } from "./_lib";
+import { resolvePath, runCommand, section, withBenchmarkLock, writeJson } from "./_lib";
 
 const scripts = [
   "scripts/generate-fixture.ts",
@@ -44,20 +44,54 @@ if (includeCuda) {
 }
 
 let failures = 0;
+const startedAt = Date.now();
+const stepRows: Array<{
+  script: string;
+  exitCode: number;
+  startedAt: string;
+  finishedAt: string;
+  elapsedMs: number;
+}> = [];
 
-for (const script of scripts) {
-  section(`Running ${script}`);
-  const result = runCommand("bun", ["run", script], { allowFailure: true });
-  if (result.stdout.trim().length > 0) {
-    console.log(result.stdout.trim());
+withBenchmarkLock("bench-all", () => {
+  for (const script of scripts) {
+    section(`Running ${script}`);
+    const stepStart = Date.now();
+    const result = runCommand("bun", ["run", script], { allowFailure: true });
+    const stepEnd = Date.now();
+    stepRows.push({
+      script,
+      exitCode: result.code,
+      startedAt: new Date(stepStart).toISOString(),
+      finishedAt: new Date(stepEnd).toISOString(),
+      elapsedMs: stepEnd - stepStart,
+    });
+    if (result.stdout.trim().length > 0) {
+      console.log(result.stdout.trim());
+    }
+    if (result.stderr.trim().length > 0) {
+      console.error(result.stderr.trim());
+    }
+    if (result.code !== 0) {
+      failures += 1;
+    }
   }
-  if (result.stderr.trim().length > 0) {
-    console.error(result.stderr.trim());
-  }
-  if (result.code !== 0) {
-    failures += 1;
-  }
-}
+});
+
+const finishedAt = Date.now();
+const queuePath = resolvePath("bench", "results", `bench-queue-${finishedAt}.json`);
+writeJson(queuePath, {
+  tool: "bench-queue",
+  generatedAt: new Date().toISOString(),
+  startedAt: new Date(startedAt).toISOString(),
+  finishedAt: new Date(finishedAt).toISOString(),
+  elapsedMs: finishedAt - startedAt,
+  includeCuda,
+  failures,
+  steps: stepRows,
+  note: "Sequential local benchmark queue with machine lock. Remote benchmarks should run on separate hosts/runners.",
+});
+console.log(`Wrote benchmark queue record: ${queuePath}`);
 
 if (failures > 0) {
   console.error(`bench-all finished with ${failures} failing script(s)`);
