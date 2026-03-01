@@ -184,8 +184,12 @@ static NSString *const kBpeKernelSource =
     @"kernel void tt_bpe_reset_counters(\n"
     @"    device atomic_uint *min_rank_atomic [[buffer(0)]],\n"
     @"    device atomic_uint *merge_count [[buffer(1)]],\n"
+    @"    device atomic_uint *round_state [[buffer(2)]],\n"
     @"    uint gid [[thread_position_in_grid]]) {\n"
     @"    if (gid == 0) {\n"
+    @"        const uint run_next = atomic_load_explicit(round_state + 1, memory_order_relaxed);\n"
+    @"        atomic_store_explicit(round_state + 0, run_next, memory_order_relaxed);\n"
+    @"        atomic_store_explicit(round_state + 1, 0u, memory_order_relaxed);\n"
     @"        atomic_store_explicit(min_rank_atomic, TT_BPE_INVALID, memory_order_relaxed);\n"
     @"        atomic_store_explicit(merge_count, 0u, memory_order_relaxed);\n"
     @"    }\n"
@@ -199,8 +203,14 @@ static NSString *const kBpeKernelSource =
     @"    const device tt_rank_entry *rank_table [[buffer(4)]],\n"
     @"    constant uint &node_count [[buffer(5)]],\n"
     @"    constant uint &rank_table_size [[buffer(6)]],\n"
+    @"    const device atomic_uint *round_state [[buffer(7)]],\n"
     @"    uint gid [[thread_position_in_grid]]) {\n"
     @"    if (gid >= node_count) {\n"
+    @"        return;\n"
+    @"    }\n"
+    @"    if (atomic_load_explicit(round_state + 0, memory_order_relaxed) == 0u) {\n"
+    @"        pair_ranks[gid] = TT_BPE_INVALID;\n"
+    @"        pair_merged[gid] = TT_BPE_INVALID;\n"
     @"        return;\n"
     @"    }\n"
     @"    uint right = next[gid];\n"
@@ -245,8 +255,12 @@ static NSString *const kBpeKernelSource =
     @"    const device uint *pair_ranks [[buffer(0)]],\n"
     @"    device atomic_uint *out_min_rank [[buffer(1)]],\n"
     @"    constant uint &node_count [[buffer(2)]],\n"
+    @"    const device atomic_uint *round_state [[buffer(3)]],\n"
     @"    uint gid [[thread_position_in_grid]]) {\n"
     @"    if (gid >= node_count) {\n"
+    @"        return;\n"
+    @"    }\n"
+    @"    if (atomic_load_explicit(round_state + 0, memory_order_relaxed) == 0u) {\n"
     @"        return;\n"
     @"    }\n"
     @"    const uint rank = pair_ranks[gid];\n"
@@ -262,8 +276,13 @@ static NSString *const kBpeKernelSource =
     @"    device uint *merge_flags [[buffer(3)]],\n"
     @"    const device atomic_uint *min_rank_atomic [[buffer(4)]],\n"
     @"    constant uint &node_count [[buffer(5)]],\n"
+    @"    const device atomic_uint *round_state [[buffer(6)]],\n"
     @"    uint gid [[thread_position_in_grid]]) {\n"
     @"    if (gid >= node_count) {\n"
+    @"        return;\n"
+    @"    }\n"
+    @"    if (atomic_load_explicit(round_state + 0, memory_order_relaxed) == 0u) {\n"
+    @"        merge_flags[gid] = 0u;\n"
     @"        return;\n"
     @"    }\n"
     @"\n"
@@ -304,8 +323,12 @@ static NSString *const kBpeKernelSource =
     @"    const device uint *merge_flags [[buffer(4)]],\n"
     @"    device atomic_uint *merge_count [[buffer(5)]],\n"
     @"    constant uint &node_count [[buffer(6)]],\n"
+    @"    device atomic_uint *round_state [[buffer(7)]],\n"
     @"    uint gid [[thread_position_in_grid]]) {\n"
     @"    if (gid >= node_count) {\n"
+    @"        return;\n"
+    @"    }\n"
+    @"    if (atomic_load_explicit(round_state + 0, memory_order_relaxed) == 0u) {\n"
     @"        return;\n"
     @"    }\n"
     @"    if (merge_flags[gid] == 0u) {\n"
@@ -331,6 +354,7 @@ static NSString *const kBpeKernelSource =
     @"\n"
     @"    prev[right] = TT_BPE_DEAD;\n"
     @"    next[right] = TT_BPE_DEAD;\n"
+    @"    atomic_store_explicit(round_state + 1, 1u, memory_order_relaxed);\n"
     @"    atomic_fetch_add_explicit(merge_count, 1u, memory_order_relaxed);\n"
     @"}\n";
 
@@ -371,6 +395,8 @@ static id<MTLBuffer> g_bpe_min_rank_u32_buffer = nil;
 static NSUInteger g_bpe_min_rank_u32_capacity = 0;
 static id<MTLBuffer> g_bpe_merge_count_u32_buffer = nil;
 static NSUInteger g_bpe_merge_count_u32_capacity = 0;
+static id<MTLBuffer> g_bpe_round_state_u32_buffer = nil;
+static NSUInteger g_bpe_round_state_u32_capacity = 0;
 static id<MTLBuffer> g_bpe_rank_table_u32_buffer = nil;
 static NSUInteger g_bpe_rank_table_u32_capacity = 0;
 static uint32_t g_bpe_rank_table_entries = 0;
@@ -402,6 +428,7 @@ static uint64_t g_last_stitch_num_chunks = 0;
 static uint64_t g_last_bpe_cpu_ns = 0;
 static uint64_t g_last_bpe_gpu_ns = 0;
 static uint64_t g_last_bpe_rounds = 0;
+static uint64_t g_last_bpe_submits = 0;
 static uint64_t g_last_bpe_input_bytes = 0;
 static uint64_t g_last_bpe_output_tokens = 0;
 static uint64_t g_last_memory_active_bytes = 0;
@@ -529,6 +556,9 @@ static uint64_t bridge_working_set_bytes_locked(void) {
     if (g_bpe_merge_count_u32_buffer != nil) {
         total += (uint64_t)g_bpe_merge_count_u32_capacity;
     }
+    if (g_bpe_round_state_u32_buffer != nil) {
+        total += (uint64_t)g_bpe_round_state_u32_capacity;
+    }
     if (g_bpe_rank_table_u32_buffer != nil) {
         total += (uint64_t)g_bpe_rank_table_u32_capacity;
     }
@@ -652,7 +682,7 @@ static NSUInteger count_threads_per_group_for(
 }
 
 static uint32_t bpe_rounds_per_submit(void) {
-    const uint32_t default_value = 8u;
+    const uint32_t default_value = 16u;
     const char *raw = getenv("TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT");
     if (raw == NULL || raw[0] == '\0') {
         return default_value;
@@ -663,8 +693,8 @@ static uint32_t bpe_rounds_per_submit(void) {
     if (end == raw || parsed == 0ul) {
         return default_value;
     }
-    if (parsed > 32ul) {
-        parsed = 32ul;
+    if (parsed > 64ul) {
+        parsed = 64ul;
     }
     return (uint32_t)parsed;
 }
@@ -859,7 +889,7 @@ static id<MTLCommandBuffer> create_command_buffer_locked(void) {
 }
 
 const char *turbotoken_metal_version(void) {
-    return "metal-byte-path-v8";
+    return "metal-byte-path-v9";
 }
 
 const char *turbotoken_metal_last_error(void) {
@@ -984,6 +1014,13 @@ uint64_t turbotoken_metal_last_bpe_gpu_ns(void) {
 uint64_t turbotoken_metal_last_bpe_rounds(void) {
     pthread_mutex_lock(&g_state_lock);
     const uint64_t value = g_last_bpe_rounds;
+    pthread_mutex_unlock(&g_state_lock);
+    return value;
+}
+
+uint64_t turbotoken_metal_last_bpe_submits(void) {
+    pthread_mutex_lock(&g_state_lock);
+    const uint64_t value = g_last_bpe_submits;
     pthread_mutex_unlock(&g_state_lock);
     return value;
 }
@@ -1665,7 +1702,12 @@ long turbotoken_metal_bpe_encode_from_bytes(
             &g_bpe_merge_count_u32_buffer,
             &g_bpe_merge_count_u32_capacity,
             sizeof(uint32_t),
-            "bpe-merge-count")) {
+            "bpe-merge-count") ||
+        !ensure_buffer_locked(
+            &g_bpe_round_state_u32_buffer,
+            &g_bpe_round_state_u32_capacity,
+            2u * sizeof(uint32_t),
+            "bpe-round-state")) {
         pthread_mutex_unlock(&g_state_lock);
         return -1;
     }
@@ -1673,6 +1715,9 @@ long turbotoken_metal_bpe_encode_from_bytes(
     uint32_t *tokens_ptr = (uint32_t *)[g_bpe_tokens_u32_buffer contents];
     uint32_t *prev_ptr = (uint32_t *)[g_bpe_prev_u32_buffer contents];
     uint32_t *next_ptr = (uint32_t *)[g_bpe_next_u32_buffer contents];
+    uint32_t *min_rank_ptr = (uint32_t *)[g_bpe_min_rank_u32_buffer contents];
+    uint32_t *merge_count_ptr = (uint32_t *)[g_bpe_merge_count_u32_buffer contents];
+    uint32_t *round_state_ptr = (uint32_t *)[g_bpe_round_state_u32_buffer contents];
     for (NSUInteger idx = 0; idx < node_count; idx += 1) {
         tokens_ptr[idx] = g_bpe_byte_token_map[input[idx]];
         prev_ptr[idx] = (idx == 0) ? kBpeNullIndex : (uint32_t)(idx - 1);
@@ -1683,186 +1728,103 @@ long turbotoken_metal_bpe_encode_from_bytes(
     const uint32_t rank_table_entries_u32 = g_bpe_rank_table_entries;
     const uint32_t rounds_per_submit = bpe_rounds_per_submit();
     uint32_t rounds = 0;
+    uint32_t submits = 0;
 
-    if (rounds_per_submit <= 1u) {
-        while (rounds < node_count_u32) {
-            rounds += 1;
-            *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
-            *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0;
+    const MTLSize node_grid = MTLSizeMake(node_count, 1, 1);
+    const MTLSize reset_grid = MTLSizeMake(1, 1, 1);
+    const MTLSize reset_threads = threads_per_group_for(g_bpe_reset_pipeline);
+    const MTLSize find_threads = threads_per_group_for(g_bpe_find_pipeline);
+    const MTLSize min_threads = threads_per_group_for(g_bpe_min_pipeline);
+    const MTLSize mark_threads = threads_per_group_for(g_bpe_mark_pipeline);
+    const MTLSize apply_threads = threads_per_group_for(g_bpe_apply_pipeline);
 
-            id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
-            if (command_buffer == nil) {
-                set_error_locked("failed to create bpe command buffer");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
+    while (rounds < node_count_u32) {
+        const uint32_t remaining = node_count_u32 - rounds;
+        const uint32_t batch_rounds = remaining < rounds_per_submit ? remaining : rounds_per_submit;
 
-            id<MTLComputeCommandEncoder> find_encoder = [command_buffer computeCommandEncoder];
-            if (find_encoder == nil) {
-                set_error_locked("failed to create bpe-find encoder");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-            [find_encoder setComputePipelineState:g_bpe_find_pipeline];
-            [find_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-            [find_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-            [find_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-            [find_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-            [find_encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
-            [find_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-            [find_encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
-            [find_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                      threadsPerThreadgroup:threads_per_group_for(g_bpe_find_pipeline)];
-            [find_encoder endEncoding];
+        min_rank_ptr[0] = kBpeInvalid;
+        merge_count_ptr[0] = 0u;
+        round_state_ptr[0] = 1u;
+        round_state_ptr[1] = 0u;
 
-            id<MTLComputeCommandEncoder> min_encoder = [command_buffer computeCommandEncoder];
-            if (min_encoder == nil) {
-                set_error_locked("failed to create bpe-min encoder");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-            [min_encoder setComputePipelineState:g_bpe_min_pipeline];
-            [min_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
-            [min_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
-            [min_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
-            [min_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                     threadsPerThreadgroup:threads_per_group_for(g_bpe_min_pipeline)];
-            [min_encoder endEncoding];
-
-            id<MTLComputeCommandEncoder> mark_encoder = [command_buffer computeCommandEncoder];
-            if (mark_encoder == nil) {
-                set_error_locked("failed to create bpe-mark encoder");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-            [mark_encoder setComputePipelineState:g_bpe_mark_pipeline];
-            [mark_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
-            [mark_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-            [mark_encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-            [mark_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
-            [mark_encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
-            [mark_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-            [mark_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                      threadsPerThreadgroup:threads_per_group_for(g_bpe_mark_pipeline)];
-            [mark_encoder endEncoding];
-
-            id<MTLComputeCommandEncoder> apply_encoder = [command_buffer computeCommandEncoder];
-            if (apply_encoder == nil) {
-                set_error_locked("failed to create bpe-apply encoder");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-            [apply_encoder setComputePipelineState:g_bpe_apply_pipeline];
-            [apply_encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-            [apply_encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
-            [apply_encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
-            [apply_encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-            [apply_encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
-            [apply_encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
-            [apply_encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
-            [apply_encoder dispatchThreads:MTLSizeMake(node_count, 1, 1)
-                       threadsPerThreadgroup:threads_per_group_for(g_bpe_apply_pipeline)];
-            [apply_encoder endEncoding];
-
-            if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-
-            total_gpu_ns += command_buffer_gpu_ns(command_buffer);
-            const uint32_t merges = *(uint32_t *)[g_bpe_merge_count_u32_buffer contents];
-            if (merges == 0) {
-                break;
-            }
+        id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
+        if (command_buffer == nil) {
+            set_error_locked("failed to create bpe command buffer");
+            pthread_mutex_unlock(&g_state_lock);
+            return -1;
         }
-    } else {
-        const MTLSize node_grid = MTLSizeMake(node_count, 1, 1);
-        const MTLSize reset_grid = MTLSizeMake(1, 1, 1);
-        const MTLSize reset_threads = threads_per_group_for(g_bpe_reset_pipeline);
-        const MTLSize find_threads = threads_per_group_for(g_bpe_find_pipeline);
-        const MTLSize min_threads = threads_per_group_for(g_bpe_min_pipeline);
-        const MTLSize mark_threads = threads_per_group_for(g_bpe_mark_pipeline);
-        const MTLSize apply_threads = threads_per_group_for(g_bpe_apply_pipeline);
 
-        while (rounds < node_count_u32) {
-            const uint32_t remaining = node_count_u32 - rounds;
-            const uint32_t batch_rounds =
-                remaining < rounds_per_submit ? remaining : rounds_per_submit;
+        id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+        if (encoder == nil) {
+            set_error_locked("failed to create bpe encoder");
+            pthread_mutex_unlock(&g_state_lock);
+            return -1;
+        }
 
-            *(uint32_t *)[g_bpe_min_rank_u32_buffer contents] = kBpeInvalid;
-            *(uint32_t *)[g_bpe_merge_count_u32_buffer contents] = 0u;
-
-            id<MTLCommandBuffer> command_buffer = create_command_buffer_locked();
-            if (command_buffer == nil) {
-                set_error_locked("failed to create bpe command buffer");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
+        for (uint32_t round_idx = 0; round_idx < batch_rounds; round_idx += 1) {
+            if (round_idx > 0u) {
+                [encoder setComputePipelineState:g_bpe_reset_pipeline];
+                [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:0];
+                [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:1];
+                [encoder setBuffer:g_bpe_round_state_u32_buffer offset:0 atIndex:2];
+                [encoder dispatchThreads:reset_grid threadsPerThreadgroup:reset_threads];
             }
 
-            id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-            if (encoder == nil) {
-                set_error_locked("failed to create bpe encoder");
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
+            [encoder setComputePipelineState:g_bpe_find_pipeline];
+            [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+            [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+            [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+            [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+            [encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
+            [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+            [encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
+            [encoder setBuffer:g_bpe_round_state_u32_buffer offset:0 atIndex:7];
+            [encoder dispatchThreads:node_grid threadsPerThreadgroup:find_threads];
 
-            for (uint32_t round_idx = 0; round_idx < batch_rounds; round_idx += 1) {
-                if (round_idx > 0u) {
-                    [encoder setComputePipelineState:g_bpe_reset_pipeline];
-                    [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:0];
-                    [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:1];
-                    [encoder dispatchThreads:reset_grid threadsPerThreadgroup:reset_threads];
-                }
+            [encoder setComputePipelineState:g_bpe_min_pipeline];
+            [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
+            [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
+            [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
+            [encoder setBuffer:g_bpe_round_state_u32_buffer offset:0 atIndex:3];
+            [encoder dispatchThreads:node_grid threadsPerThreadgroup:min_threads];
 
-                [encoder setComputePipelineState:g_bpe_find_pipeline];
-                [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-                [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-                [encoder setBuffer:g_bpe_rank_table_u32_buffer offset:0 atIndex:4];
-                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-                [encoder setBytes:&rank_table_entries_u32 length:sizeof(rank_table_entries_u32) atIndex:6];
-                [encoder dispatchThreads:node_grid threadsPerThreadgroup:find_threads];
+            [encoder setComputePipelineState:g_bpe_mark_pipeline];
+            [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
+            [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
+            [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
+            [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
+            [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
+            [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
+            [encoder setBuffer:g_bpe_round_state_u32_buffer offset:0 atIndex:6];
+            [encoder dispatchThreads:node_grid threadsPerThreadgroup:mark_threads];
 
-                [encoder setComputePipelineState:g_bpe_min_pipeline];
-                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:0];
-                [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:1];
-                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:2];
-                [encoder dispatchThreads:node_grid threadsPerThreadgroup:min_threads];
+            [encoder setComputePipelineState:g_bpe_apply_pipeline];
+            [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
+            [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
+            [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
+            [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
+            [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
+            [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
+            [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
+            [encoder setBuffer:g_bpe_round_state_u32_buffer offset:0 atIndex:7];
+            [encoder dispatchThreads:node_grid threadsPerThreadgroup:apply_threads];
+        }
 
-                [encoder setComputePipelineState:g_bpe_mark_pipeline];
-                [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:0];
-                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:1];
-                [encoder setBuffer:g_bpe_pair_rank_u32_buffer offset:0 atIndex:2];
-                [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:3];
-                [encoder setBuffer:g_bpe_min_rank_u32_buffer offset:0 atIndex:4];
-                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:5];
-                [encoder dispatchThreads:node_grid threadsPerThreadgroup:mark_threads];
+        [encoder endEncoding];
 
-                [encoder setComputePipelineState:g_bpe_apply_pipeline];
-                [encoder setBuffer:g_bpe_tokens_u32_buffer offset:0 atIndex:0];
-                [encoder setBuffer:g_bpe_prev_u32_buffer offset:0 atIndex:1];
-                [encoder setBuffer:g_bpe_next_u32_buffer offset:0 atIndex:2];
-                [encoder setBuffer:g_bpe_pair_merged_u32_buffer offset:0 atIndex:3];
-                [encoder setBuffer:g_bpe_merge_flags_u32_buffer offset:0 atIndex:4];
-                [encoder setBuffer:g_bpe_merge_count_u32_buffer offset:0 atIndex:5];
-                [encoder setBytes:&node_count_u32 length:sizeof(node_count_u32) atIndex:6];
-                [encoder dispatchThreads:node_grid threadsPerThreadgroup:apply_threads];
-            }
+        if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
+            pthread_mutex_unlock(&g_state_lock);
+            return -1;
+        }
 
-            [encoder endEncoding];
-
-            if (!wait_for_completion_locked(command_buffer, "bpe command failed")) {
-                pthread_mutex_unlock(&g_state_lock);
-                return -1;
-            }
-
-            total_gpu_ns += command_buffer_gpu_ns(command_buffer);
-            rounds += batch_rounds;
-            const uint32_t merges = *(uint32_t *)[g_bpe_merge_count_u32_buffer contents];
-            if (merges == 0) {
-                break;
-            }
+        submits += 1u;
+        total_gpu_ns += command_buffer_gpu_ns(command_buffer);
+        rounds += batch_rounds;
+        const uint32_t merges = merge_count_ptr[0];
+        const uint32_t min_rank = min_rank_ptr[0];
+        // Stop submitting once the device reports no valid merge candidates.
+        if (min_rank == kBpeInvalid || merges == 0u) {
+            break;
         }
     }
 
@@ -1905,11 +1867,12 @@ long turbotoken_metal_bpe_encode_from_bytes(
     g_last_bpe_cpu_ns = (cpu_end_ns >= cpu_start_ns) ? (cpu_end_ns - cpu_start_ns) : 0;
     g_last_bpe_gpu_ns = total_gpu_ns;
     g_last_bpe_rounds = rounds;
+    g_last_bpe_submits = submits;
     g_last_bpe_input_bytes = (uint64_t)input_len;
     g_last_bpe_output_tokens = (uint64_t)written;
     const uint64_t rank_table_active_bytes = (uint64_t)rank_table_entries_u32 * 4u * (uint64_t)sizeof(uint32_t);
     const uint64_t bpe_active_bytes =
-        ((uint64_t)node_bytes * 6u) + rank_table_active_bytes + (2u * (uint64_t)sizeof(uint32_t));
+        ((uint64_t)node_bytes * 6u) + rank_table_active_bytes + (4u * (uint64_t)sizeof(uint32_t));
     update_memory_profile_locked(bpe_active_bytes);
 
     pthread_mutex_unlock(&g_state_lock);

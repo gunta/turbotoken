@@ -71,11 +71,15 @@ runs=int(sys.argv[1])
 bridge=_gpu.get_metal_bridge()
 skip_direct_kernel=os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL","").strip().lower() in {"1","true","yes","on"}
 route_bytes_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES","").strip()
+route_text_kind_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND","low-entropy").strip().lower()
+route_text_kind="normal-text" if route_text_kind_raw in {"normal","normal-text"} else "low-entropy"
 
 def summarize(name,workload,samples):
     keys=[
         "gpu_ns",
         "cpu_ns",
+        "bpe_rounds",
+        "bpe_submits",
         "memory_active_bytes",
         "memory_working_set_bytes",
         "memory_device_allocated_bytes",
@@ -125,6 +129,15 @@ try:
 except ValueError:
     route_input_bytes=len(fixture_1mb)
 route_input_bytes=max(4096, min(len(fixture_1mb), route_input_bytes))
+
+def build_route_text(size):
+    if route_text_kind == "normal-text":
+        if len(fixture_1mb) == 0:
+            return ("The quick brown fox jumps over the lazy dog. " * ((size // 44) + 1))[:size]
+        repeats=max(1,(size+len(fixture_1mb)-1)//len(fixture_1mb))
+        payload=(fixture_1mb*repeats)[:size]
+        return payload.decode("utf-8","ignore")
+    return "a"*size
 
 # UTF-8 byte encode workload
 samples=[]
@@ -183,7 +196,8 @@ except Exception as exc:
     bpe_status["reason"]=str(exc)
 
 if bpe_status["ready"]:
-    route_text='a'*route_input_bytes
+    route_text=build_route_text(route_input_bytes)
+    route_text_bytes=route_text.encode("utf-8")
     enc=get_encoding("o200k_base")
 
     # Route-level BPE workload through Python encode_gpu(device="metal"):
@@ -219,6 +233,8 @@ if bpe_status["ready"]:
             samples.append({
                 "gpu_ns":gpu_ns,
                 "cpu_ns":cpu_ns,
+                "bpe_rounds":int(profile.get("bpe_rounds",0)),
+                "bpe_submits":int(profile.get("bpe_submits",0)),
                 "memory_active_bytes":int(profile.get("memory_active_bytes",0)),
                 "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
                 "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
@@ -232,7 +248,12 @@ if bpe_status["ready"]:
             os.environ["TURBOTOKEN_METAL_FORCE_ALL_PIECES"]=prev_force
     rows.append(summarize_route(
         "metal-bpe-route-encode-gpu",
-        {"input_bytes":route_input_bytes,"kind":"encode_gpu(device=metal)","env_direct_enable":str(_gpu._metal_bpe_direct_enabled())},
+        {
+            "input_bytes":len(route_text_bytes),
+            "kind":"encode_gpu(device=metal)",
+            "text_kind":route_text_kind,
+            "env_direct_enable":str(_gpu._metal_bpe_direct_enabled()),
+        },
         samples,
     ))
 
@@ -247,6 +268,8 @@ if bpe_status["ready"]:
             samples.append({
                 "gpu_ns":int(profile.get("bpe_gpu_ns",0)),
                 "cpu_ns":int(profile.get("bpe_cpu_ns",0)),
+                "bpe_rounds":int(profile.get("bpe_rounds",0)),
+                "bpe_submits":int(profile.get("bpe_submits",0)),
                 "memory_active_bytes":int(profile.get("memory_active_bytes",0)),
                 "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
                 "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
@@ -271,6 +294,7 @@ print(json.dumps({
         "TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES":os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES"),
         "TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL":os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL"),
         "TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES":os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES"),
+        "TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND":route_text_kind,
     },
     "note":"GPU memory rows are derived from Metal bridge telemetry: active bytes (last op), bridge working-set bytes (persistent MTLBuffer capacity), and device currentAllocatedSize when reported by the driver. Throughput columns use median GPU/CPU ns and known workload byte totals.",
 }))

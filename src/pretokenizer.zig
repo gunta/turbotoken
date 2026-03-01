@@ -224,23 +224,23 @@ fn classifyAsciiByte(byte: u8) u8 {
     return 4;
 }
 
-fn classifyAsciiChunk16(chunk: @Vector(16, u8)) @Vector(16, u8) {
-    const Vec16u8 = @Vector(16, u8);
-    const Vec16b = @Vector(16, bool);
-    const code_space = @as(Vec16u8, @splat(@as(u8, 0)));
-    const code_letter = @as(Vec16u8, @splat(@as(u8, 1)));
-    const code_digit = @as(Vec16u8, @splat(@as(u8, 2)));
-    const code_punct = @as(Vec16u8, @splat(@as(u8, 3)));
-    const code_other = @as(Vec16u8, @splat(@as(u8, 4)));
+fn classifyAsciiChunk(comptime lanes: usize, chunk: @Vector(lanes, u8)) @Vector(lanes, u8) {
+    const VecU8 = @Vector(lanes, u8);
+    const VecB = @Vector(lanes, bool);
+    const code_space = @as(VecU8, @splat(@as(u8, 0)));
+    const code_letter = @as(VecU8, @splat(@as(u8, 1)));
+    const code_digit = @as(VecU8, @splat(@as(u8, 2)));
+    const code_punct = @as(VecU8, @splat(@as(u8, 3)));
+    const code_other = @as(VecU8, @splat(@as(u8, 4)));
 
-    const is_ascii: Vec16b = chunk < @as(Vec16u8, @splat(@as(u8, 0x80)));
-    const is_space: Vec16b = chunk == @as(Vec16u8, @splat(@as(u8, ' ')));
-    const is_upper: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, 'A')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 'Z'))));
-    const is_lower: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, 'a')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 'z'))));
-    const is_letter: Vec16b = is_upper | is_lower;
-    const is_digit: Vec16b = (chunk >= @as(Vec16u8, @splat(@as(u8, '0')))) & (chunk <= @as(Vec16u8, @splat(@as(u8, '9'))));
-    const is_printable: Vec16b = is_ascii & (chunk >= @as(Vec16u8, @splat(@as(u8, 33)))) & (chunk <= @as(Vec16u8, @splat(@as(u8, 126))));
-    const is_punct: Vec16b = is_printable & ~(is_space | is_letter | is_digit);
+    const is_ascii: VecB = chunk < @as(VecU8, @splat(@as(u8, 0x80)));
+    const is_space: VecB = chunk == @as(VecU8, @splat(@as(u8, ' ')));
+    const is_upper: VecB = (chunk >= @as(VecU8, @splat(@as(u8, 'A')))) & (chunk <= @as(VecU8, @splat(@as(u8, 'Z'))));
+    const is_lower: VecB = (chunk >= @as(VecU8, @splat(@as(u8, 'a')))) & (chunk <= @as(VecU8, @splat(@as(u8, 'z'))));
+    const is_letter: VecB = is_upper | is_lower;
+    const is_digit: VecB = (chunk >= @as(VecU8, @splat(@as(u8, '0')))) & (chunk <= @as(VecU8, @splat(@as(u8, '9'))));
+    const is_printable: VecB = is_ascii & (chunk >= @as(VecU8, @splat(@as(u8, 33)))) & (chunk <= @as(VecU8, @splat(@as(u8, 126))));
+    const is_punct: VecB = is_printable & ~(is_space | is_letter | is_digit);
 
     var out = code_other;
     out = @select(u8, is_punct, code_punct, out);
@@ -267,7 +267,7 @@ pub fn countAsciiClassBoundariesScalar(text: []const u8) usize {
     return boundaries;
 }
 
-fn countAsciiClassBoundariesNeonLike(text: []const u8) usize {
+fn countAsciiClassBoundariesVec(comptime lanes: usize, text: []const u8) usize {
     if (text.len <= 1) {
         return 0;
     }
@@ -276,11 +276,11 @@ fn countAsciiClassBoundariesNeonLike(text: []const u8) usize {
     var prev = classifyAsciiByte(text[0]);
     var idx: usize = 1;
 
-    while (idx + 16 <= text.len) : (idx += 16) {
-        const chunk_ptr: *const [16]u8 = @ptrCast(text[idx .. idx + 16].ptr);
-        const chunk: @Vector(16, u8) = chunk_ptr.*;
-        const classes: @Vector(16, u8) = classifyAsciiChunk16(chunk);
-        const classes_arr: [16]u8 = @bitCast(classes);
+    while (idx + lanes <= text.len) : (idx += lanes) {
+        const chunk_ptr: *const [lanes]u8 = @ptrCast(text[idx .. idx + lanes].ptr);
+        const chunk: @Vector(lanes, u8) = chunk_ptr.*;
+        const classes: @Vector(lanes, u8) = classifyAsciiChunk(lanes, chunk);
+        const classes_arr: [lanes]u8 = @bitCast(classes);
         inline for (classes_arr) |cls| {
             if (cls != prev) {
                 boundaries += 1;
@@ -301,7 +301,7 @@ fn countAsciiClassBoundariesNeonLike(text: []const u8) usize {
 }
 
 pub fn countAsciiClassBoundariesNeon(text: []const u8) usize {
-    return countAsciiClassBoundariesNeonLike(text);
+    return countAsciiClassBoundariesVec(16, text);
 }
 
 pub fn countAsciiClassBoundaries(text: []const u8) usize {
@@ -309,13 +309,19 @@ pub fn countAsciiClassBoundaries(text: []const u8) usize {
         return 0;
     }
     if (builtin.cpu.arch == .aarch64 and aarch64.available() and text.len >= 32) {
-        return countAsciiClassBoundariesNeonLike(text);
+        return countAsciiClassBoundariesVec(16, text);
     }
-    if (builtin.cpu.arch == .x86_64 and x86_64.available() and text.len >= 32) {
-        return countAsciiClassBoundariesNeonLike(text);
+    if (builtin.cpu.arch == .x86_64) {
+        if (x86_64.pretokenizerAvx2HookAvailable(text.len)) {
+            return countAsciiClassBoundariesVec(32, text);
+        }
+        const x86_lanes = x86_64.pretokenizerAsciiBoundaryLanes(text.len);
+        if (x86_lanes == 16) {
+            return countAsciiClassBoundariesVec(16, text);
+        }
     }
     if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable() and text.len >= 32) {
-        return countAsciiClassBoundariesNeonLike(text);
+        return countAsciiClassBoundariesVec(16, text);
     }
     return countAsciiClassBoundariesScalar(text);
 }

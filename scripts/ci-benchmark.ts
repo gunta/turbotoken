@@ -23,6 +23,18 @@ interface GpuGates {
   maxDeviceAllocatedMiB: number;
   minBpeDirectEncodeMiBPerSec: number;
   requireGpuMemoryRows: boolean;
+  directAbSafety?: DirectAbSafetyGates;
+}
+
+interface DirectAbSafetyGates {
+  requireRows: boolean;
+  lowEntropyMaxSlowdownPct: number;
+  lowEntropyMinThroughputRatio: number;
+  normalTextMaxSlowdownPct: number;
+  normalTextMinThroughputRatio: number;
+  requireLowEntropyNoDirectRoute: boolean;
+  requireNormalTextDirectRoute: boolean;
+  requireTokenParity: boolean;
 }
 
 interface GateConfig {
@@ -65,6 +77,22 @@ interface GpuRelativeGates {
   directBpeEncodeMiBPerSec?: RelativeMinGate;
 }
 
+interface GpuDirectAbWorkload {
+  textKind: string;
+  slowdownPct: number | null;
+  throughputRatio: number | null;
+  disabledMatchesBaseline: boolean | null;
+  enabledMatchesBaseline: boolean | null;
+  disabledUsedDirectRoute: boolean | null;
+  enabledUsedDirectRoute: boolean | null;
+}
+
+interface GpuDirectAbParsed {
+  skippedReason: string | null;
+  lowEntropy: GpuDirectAbWorkload | null;
+  normalText: GpuDirectAbWorkload | null;
+}
+
 interface RelativeGatesConfig {
   enabled?: boolean;
   cpu?: CpuRelativeGates;
@@ -87,6 +115,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function toNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseRouteKindCounts(value: unknown): Record<string, number> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const numeric = toNumber(raw);
+    if (numeric != null && numeric > 0) {
+      result[key] = numeric;
+    }
+  }
+  return result;
+}
+
+function percentIncrease(baseline: number | null, next: number | null): number | null {
+  if (baseline == null || next == null || baseline <= 0) {
+    return null;
+  }
+  return ((next - baseline) / baseline) * 100;
+}
+
+function ratio(baseline: number | null, next: number | null): number | null {
+  if (baseline == null || next == null || baseline <= 0) {
+    return null;
+  }
+  return next / baseline;
 }
 
 function parseMode(argv: string[]): Mode {
@@ -144,6 +200,33 @@ function loadJson(path: string | null): JsonMap | null {
   } catch {
     return null;
   }
+}
+
+function latestResultPathMatching(
+  prefix: string,
+  matcher: (payload: JsonMap) => boolean,
+  options: { excludes?: string[] } = {},
+): string | null {
+  const excludes = options.excludes ?? [];
+  const resultsDir = resolvePath("bench", "results");
+  const names = readdirSync(resultsDir)
+    .filter(
+      (name) =>
+        name.startsWith(`${prefix}-`) &&
+        name.endsWith(".json") &&
+        !name.endsWith(".meta.json") &&
+        excludes.every((needle) => !name.includes(needle)),
+    )
+    .sort()
+    .reverse();
+  for (const name of names) {
+    const path = join(resultsDir, name);
+    const payload = loadJson(path);
+    if (payload && matcher(payload)) {
+      return path;
+    }
+  }
+  return null;
 }
 
 function commandMeanMs(payload: JsonMap | null, commandName: string): number | null {
@@ -274,6 +357,121 @@ function parseGpuMemory(payload: JsonMap | null): {
   };
 }
 
+function hasDirectGpuMemoryRow(payload: JsonMap): boolean {
+  const rows = payload["rows"];
+  if (!Array.isArray(rows)) {
+    return false;
+  }
+  for (const row of rows) {
+    if (!isRecord(row)) {
+      continue;
+    }
+    if (String(row["name"] ?? "") !== "metal-bpe-direct-encode-1mb") {
+      continue;
+    }
+    if (toNumber(row["median_gpu_mib_per_s"]) != null) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseDirectScenario(value: unknown): {
+  metalMs: number | null;
+  metalMiBPerSec: number | null;
+  matchesBaseline: boolean | null;
+  usedDirectRoute: boolean | null;
+} {
+  if (!isRecord(value)) {
+    return {
+      metalMs: null,
+      metalMiBPerSec: null,
+      matchesBaseline: null,
+      usedDirectRoute: null,
+    };
+  }
+  const crossover = isRecord(value["crossover"]) ? (value["crossover"] as JsonMap) : null;
+  const gpuMemory = isRecord(value["gpuMemory"]) ? (value["gpuMemory"] as JsonMap) : null;
+  const route = isRecord(gpuMemory?.["route"]) ? (gpuMemory["route"] as JsonMap) : null;
+  const routeKinds = parseRouteKindCounts(route?.["routeKindCounts"]);
+  return {
+    metalMs: toNumber(crossover?.["metalMs"]),
+    metalMiBPerSec: toNumber(crossover?.["metalMiBPerSec"]),
+    matchesBaseline:
+      crossover && typeof crossover["metalMatchesBaseline"] === "boolean"
+        ? (crossover["metalMatchesBaseline"] as boolean)
+        : null,
+    usedDirectRoute: route ? Object.prototype.hasOwnProperty.call(routeKinds, "direct") : null,
+  };
+}
+
+function parseDirectWorkload(
+  disabledValue: unknown,
+  enabledValue: unknown,
+  textKind: string,
+): GpuDirectAbWorkload | null {
+  const disabled = parseDirectScenario(disabledValue);
+  const enabled = parseDirectScenario(enabledValue);
+  const hasAnySignal =
+    disabled.metalMs != null ||
+    enabled.metalMs != null ||
+    disabled.metalMiBPerSec != null ||
+    enabled.metalMiBPerSec != null;
+  if (!hasAnySignal) {
+    return null;
+  }
+  return {
+    textKind,
+    slowdownPct: percentIncrease(disabled.metalMs, enabled.metalMs),
+    throughputRatio: ratio(disabled.metalMiBPerSec, enabled.metalMiBPerSec),
+    disabledMatchesBaseline: disabled.matchesBaseline,
+    enabledMatchesBaseline: enabled.matchesBaseline,
+    disabledUsedDirectRoute: disabled.usedDirectRoute,
+    enabledUsedDirectRoute: enabled.usedDirectRoute,
+  };
+}
+
+function parseGpuDirectAb(payload: JsonMap | null): GpuDirectAbParsed {
+  if (!payload) {
+    return {
+      skippedReason: "missing payload",
+      lowEntropy: null,
+      normalText: null,
+    };
+  }
+
+  const workloads = payload["workloads"];
+  if (isRecord(workloads)) {
+    const lowEntry = isRecord(workloads["lowEntropy"]) ? (workloads["lowEntropy"] as JsonMap) : null;
+    const normalEntry = isRecord(workloads["normalText"]) ? (workloads["normalText"] as JsonMap) : null;
+
+    const lowEntropy = parseDirectWorkload(lowEntry?.["disabled"], lowEntry?.["enabled"], "low-entropy");
+    const normalText = parseDirectWorkload(normalEntry?.["disabled"], normalEntry?.["enabled"], "normal-text");
+    const hasRows = lowEntropy != null || normalText != null;
+
+    return {
+      skippedReason: hasRows ? null : "workload rows missing",
+      lowEntropy,
+      normalText,
+    };
+  }
+
+  const scenarios = payload["scenarios"];
+  if (!isRecord(scenarios)) {
+    return {
+      skippedReason: "direct A/B scenarios missing",
+      lowEntropy: null,
+      normalText: null,
+    };
+  }
+  const legacyLowEntropy = parseDirectWorkload(scenarios["disabled"], scenarios["enabled"], "low-entropy");
+  return {
+    skippedReason: legacyLowEntropy ? null : "legacy direct A/B rows missing",
+    lowEntropy: legacyLowEntropy,
+    normalText: null,
+  };
+}
+
 function mibPerSecFromMs(totalMiB: number, ms: number | null): number | null {
   if (ms == null || ms <= 0) {
     return null;
@@ -313,6 +511,24 @@ function addMinGate(
       artifact,
     });
   }
+}
+
+function addBooleanGate(
+  failures: GateFailure[],
+  metric: string,
+  observed: boolean | null,
+  expected: boolean,
+  artifact: string | null,
+): void {
+  if (observed === expected) {
+    return;
+  }
+  failures.push({
+    metric,
+    observed: observed == null ? null : observed ? 1 : 0,
+    expectation: expected ? "== true" : "== false",
+    artifact,
+  });
 }
 
 function addRelativeMaxGate(
@@ -449,6 +665,7 @@ function runScripts(mode: Mode): void {
     "scripts/generate-fixture.ts",
     "scripts/bench-gpu-memory.ts",
     "scripts/bench-gpu-crossover.ts",
+    "scripts/bench-gpu-bpe-direct.ts",
     "scripts/bench-gpu-overlap.ts",
   ];
 
@@ -505,7 +722,10 @@ const artifacts = {
   competitorsCount: latestResultPath("bench-competitors-python-count"),
   training: latestResultPath("bench-training-python"),
   ram: latestResultPath("bench-ram"),
-  gpuMemory: latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"] }),
+  gpuMemory:
+    latestResultPathMatching("bench-gpu-memory", hasDirectGpuMemoryRow, { excludes: ["-cuda-"] }) ??
+    latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"] }),
+  gpuBpeDirect: latestResultPath("bench-gpu-bpe-direct"),
   gpuOverlap: latestResultPath("bench-gpu-overlap"),
 };
 
@@ -515,6 +735,7 @@ const competitorsCount = loadJson(artifacts.competitorsCount);
 const training = loadJson(artifacts.training);
 const ram = loadJson(artifacts.ram);
 const gpuMemory = loadJson(artifacts.gpuMemory);
+const gpuBpeDirect = loadJson(artifacts.gpuBpeDirect);
 
 const startupColdMs = commandMeanMs(startupCold, "python-startup-turbotoken");
 const encode1mbMs = commandMeanMs(competitorsEncode, "python-encode-1mb-turbotoken");
@@ -525,6 +746,7 @@ const encode1mbMiBPerSec = mibPerSecFromMs(1.0, encode1mbMs);
 const count1mbMiBPerSec = mibPerSecFromMs(1.0, count1mbMs);
 
 const gpuParsed = parseGpuMemory(gpuMemory);
+const gpuDirectAb = parseGpuDirectAb(gpuBpeDirect);
 
 const failures: GateFailure[] = [];
 if (mode === "all" || mode === "cpu") {
@@ -674,6 +896,124 @@ if (mode === "all" || mode === "gpu") {
       );
     }
   }
+
+  const directSafety = gates.gpu.directAbSafety;
+  if (directSafety) {
+    if (gpuDirectAb.skippedReason != null) {
+      if (directSafety.requireRows) {
+        failures.push({
+          metric: "gpu direct A/B rows",
+          observed: null,
+          expectation: `required (${gpuDirectAb.skippedReason})`,
+          artifact: artifacts.gpuBpeDirect,
+        });
+      }
+    } else {
+      const lowEntropy = gpuDirectAb.lowEntropy;
+      if (!lowEntropy) {
+        if (directSafety.requireRows) {
+          failures.push({
+            metric: "gpu direct A/B low-entropy rows",
+            observed: null,
+            expectation: "required",
+            artifact: artifacts.gpuBpeDirect,
+          });
+        }
+      } else {
+        addMaxGate(
+          failures,
+          "gpu direct A/B low-entropy slowdown pct",
+          lowEntropy.slowdownPct,
+          directSafety.lowEntropyMaxSlowdownPct,
+          artifacts.gpuBpeDirect,
+        );
+        addMinGate(
+          failures,
+          "gpu direct A/B low-entropy throughput ratio",
+          lowEntropy.throughputRatio,
+          directSafety.lowEntropyMinThroughputRatio,
+          artifacts.gpuBpeDirect,
+        );
+        if (directSafety.requireTokenParity) {
+          addBooleanGate(
+            failures,
+            "gpu direct A/B low-entropy disabled parity",
+            lowEntropy.disabledMatchesBaseline,
+            true,
+            artifacts.gpuBpeDirect,
+          );
+          addBooleanGate(
+            failures,
+            "gpu direct A/B low-entropy enabled parity",
+            lowEntropy.enabledMatchesBaseline,
+            true,
+            artifacts.gpuBpeDirect,
+          );
+        }
+        if (directSafety.requireLowEntropyNoDirectRoute) {
+          addBooleanGate(
+            failures,
+            "gpu direct A/B low-entropy enabled direct-route disabled",
+            lowEntropy.enabledUsedDirectRoute,
+            false,
+            artifacts.gpuBpeDirect,
+          );
+        }
+      }
+
+      const normalText = gpuDirectAb.normalText;
+      if (!normalText) {
+        if (directSafety.requireRows) {
+          failures.push({
+            metric: "gpu direct A/B normal-text rows",
+            observed: null,
+            expectation: "required",
+            artifact: artifacts.gpuBpeDirect,
+          });
+        }
+      } else {
+        addMaxGate(
+          failures,
+          "gpu direct A/B normal-text slowdown pct",
+          normalText.slowdownPct,
+          directSafety.normalTextMaxSlowdownPct,
+          artifacts.gpuBpeDirect,
+        );
+        addMinGate(
+          failures,
+          "gpu direct A/B normal-text throughput ratio",
+          normalText.throughputRatio,
+          directSafety.normalTextMinThroughputRatio,
+          artifacts.gpuBpeDirect,
+        );
+        if (directSafety.requireTokenParity) {
+          addBooleanGate(
+            failures,
+            "gpu direct A/B normal-text disabled parity",
+            normalText.disabledMatchesBaseline,
+            true,
+            artifacts.gpuBpeDirect,
+          );
+          addBooleanGate(
+            failures,
+            "gpu direct A/B normal-text enabled parity",
+            normalText.enabledMatchesBaseline,
+            true,
+            artifacts.gpuBpeDirect,
+          );
+        }
+        if (directSafety.requireNormalTextDirectRoute) {
+          addBooleanGate(
+            failures,
+            "gpu direct A/B normal-text enabled direct-route required",
+            normalText.enabledUsedDirectRoute,
+            true,
+            artifacts.gpuBpeDirect,
+          );
+        }
+      }
+    }
+  }
 }
 
 const summary = {
@@ -698,6 +1038,7 @@ const summary = {
     encode1mbMiBPerSec,
     count1mbMiBPerSec,
     gpuMemory: gpuParsed,
+    gpuDirectAb,
   },
   failures,
 };

@@ -12,6 +12,8 @@
 - x86_64 runtime dispatch backend in Zig (`src/arch/x86_64.zig`) for UTF-8 byte encode/decode/count paths with AVX-512 -> AVX2 -> SSE4.2 -> scalar selection.
 - wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
 - `scripts/bench-gpu-bpe-direct.ts` for explicit Metal direct-route A/B comparisons (direct toggle on/off) with crossover + GPU-memory artifact capture.
+- `scripts/bench-gpu-bpe-direct.ts` now runs a profile matrix (`low-entropy`, `normal-text`) and records per-profile direct safety comparisons (slowdown/throughput/parity/route-kind).
+- `scripts/ci-benchmark.ts` now enforces Metal direct-route A/B safety gates from `bench/ci-gates.json` and runs the direct A/B benchmark in GPU governance mode.
 - `scripts/bench-cuda-bpe-prototype.ts` as an explicit opt-in CUDA BPE kernel prototype benchmark (`TURBOTOKEN_CUDA_BPE_PROTOTYPE_ENABLE=1`).
 - Route-level Metal GPU memory benchmark row (`metal-bpe-route-encode-gpu`) with route-kind tagging (`direct` vs `stitched`) in `scripts/bench-gpu-memory.ts`.
 - WASM benchmark output now includes explicit Node runtime rows and browser placeholder rows in `scripts/bench-wasm.ts`; scorecard now tracks Node/Browser row groups.
@@ -108,8 +110,8 @@
 - Scorecard artifact selection now uses file modification time (instead of lexicographic filename ordering) to pick latest benchmark outputs reliably.
 - Scorecard now ingests `bench-gpu-bpe-direct` artifacts and ignores `bench-wasm-raw` exports when selecting canonical WASM benchmark inputs.
 - GitHub Actions workflows now target current free-tier runner/toolchain baselines:
-  - benchmark/CI/wheels/WASM on `ubuntu-latest` for Linux jobs
-  - benchmark Metal gates on `macos-latest`
+  - benchmark/CI/wheels/WASM on `ubuntu-24.04` for Linux jobs
+  - benchmark Metal gates on `macos-14`
   - Python setup updated to `3.14` with `check-latest: true`
   - Zig setup updated to `0.15.2`
   - Bun installs use `--frozen-lockfile` in workflows
@@ -251,7 +253,9 @@
 - Wheels and WASM workflows now include artifact smoke-install checks (`bun run smoke:wheel-install`, `bun run smoke:npm-install`) and upload smoke JSON artifacts
 - Metal autoroute cache schema is now `v5` with large-crossover routing floors so small/medium BPE pieces remain on CPU/native by default unless explicitly forced (`TURBOTOKEN_METAL_FORCE_ALL_PIECES=1`)
 - `Encoding.encode_gpu(...)` now has a large-input CPU+GPU overlap pretokenize pipeline (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, `TURBOTOKEN_GPU_OVERLAP_MIN_TEXT_BYTES`, `TURBOTOKEN_GPU_OVERLAP_PREFETCH_PIECES`) while preserving baseline token output
+- Metal stitched owner-flag routing (`python/turbotoken/_gpu.py`) now uses deterministic one-batch lookahead overlap, so CPU batch prep/layout can run while GPU owner-flag filtering handles the previous batch (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, optional `TURBOTOKEN_GPU_OVERLAP_MIN_BATCHES`)
 - `Encoding.encode_gpu(...)` now includes an optional range-batched GPU route for large texts with Metal-eligible pieces (`TURBOTOKEN_GPU_RANGE_BATCH_*`), plus multi-range chunk-stitch helper (`encode_bpe_chunked_stitched_many`) and parity tests
+- `scripts/bench-gpu-overlap.ts` now defaults to a stitched stress workload (`"a"`-repeated single-piece payload, `chunk_bytes=1024`) and records per-row max GPU memory telemetry fields from `_gpu.profile_last()`
 - `scripts/build-wheels.ts` now clears stale wheel outputs and verifies that each repacked wheel embeds the exact expected native library bytes (SHA-256 check)
 - Core native BPE calls now use a reusable native rank session abstraction (`NativeBridge.rank_session(...)` / `NativeRankSession`) to reduce repeated Python-side bridge plumbing and keep rank-payload-bound calls more direct (`python/turbotoken/_native.py`, `python/turbotoken/core.py`)
 - `_ensure_rank_payload()` now prefers compiled native rank payload blobs by default (`*.tiktoken.native.bin`) with opt-out (`TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`), and rank parsing now supports both text `.tiktoken` payloads and native binary payloads through a unified parser (`python/turbotoken/_rank_files.py`)

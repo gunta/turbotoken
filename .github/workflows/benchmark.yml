@@ -9,7 +9,8 @@ on:
 jobs:
   benchmark-cpu-gates:
     name: Linux x86_64 CPU Regression Gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +54,8 @@ jobs:
 
   benchmark-metal-gates:
     name: Metal Regression Gates
-    runs-on: macos-latest
+    runs-on: macos-14
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -86,6 +88,9 @@ jobs:
       - name: Run benchmark governance gates (Metal)
         env:
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+          TURBOTOKEN_GPU_CROSSOVER_QUICK: "1"
+          TURBOTOKEN_GPU_MEMORY_RUNS: "1"
+          TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: "262144"
         run: bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal
 
       - name: Upload benchmark artifacts
@@ -101,7 +106,7 @@ jobs:
     needs:
       - benchmark-cpu-gates
       - benchmark-metal-gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

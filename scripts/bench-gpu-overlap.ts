@@ -10,6 +10,10 @@ const runsRaw = process.env.TURBOTOKEN_GPU_OVERLAP_RUNS?.trim();
 const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 3) : 3;
 const batchRaw = process.env.TURBOTOKEN_GPU_OVERLAP_BATCH?.trim();
 const batch = batchRaw ? Math.max(1, Number.parseInt(batchRaw, 10) || 4) : 4;
+const textMiBRaw = process.env.TURBOTOKEN_GPU_OVERLAP_TEXT_MIB?.trim();
+const textMiB = textMiBRaw ? Math.max(1, Number.parseInt(textMiBRaw, 10) || 1) : 1;
+const chunkBytesRaw = process.env.TURBOTOKEN_GPU_OVERLAP_CHUNK_BYTES?.trim();
+const chunkBytes = chunkBytesRaw ? Math.max(256, Number.parseInt(chunkBytesRaw, 10) || 1024) : 1024;
 
 const outputPath = resolvePath("bench", "results", `bench-gpu-overlap-${Date.now()}.json`);
 
@@ -65,17 +69,25 @@ if (probe.available !== true) {
 }
 
 const py = `
-import json,os,pathlib,sys,time
+import json,os,sys,time
 sys.path.insert(0,'python')
 from turbotoken import _gpu,get_encoding
 
 runs=int(sys.argv[1])
 batch_size=int(sys.argv[2])
+text_mib=max(1,int(sys.argv[3]))
+chunk_bytes=max(256,int(sys.argv[4]))
 enc=get_encoding('o200k_base')
-text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text(encoding='utf-8')
+text="a"*(text_mib*1024*1024)
 texts=[text]*batch_size
 piece_bytes=len(text.encode('utf-8'))
 total_bytes=piece_bytes*batch_size
+MEMORY_KEYS=(
+    "memory_active_bytes",
+    "memory_working_set_bytes",
+    "memory_device_allocated_bytes",
+    "memory_device_recommended_working_set_bytes",
+)
 
 def encode_gpu_metal(overlap_enabled):
     prev_force=os.environ.get('TURBOTOKEN_METAL_FORCE_ALL_PIECES')
@@ -86,7 +98,7 @@ def encode_gpu_metal(overlap_enabled):
         return enc.encode_gpu(
             texts,
             device='metal',
-            chunk_bytes=4096,
+            chunk_bytes=chunk_bytes,
             overlap_bytes=512,
             strict_verify=False,
             num_threads=1,
@@ -115,14 +127,31 @@ def mean_ms(fn, loops):
         fn()
     return (time.perf_counter()-start)*1000.0/max(1, loops)
 
+def bench_gpu_mode(overlap_enabled, loops):
+    memory_samples=[]
+    start=time.perf_counter()
+    for _ in range(max(1, loops)):
+        encode_gpu_metal(overlap_enabled)
+        profile=_gpu.profile_last() or {}
+        sample={}
+        for key in MEMORY_KEYS:
+            sample[key]=int(profile.get(key, 0))
+        memory_samples.append(sample)
+    elapsed_ms=(time.perf_counter()-start)*1000.0/max(1, loops)
+    max_memory={}
+    for key in MEMORY_KEYS:
+        values=[sample[key] for sample in memory_samples]
+        max_memory[f"max_{key}"]=max(values) if values else None
+    return elapsed_ms, max_memory
+
 def mib_per_s(ms):
     if ms <= 0:
         return None
     return (total_bytes/(1024.0*1024.0))/(ms/1000.0)
 
 cpu_ms=mean_ms(lambda: enc.encode_batch(texts, num_threads=1), runs)
-metal_no_overlap_ms=mean_ms(lambda: encode_gpu_metal(False), runs)
-metal_overlap_ms=mean_ms(lambda: encode_gpu_metal(True), runs)
+metal_no_overlap_ms,metal_no_overlap_mem=bench_gpu_mode(False, runs)
+metal_overlap_ms,metal_overlap_mem=bench_gpu_mode(True, runs)
 route_backend_auto=_gpu.bpe_route_backend(piece_bytes)
 profile=_gpu.profile_last()
 
@@ -131,6 +160,8 @@ print(json.dumps({
     'generated_at':time.time(),
     'runs_per_row':runs,
     'batch_size':batch_size,
+    'text_mib':text_mib,
+    'chunk_bytes':chunk_bytes,
     'piece_bytes':piece_bytes,
     'total_bytes':total_bytes,
     'route_backend_auto':route_backend_auto,
@@ -146,11 +177,13 @@ print(json.dumps({
             'name':'gpu-metal-no-overlap',
             'mean_ms':metal_no_overlap_ms,
             'mib_per_s':mib_per_s(metal_no_overlap_ms),
+            **metal_no_overlap_mem,
         },
         {
             'name':'gpu-metal-cpu-overlap',
             'mean_ms':metal_overlap_ms,
             'mib_per_s':mib_per_s(metal_overlap_ms),
+            **metal_overlap_mem,
         },
     ],
     'speedups':{
@@ -158,12 +191,12 @@ print(json.dumps({
         'overlap_vs_no_overlap': (metal_no_overlap_ms/metal_overlap_ms) if metal_overlap_ms > 0 else None,
     },
     'last_profile':profile,
-    'note':'Compares CPU-only encode_batch with Metal encode_gpu in non-overlap and CPU-pretokenize overlap modes on large 1MB texts. Intended for large-text crossover tuning only.',
+    'note':'Compares CPU-only encode_batch with Metal encode_gpu in non-overlap and CPU+GPU overlap modes. GPU rows include max memory telemetry from _gpu.profile_last() samples.',
 }))
 `;
 
 const runResult = Bun.spawnSync({
-  cmd: [python, "-c", py, String(runs), String(batch)],
+  cmd: [python, "-c", py, String(runs), String(batch), String(textMiB), String(chunkBytes)],
   cwd: resolvePath(),
   stdout: "pipe",
   stderr: "pipe",

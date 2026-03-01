@@ -24,20 +24,11 @@ pub fn countNonAscii(bytes: []const u8) usize {
     var idx: usize = 0;
 
     while (idx + lanes <= bytes.len) : (idx += lanes) {
-        var lane_buf: [lanes]u8 = undefined;
-        @memcpy(lane_buf[0..], bytes[idx .. idx + lanes]);
-        const chunk: Vec = lane_buf;
-        const mask: @Vector(lanes, bool) = (chunk & @as(Vec, @splat(@as(u8, 0x80)))) != @as(Vec, @splat(0));
-        const lane_counts: Vec = @select(
-            u8,
-            mask,
-            @as(Vec, @splat(@as(u8, 1))),
-            @as(Vec, @splat(@as(u8, 0))),
-        );
-        const counts_arr: [lanes]u8 = @bitCast(lane_counts);
-        inline for (counts_arr) |lane_count| {
-            count += lane_count;
-        }
+        const chunk_ptr: *const [lanes]u8 = @ptrCast(bytes[idx .. idx + lanes].ptr);
+        const chunk: Vec = chunk_ptr.*;
+        const high_bits: Vec = chunk >> @as(Vec, @splat(@as(u8, 7)));
+        const widened: @Vector(lanes, u16) = @intCast(high_bits);
+        count += @as(usize, @intCast(@reduce(.Add, widened)));
     }
 
     while (idx < bytes.len) : (idx += 1) {
@@ -58,9 +49,8 @@ pub fn encodeU8ToU32(bytes: []const u8, out: []u32) void {
     const lanes = 16;
     var idx: usize = 0;
     while (idx + lanes <= bytes.len) : (idx += lanes) {
-        var lane_buf: [lanes]u8 = undefined;
-        @memcpy(lane_buf[0..], bytes[idx .. idx + lanes]);
-        const chunk: @Vector(lanes, u8) = lane_buf;
+        const chunk_ptr: *const [lanes]u8 = @ptrCast(bytes[idx .. idx + lanes].ptr);
+        const chunk: @Vector(lanes, u8) = chunk_ptr.*;
         const values: [lanes]u8 = @bitCast(chunk);
         inline for (values, 0..) |byte, lane| {
             out[idx + lane] = byte;
@@ -89,9 +79,8 @@ pub fn validateAndDecodeU32ToU8(tokens: []const u32, out: []u8) bool {
     var idx: usize = 0;
 
     while (idx + lanes <= tokens.len) : (idx += lanes) {
-        var lane_buf: [lanes]u32 = undefined;
-        @memcpy(std.mem.sliceAsBytes(lane_buf[0..]), std.mem.sliceAsBytes(tokens[idx .. idx + lanes]));
-        const chunk: Vec = lane_buf;
+        const chunk_ptr: *const [lanes]u32 = @ptrCast(tokens[idx .. idx + lanes].ptr);
+        const chunk: Vec = chunk_ptr.*;
         const invalid_mask: @Vector(lanes, bool) = chunk > max_u8;
         if (@reduce(.Or, invalid_mask)) {
             return false;
@@ -110,4 +99,22 @@ pub fn validateAndDecodeU32ToU8(tokens: []const u32, out: []u8) bool {
         out[idx] = @as(u8, @intCast(token));
     }
     return true;
+}
+
+test "wasm countNonAscii matches scalar result" {
+    const sample = "hello-🚀-γειά-世界";
+    var scalar: usize = 0;
+    for (sample) |byte| {
+        scalar += @intFromBool((byte & 0x80) != 0);
+    }
+    try std.testing.expectEqual(scalar, countNonAscii(sample));
+}
+
+test "wasm encode/decode byte helpers roundtrip" {
+    const sample = "0123456789abcdef0123456789abcdef";
+    var tokens: [sample.len]u32 = undefined;
+    var out: [sample.len]u8 = undefined;
+    encodeU8ToU32(sample, &tokens);
+    try std.testing.expect(validateAndDecodeU32ToU8(&tokens, &out));
+    try std.testing.expectEqualSlices(u8, sample, &out);
 }

@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aarch64 = @import("arch/aarch64.zig");
+const x86_64 = @import("arch/x86_64.zig");
+const wasm_arch = @import("arch/wasm.zig");
 const pair_cache = @import("pair_cache.zig");
 const rank_loader = @import("rank_loader.zig");
 
@@ -671,6 +673,14 @@ pub const Encoder = struct {
 
         if (builtin.cpu.arch == .aarch64 and aarch64.available() and text.len >= 16) {
             aarch64.encodeU8ToU32(text, out);
+            return out;
+        }
+        if (builtin.cpu.arch == .x86_64 and x86_64.available() and text.len >= 16) {
+            x86_64.encodeU8ToU32(text, out);
+            return out;
+        }
+        if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable() and text.len >= 16) {
+            wasm_arch.encodeU8ToU32(text, out);
             return out;
         }
 

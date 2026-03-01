@@ -1,18 +1,28 @@
 {
-  "version": 2,
+  "version": 3,
   "cpu": {
-    "startupColdMaxMs": 300,
-    "encode1mbMaxMs": 450,
-    "count1mbMaxMs": 450,
-    "training100kbNativeMaxMs": 700,
-    "peakRssEncode1mbMaxMb": 700,
+    "startupColdMaxMs": 350,
+    "encode1mbMaxMs": 500,
+    "count1mbMaxMs": 500,
+    "training100kbNativeMaxMs": 800,
+    "peakRssEncode1mbMaxMb": 768,
     "encode1mbMinMiBPerSec": 2,
     "count1mbMinMiBPerSec": 2
   },
   "gpu": {
     "maxDeviceAllocatedMiB": 4096,
     "minBpeDirectEncodeMiBPerSec": 1,
-    "requireGpuMemoryRows": false
+    "requireGpuMemoryRows": false,
+    "directAbSafety": {
+      "requireRows": false,
+      "lowEntropyMaxSlowdownPct": 250,
+      "lowEntropyMinThroughputRatio": 0.2,
+      "normalTextMaxSlowdownPct": 250,
+      "normalTextMinThroughputRatio": 0.2,
+      "requireLowEntropyNoDirectRoute": false,
+      "requireNormalTextDirectRoute": false,
+      "requireTokenParity": true
+    }
   },
   "relative": {
     "enabled": true,
@@ -63,6 +73,15 @@
         "platform": "linux",
         "arch": "x64"
       },
+      "cpu": {
+        "startupColdMaxMs": 250,
+        "encode1mbMaxMs": 180,
+        "count1mbMaxMs": 180,
+        "training100kbNativeMaxMs": 140,
+        "peakRssEncode1mbMaxMb": 128,
+        "encode1mbMinMiBPerSec": 5,
+        "count1mbMinMiBPerSec": 5
+      },
       "relative": {
         "enabled": true,
         "cpu": {
@@ -101,6 +120,15 @@
       "host": {
         "platform": "linux",
         "arch": "x64"
+      },
+      "cpu": {
+        "startupColdMaxMs": 250,
+        "encode1mbMaxMs": 180,
+        "count1mbMaxMs": 180,
+        "training100kbNativeMaxMs": 140,
+        "peakRssEncode1mbMaxMb": 128,
+        "encode1mbMinMiBPerSec": 5,
+        "count1mbMinMiBPerSec": 5
       },
       "relative": {
         "enabled": true,
@@ -144,7 +172,17 @@
       "gpu": {
         "maxDeviceAllocatedMiB": 256,
         "minBpeDirectEncodeMiBPerSec": 6,
-        "requireGpuMemoryRows": true
+        "requireGpuMemoryRows": true,
+        "directAbSafety": {
+          "requireRows": true,
+          "lowEntropyMaxSlowdownPct": 80,
+          "lowEntropyMinThroughputRatio": 0.55,
+          "normalTextMaxSlowdownPct": 150,
+          "normalTextMinThroughputRatio": 0.45,
+          "requireLowEntropyNoDirectRoute": true,
+          "requireNormalTextDirectRoute": false,
+          "requireTokenParity": true
+        }
       },
       "relative": {
         "enabled": true,

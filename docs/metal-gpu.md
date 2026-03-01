@@ -81,10 +81,16 @@ Interpretation:
 - Matrix benchmark script:
   - `bun run scripts/bench-gpu-crossover.ts`
   - default: `TURBOTOKEN_BENCH_LONG=0` (long mode disabled)
+  - BPE profile selector: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=low-entropy|normal-text` (default: `low-entropy`)
   - optional long-run row (adds `10,485,760` bytes/chars): `TURBOTOKEN_BENCH_LONG=1 bun run scripts/bench-gpu-crossover.ts`
+- Direct-route safety matrix benchmark script:
+  - `bun run scripts/bench-gpu-bpe-direct.ts`
+  - runs `low-entropy` + `normal-text` workload profiles with direct route disabled/enabled and captures crossover + memory telemetry for each profile.
+  - route memory profile selector: `TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND=low-entropy|normal-text` (used by `scripts/bench-gpu-memory.ts`)
 - Latest matrix artifacts:
   - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
+  - direct safety matrix: `bench/results/bench-gpu-bpe-direct-1772339990653.json`
 - Auto-route cache:
   - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `4`)
 - Profiling counters exported from C bridge and exposed through Python:

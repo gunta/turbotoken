@@ -180,6 +180,8 @@ _metal_stitch_support_cache: dict[tuple[str, int, int, int], bool] = {}
 _metal_bpe_rank_table_ready: dict[str, bool] = {}
 _hybrid_pool: ThreadPoolExecutor | None = None
 _hybrid_pool_lock = Lock()
+_owner_flag_pool: ThreadPoolExecutor | None = None
+_owner_flag_pool_lock = Lock()
 
 
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -299,6 +301,135 @@ def _get_hybrid_pool() -> ThreadPoolExecutor:
             )
             atexit.register(_shutdown_hybrid_pool)
         return _hybrid_pool
+
+
+def _shutdown_owner_flag_pool() -> None:
+    global _owner_flag_pool
+    with _owner_flag_pool_lock:
+        pool = _owner_flag_pool
+        _owner_flag_pool = None
+    if pool is not None:
+        pool.shutdown(wait=False)
+
+
+def _get_owner_flag_pool() -> ThreadPoolExecutor:
+    global _owner_flag_pool
+    with _owner_flag_pool_lock:
+        if _owner_flag_pool is None:
+            _owner_flag_pool = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="turbotoken-gpu-owner",
+            )
+            atexit.register(_shutdown_owner_flag_pool)
+        return _owner_flag_pool
+
+
+def _gpu_overlap_pipeline_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_GPU_OVERLAP_ENABLE", default=True)
+
+
+def _gpu_overlap_pipeline_min_batches() -> int:
+    return _env_int("TURBOTOKEN_GPU_OVERLAP_MIN_BATCHES", 2, minimum=2)
+
+
+@dataclass(slots=True)
+class _PreparedOwnerBatch:
+    flat_tokens: list[int]
+    token_starts: list[int]
+    source_chunks: list[int]
+    chunk_bytes: int
+    num_chunks: int
+
+
+def _resolve_owner_batch(
+    *,
+    metal_bridge: "MetalBridge",
+    native_bridge: Any,
+    prepared: _PreparedOwnerBatch,
+) -> list[int] | None:
+    flags = metal_bridge.chunk_owner_flags(
+        prepared.token_starts,
+        prepared.source_chunks,
+        chunk_bytes=prepared.chunk_bytes,
+        num_chunks=prepared.num_chunks,
+    )
+    if flags is None or len(flags) != len(prepared.flat_tokens):
+        return None
+
+    filtered = native_bridge.filter_tokens_by_keep_flags(prepared.flat_tokens, flags)
+    if filtered is not None:
+        return filtered
+    return [token for token, keep in zip(prepared.flat_tokens, flags) if keep != 0]
+
+
+def _run_owner_batch_pipeline(
+    *,
+    total_batches: int,
+    prepare_batch: Any,
+    consume_batch_tokens: Any,
+    metal_bridge: "MetalBridge",
+    native_bridge: Any,
+) -> bool:
+    if total_batches <= 0:
+        return True
+
+    use_overlap = _gpu_overlap_pipeline_enabled() and total_batches >= _gpu_overlap_pipeline_min_batches()
+    if not use_overlap:
+        for batch_idx in range(total_batches):
+            prepared = prepare_batch(batch_idx)
+            if prepared is None:
+                return False
+            filtered = _resolve_owner_batch(
+                metal_bridge=metal_bridge,
+                native_bridge=native_bridge,
+                prepared=prepared,
+            )
+            if filtered is None:
+                return False
+            consume_batch_tokens(batch_idx, filtered)
+        return True
+
+    prepared = prepare_batch(0)
+    if prepared is None:
+        return False
+
+    pool = _get_owner_flag_pool()
+    future = pool.submit(
+        _resolve_owner_batch,
+        metal_bridge=metal_bridge,
+        native_bridge=native_bridge,
+        prepared=prepared,
+    )
+    for batch_idx in range(total_batches):
+        next_prepared: _PreparedOwnerBatch | None = None
+        next_prepare_failed = False
+        if batch_idx + 1 < total_batches:
+            next_prepared = prepare_batch(batch_idx + 1)
+            if next_prepared is None:
+                next_prepare_failed = True
+
+        try:
+            filtered = future.result()
+        except Exception:
+            return False
+        if filtered is None:
+            return False
+        consume_batch_tokens(batch_idx, filtered)
+        if next_prepare_failed:
+            return False
+
+        if next_prepared is None:
+            break
+
+        prepared = next_prepared
+        future = pool.submit(
+            _resolve_owner_batch,
+            metal_bridge=metal_bridge,
+            native_bridge=native_bridge,
+            prepared=prepared,
+        )
+
+    return True
 
 
 def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
@@ -512,6 +643,7 @@ class MetalBridge:
             uint64_t turbotoken_metal_last_bpe_cpu_ns(void);
             uint64_t turbotoken_metal_last_bpe_gpu_ns(void);
             uint64_t turbotoken_metal_last_bpe_rounds(void);
+            uint64_t turbotoken_metal_last_bpe_submits(void);
             uint64_t turbotoken_metal_last_bpe_input_bytes(void);
             uint64_t turbotoken_metal_last_bpe_output_tokens(void);
             uint64_t turbotoken_metal_last_memory_active_bytes(void);
@@ -849,6 +981,7 @@ class MetalBridge:
                 "bpe_cpu_ns": int(self._lib.turbotoken_metal_last_bpe_cpu_ns()),
                 "bpe_gpu_ns": int(self._lib.turbotoken_metal_last_bpe_gpu_ns()),
                 "bpe_rounds": int(self._lib.turbotoken_metal_last_bpe_rounds()),
+                "bpe_submits": int(self._lib.turbotoken_metal_last_bpe_submits()),
                 "bpe_input_bytes": int(self._lib.turbotoken_metal_last_bpe_input_bytes()),
                 "bpe_output_tokens": int(self._lib.turbotoken_metal_last_bpe_output_tokens()),
                 "memory_active_bytes": int(self._lib.turbotoken_metal_last_memory_active_bytes()),
@@ -878,7 +1011,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. Large-piece direct GPU BPE merge route is available behind TURBOTOKEN_METAL_BPE_DIRECT_ENABLE (default off) with exactness guards/fallback and a low-entropy safety guard (override via TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0); last_profile includes per-op GPU memory telemetry fields.",
+        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. Large-piece direct GPU BPE merge route is available behind TURBOTOKEN_METAL_BPE_DIRECT_ENABLE (default off) with exactness guards/fallback and a low-entropy safety guard (override via TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0). TURBOTOKEN_GPU_OVERLAP_ENABLE also gates batch prep/owner overlap for stitched Metal routes. last_profile includes per-op GPU memory telemetry fields.",
     }
 
 
@@ -1380,7 +1513,10 @@ def _encode_bpe_chunked_stitched_metal(
     chunks_per_batch = max(1, min(512, (8 * 1024 * 1024) // ext_bytes_per_chunk))
 
     stitched: list[int] = []
-    for batch_start in range(0, num_chunks, chunks_per_batch):
+    batch_starts = list(range(0, num_chunks, chunks_per_batch))
+
+    def _prepare_owner_batch(batch_idx: int) -> _PreparedOwnerBatch | None:
+        batch_start = batch_starts[batch_idx]
         batch_end = min(num_chunks, batch_start + chunks_per_batch)
         window_ranges = chunk_ranges[batch_start:batch_end]
         batch = native_bridge.encode_bpe_ranges_from_ranks(rank_payload, data, window_ranges)
@@ -1436,22 +1572,26 @@ def _encode_bpe_chunked_stitched_metal(
         if len(token_starts_global) != len(flat_tokens):
             return None
 
-        flags = metal_bridge.chunk_owner_flags(
-            token_starts_global,
-            source_chunks,
+        return _PreparedOwnerBatch(
+            flat_tokens=flat_tokens,
+            token_starts=token_starts_global,
+            source_chunks=source_chunks,
             chunk_bytes=chunk_bytes,
             num_chunks=num_chunks,
         )
-        if flags is None or len(flags) != len(flat_tokens):
-            return None
 
-        filtered = native_bridge.filter_tokens_by_keep_flags(flat_tokens, flags)
-        if filtered is not None:
+    def _consume_batch_tokens(_batch_idx: int, filtered: list[int]) -> None:
+        if filtered:
             stitched.extend(filtered)
-        else:
-            for token, keep in zip(flat_tokens, flags):
-                if keep != 0:
-                    stitched.append(token)
+
+    if not _run_owner_batch_pipeline(
+        total_batches=len(batch_starts),
+        prepare_batch=_prepare_owner_batch,
+        consume_batch_tokens=_consume_batch_tokens,
+        metal_bridge=metal_bridge,
+        native_bridge=native_bridge,
+    ):
+        return None
 
     total = _token_total_bytes(stitched, token_lens)
     if total is None or total != len(data):

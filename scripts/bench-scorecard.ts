@@ -518,6 +518,21 @@ const markdownRows = [
     startup.warm.gptTokenizerMs == null ? "n/a" : `${round(startup.warm.gptTokenizerMs, 1)} ms`
   }`,
   ``,
+  `## WASM (Node + Browser)`,
+  `- total wasm rows: ${wasmRows.length}`,
+  `- node wasm rows: ${wasmNodeRows.length}`,
+  `- browser wasm rows: ${wasmBrowserRows.length}`,
+  ...wasmNodeRows.slice(0, 8).map((row) =>
+    `- node row ${row.name}: ${row.meanMs == null ? "n/a" : `${round(row.meanMs, 2)} ms`} | ${
+      row.throughputMbPerSec == null ? "throughput n/a" : `${round(row.throughputMbPerSec, 2)} MB/s`
+    }`
+  ),
+  ...wasmBrowserRows.slice(0, 8).map((row) => {
+    const status = typeof row.status === "string" ? row.status : "ok";
+    const reason = typeof row.reason === "string" && row.reason.length > 0 ? ` (${row.reason})` : "";
+    return `- browser row ${row.name}: ${status}${reason}`;
+  }),
+  ``,
   `## Winners`,
   `- encode 100KB: ${winner(encode100kbRows)?.name ?? "n/a"}`,
   `- encode 1MB: ${winner(encode1mbRows)?.name ?? "n/a"}`,

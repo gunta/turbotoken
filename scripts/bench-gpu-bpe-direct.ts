@@ -4,6 +4,26 @@ import { join } from "node:path";
 import { resolvePath, runCommand, section, writeJson } from "./_lib";
 
 type JsonMap = Record<string, unknown>;
+type TextKind = "low-entropy" | "normal-text";
+
+interface WorkloadProfile {
+  key: "lowEntropy" | "normalText";
+  textKind: TextKind;
+  description: string;
+}
+
+const WORKLOADS: WorkloadProfile[] = [
+  {
+    key: "lowEntropy",
+    textKind: "low-entropy",
+    description: "Highly repetitive low-entropy text (safety guard stress path).",
+  },
+  {
+    key: "normalText",
+    textKind: "normal-text",
+    description: "Normal English fixture text slice.",
+  },
+];
 
 function isRecord(value: unknown): value is JsonMap {
   return typeof value === "object" && value !== null;
@@ -11,6 +31,11 @@ function isRecord(value: unknown): value is JsonMap {
 
 function toNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readEnvOrDefault(name: string, fallback: string): string {
+  const raw = process.env[name]?.trim();
+  return raw && raw.length > 0 ? raw : fallback;
 }
 
 function latestResultPath(prefix: string): string | null {
@@ -56,15 +81,46 @@ function loadJson(path: string | null): JsonMap | null {
   }
 }
 
-function extractCrossover(payload: JsonMap | null): JsonMap | null {
+function parseRouteKindCounts(value: unknown): Record<string, number> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const result: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    const numeric = toNumber(raw);
+    if (numeric != null && numeric > 0) {
+      result[key] = numeric;
+    }
+  }
+  return result;
+}
+
+function percentIncrease(baseline: number | null, next: number | null): number | null {
+  if (baseline == null || next == null || baseline <= 0) {
+    return null;
+  }
+  return ((next - baseline) / baseline) * 100;
+}
+
+function ratio(baseline: number | null, next: number | null): number | null {
+  if (baseline == null || next == null || baseline <= 0) {
+    return null;
+  }
+  return next / baseline;
+}
+
+function extractCrossover(payload: JsonMap | null, textKind: TextKind): JsonMap | null {
   if (!payload) {
     return null;
   }
-  const rows = payload["bpe_rows"];
-  if (!Array.isArray(rows) || rows.length === 0) {
+  const rowsRaw = payload["bpe_rows"];
+  if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) {
     return null;
   }
-  const wanted = rows
+  const rows = rowsRaw.filter(isRecord);
+  const withKind = rows.filter((row) => String(row["text_kind"] ?? "").trim() === textKind);
+  const sourceRows = withKind.length > 0 ? withKind : rows;
+  const wanted = sourceRows
     .filter(isRecord)
     .filter((row) => toNumber(row["bytes"]) != null)
     .sort((a, b) => (toNumber(a["bytes"]) ?? 0) - (toNumber(b["bytes"]) ?? 0))
@@ -73,9 +129,12 @@ function extractCrossover(payload: JsonMap | null): JsonMap | null {
     return null;
   }
   return {
+    textKind: String(wanted["text_kind"] ?? textKind),
     bytes: toNumber(wanted["bytes"]),
     metalMs: toNumber(wanted["metal_gpu_ms"]),
     metalMiBPerSec: toNumber(wanted["metal_gpu_mib_per_s"]),
+    metalBpeRounds: toNumber(wanted["metal_bpe_rounds"]),
+    metalBpeSubmits: toNumber(wanted["metal_bpe_submits"]),
     autoMs: toNumber(wanted["auto_gpu_ms"]),
     autoMiBPerSec: toNumber(wanted["auto_gpu_mib_per_s"]),
     metalMatchesBaseline: wanted["metal_matches_baseline"] === true,
@@ -83,7 +142,7 @@ function extractCrossover(payload: JsonMap | null): JsonMap | null {
   };
 }
 
-function extractGpuMemory(payload: JsonMap | null): JsonMap | null {
+function extractGpuMemory(payload: JsonMap | null, textKind: TextKind): JsonMap | null {
   if (!payload) {
     return null;
   }
@@ -99,16 +158,21 @@ function extractGpuMemory(payload: JsonMap | null): JsonMap | null {
   const route = isRecord(routeRow)
     ? {
       inputBytes: toNumber((routeRow["workload"] as JsonMap | undefined)?.["input_bytes"]),
+      textKind: String((routeRow["workload"] as JsonMap | undefined)?.["text_kind"] ?? textKind),
       medianGpuMs: toNumber(routeRow["median_gpu_ms"]),
       medianGpuMiBPerSec: toNumber(routeRow["median_gpu_mib_per_s"]),
+      medianBpeRounds: toNumber(routeRow["median_bpe_rounds"]),
+      medianBpeSubmits: toNumber(routeRow["median_bpe_submits"]),
       maxDeviceAllocatedMiB: toNumber(routeRow["max_device_allocated_mib"]),
-      routeKindCounts: routeRow["route_kind_counts"],
+      routeKindCounts: parseRouteKindCounts(routeRow["route_kind_counts"]),
     }
     : null;
   const direct = isRecord(directRow)
     ? {
       medianGpuMs: toNumber(directRow["median_gpu_ms"]),
       medianGpuMiBPerSec: toNumber(directRow["median_gpu_mib_per_s"]),
+      medianBpeRounds: toNumber(directRow["median_bpe_rounds"]),
+      medianBpeSubmits: toNumber(directRow["median_bpe_submits"]),
       maxDeviceAllocatedMiB: toNumber(directRow["max_device_allocated_mib"]),
     }
     : null;
@@ -118,13 +182,113 @@ function extractGpuMemory(payload: JsonMap | null): JsonMap | null {
   };
 }
 
-function runScenario(enableDirect: boolean): JsonMap {
+function routeSummary(scenario: JsonMap | null): {
+  routeKinds: Record<string, number>;
+  usedDirectRoute: boolean | null;
+  medianGpuMiBPerSec: number | null;
+  medianBpeRounds: number | null;
+  medianBpeSubmits: number | null;
+  maxDeviceAllocatedMiB: number | null;
+} {
+  if (!scenario) {
+    return {
+      routeKinds: {},
+      usedDirectRoute: null,
+      medianGpuMiBPerSec: null,
+      medianBpeRounds: null,
+      medianBpeSubmits: null,
+      maxDeviceAllocatedMiB: null,
+    };
+  }
+  const gpuMemory = scenario["gpuMemory"];
+  if (!isRecord(gpuMemory)) {
+    return {
+      routeKinds: {},
+      usedDirectRoute: null,
+      medianGpuMiBPerSec: null,
+      medianBpeRounds: null,
+      medianBpeSubmits: null,
+      maxDeviceAllocatedMiB: null,
+    };
+  }
+  const route = gpuMemory["route"];
+  if (!isRecord(route)) {
+    return {
+      routeKinds: {},
+      usedDirectRoute: null,
+      medianGpuMiBPerSec: null,
+      medianBpeRounds: null,
+      medianBpeSubmits: null,
+      maxDeviceAllocatedMiB: null,
+    };
+  }
+  const routeKinds = parseRouteKindCounts(route["routeKindCounts"]);
+  return {
+    routeKinds,
+    usedDirectRoute: Object.prototype.hasOwnProperty.call(routeKinds, "direct"),
+    medianGpuMiBPerSec: toNumber(route["medianGpuMiBPerSec"]),
+    medianBpeRounds: toNumber(route["medianBpeRounds"]),
+    medianBpeSubmits: toNumber(route["medianBpeSubmits"]),
+    maxDeviceAllocatedMiB: toNumber(route["maxDeviceAllocatedMiB"]),
+  };
+}
+
+function compareScenarios(disabled: JsonMap, enabled: JsonMap): JsonMap {
+  const disabledCrossover = isRecord(disabled["crossover"]) ? (disabled["crossover"] as JsonMap) : null;
+  const enabledCrossover = isRecord(enabled["crossover"]) ? (enabled["crossover"] as JsonMap) : null;
+
+  const disabledMs = toNumber(disabledCrossover?.["metalMs"]);
+  const enabledMs = toNumber(enabledCrossover?.["metalMs"]);
+  const disabledMiBPerSec = toNumber(disabledCrossover?.["metalMiBPerSec"]);
+  const enabledMiBPerSec = toNumber(enabledCrossover?.["metalMiBPerSec"]);
+  const disabledRounds = toNumber(disabledCrossover?.["metalBpeRounds"]);
+  const enabledRounds = toNumber(enabledCrossover?.["metalBpeRounds"]);
+  const disabledSubmits = toNumber(disabledCrossover?.["metalBpeSubmits"]);
+  const enabledSubmits = toNumber(enabledCrossover?.["metalBpeSubmits"]);
+
+  const disabledRoute = routeSummary(disabled);
+  const enabledRoute = routeSummary(enabled);
+
+  return {
+    disabledMetalMs: disabledMs,
+    enabledMetalMs: enabledMs,
+    disabledMetalMiBPerSec: disabledMiBPerSec,
+    enabledMetalMiBPerSec: enabledMiBPerSec,
+    disabledMetalBpeRounds: disabledRounds,
+    enabledMetalBpeRounds: enabledRounds,
+    disabledMetalBpeSubmits: disabledSubmits,
+    enabledMetalBpeSubmits: enabledSubmits,
+    slowdownPct: percentIncrease(disabledMs, enabledMs),
+    throughputRatio: ratio(disabledMiBPerSec, enabledMiBPerSec),
+    throughputDropPct: percentIncrease(enabledMiBPerSec, disabledMiBPerSec),
+    disabledMatchesBaseline: disabledCrossover?.["metalMatchesBaseline"] === true,
+    enabledMatchesBaseline: enabledCrossover?.["metalMatchesBaseline"] === true,
+    disabledRouteBackend: disabledCrossover?.["routeBackend"] ?? null,
+    enabledRouteBackend: enabledCrossover?.["routeBackend"] ?? null,
+    disabledRouteKinds: disabledRoute.routeKinds,
+    enabledRouteKinds: enabledRoute.routeKinds,
+    disabledUsedDirectRoute: disabledRoute.usedDirectRoute,
+    enabledUsedDirectRoute: enabledRoute.usedDirectRoute,
+    disabledRouteMedianGpuMiBPerSec: disabledRoute.medianGpuMiBPerSec,
+    enabledRouteMedianGpuMiBPerSec: enabledRoute.medianGpuMiBPerSec,
+    disabledRouteMedianBpeRounds: disabledRoute.medianBpeRounds,
+    enabledRouteMedianBpeRounds: enabledRoute.medianBpeRounds,
+    disabledRouteMedianBpeSubmits: disabledRoute.medianBpeSubmits,
+    enabledRouteMedianBpeSubmits: enabledRoute.medianBpeSubmits,
+    disabledRouteMaxDeviceAllocatedMiB: disabledRoute.maxDeviceAllocatedMiB,
+    enabledRouteMaxDeviceAllocatedMiB: enabledRoute.maxDeviceAllocatedMiB,
+  };
+}
+
+function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   const env: Record<string, string> = {
     TURBOTOKEN_METAL_BPE_DIRECT_ENABLE: enableDirect ? "1" : "0",
-    TURBOTOKEN_GPU_CROSSOVER_QUICK: "1",
-    TURBOTOKEN_GPU_MEMORY_RUNS: "1",
-    TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL: "1",
-    TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: "262144",
+    TURBOTOKEN_GPU_CROSSOVER_QUICK: readEnvOrDefault("TURBOTOKEN_GPU_CROSSOVER_QUICK", "1"),
+    TURBOTOKEN_GPU_MEMORY_RUNS: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_RUNS", "1"),
+    TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL", "1"),
+    TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES", "262144"),
+    TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND: profile.textKind,
+    TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND: profile.textKind,
   };
   if (process.env.TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD) {
     env.TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD = process.env.TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD;
@@ -134,7 +298,9 @@ function runScenario(enableDirect: boolean): JsonMap {
   }
   const startedAt = Date.now();
 
-  section(`GPU BPE direct scenario: TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=${env.TURBOTOKEN_METAL_BPE_DIRECT_ENABLE}`);
+  section(
+    `GPU BPE direct scenario: text=${profile.textKind}, TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=${env.TURBOTOKEN_METAL_BPE_DIRECT_ENABLE}`,
+  );
   const crossoverRun = runCommand("bun", ["run", "scripts/bench-gpu-crossover.ts"], {
     env,
     allowFailure: true,
@@ -162,24 +328,44 @@ function runScenario(enableDirect: boolean): JsonMap {
       crossover: crossoverPath,
       gpuMemory: memoryPath,
     },
-    crossover: extractCrossover(loadJson(crossoverPath)),
-    gpuMemory: extractGpuMemory(loadJson(memoryPath)),
+    crossover: extractCrossover(loadJson(crossoverPath), profile.textKind),
+    gpuMemory: extractGpuMemory(loadJson(memoryPath), profile.textKind),
   };
 }
 
 section("GPU BPE direct A/B benchmark");
 const outputPath = resolvePath("bench", "results", `bench-gpu-bpe-direct-${Date.now()}.json`);
 
-const disabled = runScenario(false);
-const enabled = runScenario(true);
+const workloads: Record<string, JsonMap> = {};
+for (const workload of WORKLOADS) {
+  section(`Workload profile: ${workload.key} (${workload.textKind})`);
+  const disabled = runScenario(false, workload);
+  const enabled = runScenario(true, workload);
+  workloads[workload.key] = {
+    textKind: workload.textKind,
+    description: workload.description,
+    disabled,
+    enabled,
+    comparison: compareScenarios(disabled, enabled),
+  };
+}
+
+const lowEntropy = isRecord(workloads.lowEntropy) ? (workloads.lowEntropy as JsonMap) : null;
+const legacyDisabled = isRecord(lowEntropy?.["disabled"]) ? (lowEntropy["disabled"] as JsonMap) : null;
+const legacyEnabled = isRecord(lowEntropy?.["enabled"]) ? (lowEntropy["enabled"] as JsonMap) : null;
 
 writeJson(outputPath, {
   tool: "gpu-bpe-direct-bench",
   generatedAt: new Date().toISOString(),
-  note: "A/B run for true on-GPU BPE direct merge route vs host-stitched path.",
+  note: "A/B run for true on-GPU BPE direct merge route vs host-stitched path on low-entropy and normal-text profiles.",
+  matrix: {
+    directEnable: [false, true],
+    textProfiles: WORKLOADS.map((row) => row.textKind),
+  },
+  workloads,
   scenarios: {
-    disabled,
-    enabled,
+    disabled: legacyDisabled,
+    enabled: legacyEnabled,
   },
 });
 

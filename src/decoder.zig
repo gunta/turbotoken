@@ -21,7 +21,13 @@ pub const Decoder = struct {
             }
             return out;
         }
-        if (builtin.cpu.arch == .x86_64 and x86_64.available() and tokens.len >= 16) {
+        if (builtin.cpu.arch == .x86_64 and x86_64.decoderAvx2HookAvailable(tokens.len)) {
+            if (!x86_64.validateAndDecodeU32ToU8Avx2(tokens, out)) {
+                return error.InvalidToken;
+            }
+            return out;
+        }
+        if (builtin.cpu.arch == .x86_64 and x86_64.available() and tokens.len >= 4) {
             if (!x86_64.validateAndDecodeU32ToU8(tokens, out)) {
                 return error.InvalidToken;
             }

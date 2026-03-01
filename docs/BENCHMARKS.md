@@ -37,21 +37,28 @@
   - training latency (native 100KB fixture)
   - peak RSS for 1MB encode
   - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
+  - Metal direct-route A/B safety (`bench-gpu-bpe-direct`) for both low-entropy and normal-text BPE profiles
 - Relative regression gates are also enabled in `bench/ci-gates.json` (`relative.enabled=true`) so CI enforces bounded drift against baselines for the same metric set (latency, throughput, RSS, GPU memory).
 - Runner-specific profiles are now supported via `scripts/ci-benchmark.ts --profile=...`:
   - `linux-x86_64-cpu` for Ubuntu CPU gate runners
   - `macos-arm64-metal` for macOS Metal gate runners
-  This keeps relative baselines host-aware instead of sharing one global baseline across dissimilar runners.
+  This keeps hard/relative gates host-aware instead of sharing one global baseline across dissimilar runners.
 - Workflow runner/toolchain policy for benchmark CI:
-  - CPU gates: `ubuntu-latest`
-  - Metal gates: `macos-latest` (Apple Silicon)
+  - CPU gates: `ubuntu-24.04`
+  - Metal gates: `macos-14` (Apple Silicon)
   - Python: `3.14` (`check-latest: true`)
   - Zig: `0.15.2`
   - Bun install: `bun install --frozen-lockfile`
+  - Metal gate run env: `TURBOTOKEN_GPU_CROSSOVER_QUICK=1`, `TURBOTOKEN_GPU_MEMORY_RUNS=1`, `TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144`
 - Baseline refresh tooling:
   - `bun run bench:ci:refresh-baselines` refreshes profile relative baselines from the latest successful per-profile CI benchmark artifacts.
   - host guard is enabled by default (profile host must match artifact host); use `--allow-host-mismatch` only for explicit local experimentation.
   - benchmark workflow also runs a non-mutating refresh dry-run job and uploads the summary artifact for operator review.
+- Local governance commands:
+  - CPU gates (Linux profile): `bun run scripts/ci-benchmark.ts --mode=cpu --profile=linux-x86_64-cpu`
+  - Metal gates (quick profile on free runner envelope): `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal`
+  - Direct-route A/B profile matrix: `bun run scripts/bench-gpu-bpe-direct.ts`
+  - Single crossover profile run: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=normal-text bun run scripts/bench-gpu-crossover.ts`
 - Packaging smoke checks are now CI-wired:
   - wheels workflow installs the host wheel into an isolated venv and verifies import + native bridge load.
   - wasm workflow packs npm tarball, installs it into a temp project, and validates installed WASM roundtrip.
@@ -79,9 +86,11 @@ Local benchmark host details (from `sysctl` / `uname`):
 
 ---
 
-## Latest Update (2026-02-28, macOS ARM64)
+## Latest Update (2026-03-01, macOS ARM64)
 
 Recent artifacts:
+- profile-matrix guarded default run:
+  - `bench/results/bench-gpu-bpe-direct-1772339990653.json`
 - guarded default run:
   - `bench/results/bench-gpu-bpe-direct-1772337431441.json`
   - `bench/results/bench-gpu-crossover-1772337432831.json`
@@ -94,6 +103,15 @@ Recent artifacts:
 - `bench/results/bench-scorecard-1772280469323.json`
 
 Metal direct-route A/B (quick profile, 262,144-byte BPE row):
+- profile-matrix run (`bench-gpu-bpe-direct-1772339990653.json`):
+  - low-entropy:
+    - direct disabled: `113.62 ms` (`~2.20 MiB/s`)
+    - direct enabled: `142.39 ms` (`~1.76 MiB/s`)
+    - slowdown: `~25.32%`, throughput ratio: `~0.798x`, route remained `stitched` in both rows.
+  - normal-text:
+    - direct disabled: `28.34 ms` (`~8.82 MiB/s`)
+    - direct enabled: `53.58 ms` (`~4.67 MiB/s`)
+    - slowdown: `~89.03%`, throughput ratio: `~0.529x`, baseline parity stayed true.
 - guarded default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`):
   - direct disabled: `112.52 ms` (`~2.22 MiB/s`)
   - direct enabled: `117.58 ms` (`~2.13 MiB/s`)
@@ -109,6 +127,7 @@ Decision:
   - direct path remains opt-in (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`, default off)
   - low-entropy guard enabled by default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`)
   - Metal BPE default round batching increased (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT` default `8`, was `1`)
+- CI now enforces direct A/B safety gates via `bench/ci-gates.json` + `scripts/ci-benchmark.ts` for both text profiles (with CUDA still off by default).
 
 WASM scorecard rows:
 - latest scorecard now includes runtime-split rows:
@@ -336,11 +355,14 @@ Added BPE crossover rows (`o200k_base`, long `"a"*N` inputs):
 
 ---
 
-## Latest CPU+GPU Overlap Matrix (2026-02-28, macOS ARM64)
+## Latest CPU+GPU Overlap Matrix (2026-03-01, macOS ARM64)
 
-- artifact: `bench/results/bench-gpu-overlap-1772226423191.json`
+- artifact: `bench/results/bench-gpu-overlap-1772339930654.json`
 - command: `bun run scripts/bench-gpu-overlap.ts`
-- workload: 1MB `o200k_base` texts in batch mode (`TURBOTOKEN_GPU_OVERLAP_BATCH`, default `4`)
+- workload:
+  - synthetic single-piece `o200k_base` text (`"a"` repeated, default `TURBOTOKEN_GPU_OVERLAP_TEXT_MIB=1`)
+  - batch mode (`TURBOTOKEN_GPU_OVERLAP_BATCH`, default `4`)
+  - stitched route chunk size (`TURBOTOKEN_GPU_OVERLAP_CHUNK_BYTES`, default `1024`)
 
 What this measures:
 - CPU-only baseline: `encode_batch(...)`
@@ -349,7 +371,8 @@ What this measures:
 
 Note:
 - This path is intentionally scoped to **large-text crossover** behavior; small/medium pieces remain routed to CPU/native by default.
-- Latest run still shows CPU-only ahead on this machine/workload (`~38.2 MiB/s` CPU vs `~9.7 MiB/s` Metal non-overlap vs `~9.3 MiB/s` overlap), so overlap remains experimental and off by default for broad workloads.
+- Latest run still shows CPU-only ahead on this machine/workload (`~531.5 MiB/s` CPU vs `~3.44 MiB/s` Metal non-overlap vs `~3.56 MiB/s` overlap), but overlap improved Metal stitched throughput by ~`3.5%` (`overlap_vs_no_overlap ≈ 1.035`) for this stress path.
+- GPU rows now include max memory telemetry sampled from `_gpu.profile_last()` (`max_memory_active_bytes`, `max_memory_working_set_bytes`, `max_memory_device_allocated_bytes`, `max_memory_device_recommended_working_set_bytes`).
 
 ---
 

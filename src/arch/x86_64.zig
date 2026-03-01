@@ -48,6 +48,52 @@ pub fn selectedCountKernel() CountKernel {
     return selected_count_kernel;
 }
 
+// AVX2 hook used by pretokenizer boundary counting.
+pub fn pretokenizerAvx2HookAvailable(text_len: usize) bool {
+    return avx2Available() and text_len >= 32;
+}
+
+pub fn pretokenizerAsciiBoundaryLanes(text_len: usize) usize {
+    if (pretokenizerAvx2HookAvailable(text_len)) {
+        return 32;
+    }
+    if (sse42Available() and text_len >= 16) {
+        return 16;
+    }
+    return 0;
+}
+
+// AVX2 hook used by decoder byte-path validation/pack.
+pub fn decoderAvx2HookAvailable(token_len: usize) bool {
+    return avx2Available() and token_len >= 8;
+}
+
+fn selectCountKernelForLen(byte_len: usize) CountKernel {
+    if (byte_len >= 64 and avx512Available()) {
+        return .avx512;
+    }
+    if (byte_len >= 32 and avx2Available()) {
+        return .avx2;
+    }
+    if (byte_len >= 16 and sse42Available()) {
+        return .sse42;
+    }
+    return .scalar;
+}
+
+fn selectDecodeKernelForLen(token_len: usize) CountKernel {
+    if (token_len >= 16 and avx512Available()) {
+        return .avx512;
+    }
+    if (token_len >= 8 and avx2Available()) {
+        return .avx2;
+    }
+    if (token_len >= 4 and sse42Available()) {
+        return .sse42;
+    }
+    return .scalar;
+}
+
 fn countNonAsciiScalar(bytes: []const u8) usize {
     var count: usize = 0;
     for (bytes) |byte| {
@@ -62,23 +108,15 @@ fn countNonAsciiVec(comptime lanes: usize, bytes: []const u8) usize {
     }
 
     const Vec = @Vector(lanes, u8);
+
     var count: usize = 0;
     var idx: usize = 0;
     while (idx + lanes <= bytes.len) : (idx += lanes) {
-        var lane_buf: [lanes]u8 = undefined;
-        @memcpy(lane_buf[0..], bytes[idx .. idx + lanes]);
-        const chunk: Vec = lane_buf;
-        const mask: @Vector(lanes, bool) = (chunk & @as(Vec, @splat(@as(u8, 0x80)))) != @as(Vec, @splat(0));
-        const lane_counts: Vec = @select(
-            u8,
-            mask,
-            @as(Vec, @splat(@as(u8, 1))),
-            @as(Vec, @splat(@as(u8, 0))),
-        );
-        const counts_arr: [lanes]u8 = @bitCast(lane_counts);
-        inline for (counts_arr) |lane_count| {
-            count += lane_count;
-        }
+        const chunk_ptr: *const [lanes]u8 = @ptrCast(bytes[idx .. idx + lanes].ptr);
+        const chunk: Vec = chunk_ptr.*;
+        const high_bits: Vec = chunk >> @as(Vec, @splat(@as(u8, 7)));
+        const widened: @Vector(lanes, u16) = @intCast(high_bits);
+        count += @as(usize, @intCast(@reduce(.Add, widened)));
     }
 
     while (idx < bytes.len) : (idx += 1) {
@@ -88,7 +126,7 @@ fn countNonAsciiVec(comptime lanes: usize, bytes: []const u8) usize {
 }
 
 pub fn countNonAscii(bytes: []const u8) usize {
-    return switch (selectedCountKernel()) {
+    return switch (selectCountKernelForLen(bytes.len)) {
         .avx512 => countNonAsciiVec(64, bytes),
         .avx2 => countNonAsciiVec(32, bytes),
         .sse42 => countNonAsciiVec(16, bytes),
@@ -104,9 +142,8 @@ fn encodeU8ToU32Vec(comptime lanes: usize, bytes: []const u8, out: []u32) void {
 
     var idx: usize = 0;
     while (idx + lanes <= bytes.len) : (idx += lanes) {
-        var lane_buf: [lanes]u8 = undefined;
-        @memcpy(lane_buf[0..], bytes[idx .. idx + lanes]);
-        const chunk: @Vector(lanes, u8) = lane_buf;
+        const chunk_ptr: *const [lanes]u8 = @ptrCast(bytes[idx .. idx + lanes].ptr);
+        const chunk: @Vector(lanes, u8) = chunk_ptr.*;
         const arr: [lanes]u8 = @bitCast(chunk);
         inline for (arr, 0..) |byte, lane| {
             out[idx + lane] = byte;
@@ -122,7 +159,7 @@ pub fn encodeU8ToU32(bytes: []const u8, out: []u32) void {
     if (bytes.len == 0) {
         return;
     }
-    switch (selectedCountKernel()) {
+    switch (selectCountKernelForLen(bytes.len)) {
         .avx512 => encodeU8ToU32Vec(64, bytes, out),
         .avx2 => encodeU8ToU32Vec(32, bytes, out),
         .sse42 => encodeU8ToU32Vec(16, bytes, out),
@@ -179,11 +216,54 @@ fn validateAndDecodeU32ToU8Vec(comptime lanes: usize, tokens: []const u32, out: 
     return true;
 }
 
+pub fn validateAndDecodeU32ToU8Avx2(tokens: []const u32, out: []u8) bool {
+    std.debug.assert(tokens.len == out.len);
+    if (!decoderAvx2HookAvailable(tokens.len)) {
+        return validateAndDecodeU32ToU8(tokens, out);
+    }
+    return validateAndDecodeU32ToU8Vec(8, tokens, out);
+}
+
 pub fn validateAndDecodeU32ToU8(tokens: []const u32, out: []u8) bool {
-    return switch (selectedCountKernel()) {
+    return switch (selectDecodeKernelForLen(tokens.len)) {
         .avx512 => validateAndDecodeU32ToU8Vec(16, tokens, out),
         .avx2 => validateAndDecodeU32ToU8Vec(8, tokens, out),
         .sse42 => validateAndDecodeU32ToU8Vec(4, tokens, out),
         .scalar => validateAndDecodeU32ToU8Scalar(tokens, out),
     };
+}
+
+test "x86_64 count kernel selection honors AVX512->AVX2->SSE4.2->scalar order" {
+    if (builtin.cpu.arch != .x86_64) {
+        return;
+    }
+
+    const selected = selectedCountKernel();
+    if (avx512Available()) {
+        try std.testing.expectEqual(CountKernel.avx512, selected);
+    } else if (avx2Available()) {
+        try std.testing.expectEqual(CountKernel.avx2, selected);
+    } else if (sse42Available()) {
+        try std.testing.expectEqual(CountKernel.sse42, selected);
+    } else {
+        try std.testing.expectEqual(CountKernel.scalar, selected);
+    }
+}
+
+test "x86_64 AVX2 pretokenizer and decoder hooks reflect feature gating" {
+    if (builtin.cpu.arch != .x86_64) {
+        try std.testing.expect(!pretokenizerAvx2HookAvailable(64));
+        try std.testing.expect(!decoderAvx2HookAvailable(64));
+        return;
+    }
+
+    if (avx2Available()) {
+        try std.testing.expect(pretokenizerAvx2HookAvailable(64));
+        try std.testing.expect(!pretokenizerAvx2HookAvailable(16));
+        try std.testing.expect(decoderAvx2HookAvailable(64));
+        try std.testing.expect(!decoderAvx2HookAvailable(4));
+    } else {
+        try std.testing.expect(!pretokenizerAvx2HookAvailable(64));
+        try std.testing.expect(!decoderAvx2HookAvailable(64));
+    }
 }

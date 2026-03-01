@@ -781,7 +781,7 @@ pub export fn turbotoken_encode_utf8_bytes(
         aarch64.encodeU8ToU32(in_slice, out_slice);
         return @as(isize, @intCast(text_len));
     }
-    if (builtin.cpu.arch == .x86_64 and x86_64.available() and text_len >= 32) {
+    if (builtin.cpu.arch == .x86_64 and x86_64.available() and text_len >= 16) {
         x86_64.encodeU8ToU32(in_slice, out_slice);
         return @as(isize, @intCast(text_len));
     }
@@ -843,7 +843,13 @@ pub export fn turbotoken_decode_utf8_bytes(
         }
         return @as(isize, @intCast(token_len));
     }
-    if (builtin.cpu.arch == .x86_64 and x86_64.available() and token_len >= 16) {
+    if (builtin.cpu.arch == .x86_64 and x86_64.decoderAvx2HookAvailable(token_len)) {
+        if (!x86_64.validateAndDecodeU32ToU8Avx2(in_slice, out_slice)) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_len));
+    }
+    if (builtin.cpu.arch == .x86_64 and x86_64.available() and token_len >= 4) {
         if (!x86_64.validateAndDecodeU32ToU8(in_slice, out_slice)) {
             return -1;
         }

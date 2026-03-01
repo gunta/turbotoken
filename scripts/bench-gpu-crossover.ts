@@ -1,8 +1,10 @@
 #!/usr/bin/env bun
+import { ensureFixtures } from "./_fixtures";
 import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU crossover matrix benchmark");
 const python = pythonExecutable();
+ensureFixtures();
 
 const longModeRaw = (process.env.TURBOTOKEN_BENCH_LONG ?? "0").trim().toLowerCase();
 const longBenchmarkEnabled =
@@ -20,6 +22,8 @@ const quickModeEnabled =
   quickModeRaw === "on";
 const quickModeEnabledPy = quickModeEnabled ? "True" : "False";
 const calibrateForcePy = quickModeEnabled ? "False" : "True";
+const bpeTextKindRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND ?? "low-entropy").trim().toLowerCase();
+const bpeTextKind = bpeTextKindRaw === "normal-text" || bpeTextKindRaw === "normal" ? "normal-text" : "low-entropy";
 
 const encodeSizes = longBenchmarkEnabled
   ? [1024, 4096, 16384, 65536, 262144, 1048576, longChars]
@@ -47,6 +51,7 @@ if (quickModeEnabled) {
     `Quick mode enabled via TURBOTOKEN_GPU_CROSSOVER_QUICK=${process.env.TURBOTOKEN_GPU_CROSSOVER_QUICK}; using reduced loop counts for A/B checks`,
   );
 }
+console.log(`BPE text profile: ${bpeTextKind} (set TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=low-entropy|normal-text)`);
 
 const probeResult = Bun.spawnSync({
   cmd: [
@@ -102,7 +107,7 @@ if (probe.available !== true) {
 }
 
 const matrixScript = `
-import json,os,sys,time
+import json,os,pathlib,sys,time
 sys.path.insert(0,'python')
 from turbotoken import _gpu
 from turbotoken import get_encoding
@@ -189,12 +194,26 @@ for batch_size in count_batches:
 
 route=_gpu.calibrate_autoroute(force=${calibrateForcePy})
 bpe_sizes=${JSON.stringify(bpeSizes)}
+bpe_text_kind=${JSON.stringify(bpeTextKind)}
+fixture_text=bytes(pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes())
+if len(fixture_text) == 0:
+    fixture_text=b"The quick brown fox jumps over the lazy dog. "
+
+def build_bpe_text(size):
+    if bpe_text_kind == "normal-text":
+        repeats=max(1,(size+len(fixture_text)-1)//len(fixture_text))
+        payload=(fixture_text*repeats)[:size]
+        return payload.decode("utf-8", "ignore")
+    return 'a'*size
+
 bpe_rows=[]
 for size in bpe_sizes:
-    loops=max(1,min(8,(${bpeLoopBaseMiB}*1048576)//size))
-    text='a'*size
+    text=build_bpe_text(size)
+    data=text.encode('utf-8')
+    input_bytes=max(1,len(data))
+    loops=max(1,min(8,(${bpeLoopBaseMiB}*1048576)//input_bytes))
     baseline=enc.encode(text)
-    route_backend=_gpu.bpe_route_backend(len(text.encode('utf-8')))
+    route_backend=_gpu.bpe_route_backend(input_bytes)
     auto_tokens=enc.encode_gpu(
         [text],
         device='auto',
@@ -215,22 +234,27 @@ for size in bpe_sizes:
         loops,
     )
     metal_ms=mean_ms(lambda: encode_metal_forced(text), loops)
+    metal_profile=_gpu.profile_last() or {}
     bpe_rows.append({
-        "chars":size,
-        "bytes":size,
+        "chars":len(text),
+        "bytes":input_bytes,
+        "text_kind":bpe_text_kind,
         "route_backend":route_backend,
         "loops":loops,
         "cpu_encode_ms":cpu_ms,
-        "cpu_encode_mib_per_s":mib_per_s(size, cpu_ms),
+        "cpu_encode_mib_per_s":mib_per_s(input_bytes, cpu_ms),
         "auto_gpu_ms":auto_ms,
-        "auto_gpu_mib_per_s":mib_per_s(size, auto_ms),
+        "auto_gpu_mib_per_s":mib_per_s(input_bytes, auto_ms),
         "metal_gpu_ms":metal_ms,
-        "metal_gpu_mib_per_s":mib_per_s(size, metal_ms),
+        "metal_gpu_mib_per_s":mib_per_s(input_bytes, metal_ms),
         "auto_matches_baseline":auto_tokens==baseline,
         "metal_matches_baseline":metal_tokens==baseline,
         "auto_tokens_len":len(auto_tokens),
         "baseline_tokens_len":len(baseline),
         "metal_tokens_len":len(metal_tokens),
+        "metal_bpe_rounds":int(metal_profile.get("bpe_rounds",0)),
+        "metal_bpe_submits":int(metal_profile.get("bpe_submits",0)),
+        "metal_last_profile":metal_profile,
     })
 
 print(json.dumps({
@@ -244,6 +268,11 @@ print(json.dumps({
     "quick_mode":{
         "enabled":${quickModeEnabledPy},
         "flag":"TURBOTOKEN_GPU_CROSSOVER_QUICK",
+    },
+    "bpe_text_profile":{
+        "kind":bpe_text_kind,
+        "source_fixture":"bench/fixtures/english-1mb.txt",
+        "flag":"TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND",
     },
     "bench_sizes":{
         "encode_bytes":encode_sizes,
