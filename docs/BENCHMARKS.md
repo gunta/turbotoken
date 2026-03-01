@@ -39,12 +39,19 @@
   - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
 - Relative regression gates are also enabled in `bench/ci-gates.json` (`relative.enabled=true`) so CI enforces bounded drift against baselines for the same metric set (latency, throughput, RSS, GPU memory).
 - Runner-specific profiles are now supported via `scripts/ci-benchmark.ts --profile=...`:
-  - `linux-x64-cpu` for Ubuntu CPU gate runners
+  - `linux-x86_64-cpu` for Ubuntu CPU gate runners
   - `macos-arm64-metal` for macOS Metal gate runners
   This keeps relative baselines host-aware instead of sharing one global baseline across dissimilar runners.
+- Workflow runner/toolchain policy for benchmark CI:
+  - CPU gates: `ubuntu-latest`
+  - Metal gates: `macos-latest` (Apple Silicon)
+  - Python: `3.14` (`check-latest: true`)
+  - Zig: `0.15.2`
+  - Bun install: `bun install --frozen-lockfile`
 - Baseline refresh tooling:
   - `bun run bench:ci:refresh-baselines` refreshes profile relative baselines from the latest successful per-profile CI benchmark artifacts.
   - host guard is enabled by default (profile host must match artifact host); use `--allow-host-mismatch` only for explicit local experimentation.
+  - benchmark workflow also runs a non-mutating refresh dry-run job and uploads the summary artifact for operator review.
 - Packaging smoke checks are now CI-wired:
   - wheels workflow installs the host wheel into an isolated venv and verifies import + native bridge load.
   - wasm workflow packs npm tarball, installs it into a temp project, and validates installed WASM roundtrip.
@@ -69,6 +76,45 @@ Local benchmark host details (from `sysctl` / `uname`):
 - ISA features detected: NEON/AdvSIMD, FP16, DotProd, BF16, I8MM, SHA3/AES/PMULL, LSE/LSE2, SME/SME2 (current hot path uses AdvSIMD/NEON instructions)
 
 > Additional machines will be added as we benchmark on Graviton, x86, RISC-V, etc.
+
+---
+
+## Latest Update (2026-02-28, macOS ARM64)
+
+Recent artifacts:
+- guarded default run:
+  - `bench/results/bench-gpu-bpe-direct-1772337431441.json`
+  - `bench/results/bench-gpu-crossover-1772337432831.json`
+  - `bench/results/bench-gpu-crossover-1772337436147.json`
+  - `bench/results/bench-gpu-memory-1772337434324.json`
+  - `bench/results/bench-gpu-memory-1772337438047.json`
+- raw direct stress run (guard explicitly disabled):
+  - `bench/results/bench-gpu-bpe-direct-1772337512879.json`
+- `bench/results/bench-wasm-1772280409724.json`
+- `bench/results/bench-scorecard-1772280469323.json`
+
+Metal direct-route A/B (quick profile, 262,144-byte BPE row):
+- guarded default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`):
+  - direct disabled: `112.52 ms` (`~2.22 MiB/s`)
+  - direct enabled: `117.58 ms` (`~2.13 MiB/s`)
+  - both rows route to stitched path on this low-entropy stress input.
+- raw direct stress (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0`):
+  - direct disabled: `111.56 ms` (`~2.24 MiB/s`)
+  - direct enabled: `17333.93 ms` (`~0.014 MiB/s`)
+  - route memory row confirms direct kernel path and higher device allocation (`22.45 MiB` vs `16.875 MiB` stitched).
+
+Decision:
+- root cause of the extreme slowdown is direct-kernel round complexity on low-entropy inputs (very high `bpe_rounds`) plus host round-submission overhead.
+- mitigations applied:
+  - direct path remains opt-in (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`, default off)
+  - low-entropy guard enabled by default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`)
+  - Metal BPE default round batching increased (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT` default `8`, was `1`)
+
+WASM scorecard rows:
+- latest scorecard now includes runtime-split rows:
+  - `wasmRows=15`
+  - `wasmNodeRows=6`
+  - `wasmBrowserRows=2` (explicit not-run placeholders when browser harness is unavailable locally)
 
 ---
 

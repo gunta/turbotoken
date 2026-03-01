@@ -652,7 +652,7 @@ static NSUInteger count_threads_per_group_for(
 }
 
 static uint32_t bpe_rounds_per_submit(void) {
-    const uint32_t default_value = 1u;
+    const uint32_t default_value = 8u;
     const char *raw = getenv("TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT");
     if (raw == NULL || raw[0] == '\0') {
         return default_value;

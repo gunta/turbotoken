@@ -311,22 +311,41 @@ const wasmStartupCommand =
   `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});bridge.encodeUtf8Bytes('hello');"`;
 const jsStartupCommand =
   `bun -e "Array.from(new TextEncoder().encode('hello'));"`;
+const nodeAvailable = commandExists("node");
+const nodeStartupCommand = nodeAvailable
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const data=new TextEncoder().encode('hello');const textPtr=e.turbotoken_wasm_alloc(data.length);new Uint8Array(e.memory.buffer).set(data,textPtr);const needed=e.turbotoken_encode_utf8_bytes(textPtr,data.length,0,0);if(needed<0) throw new Error('encode failed');e.turbotoken_wasm_free(textPtr,data.length);"`
+  : null;
 const wasmStartupBpeCommand = rankPayloadInfo
   ? `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});const ranks=new Uint8Array(await Bun.file('${rankPayloadPath}').arrayBuffer());bridge.encodeBpeFromRanks(ranks,'hello');"`
+  : null;
+const nodeStartupBpeCommand = nodeAvailable && rankPayloadInfo
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const ranks=new Uint8Array(await readFile('${rankPayloadPath}'));const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const text=new TextEncoder().encode('hello');const rankPtr=e.turbotoken_wasm_alloc(ranks.length);const textPtr=e.turbotoken_wasm_alloc(text.length);new Uint8Array(e.memory.buffer).set(ranks,rankPtr);new Uint8Array(e.memory.buffer).set(text,textPtr);const needed=e.turbotoken_encode_bpe_from_ranks(rankPtr,ranks.length,textPtr,text.length,0,0);if(needed<0) throw new Error('bpe encode failed');e.turbotoken_wasm_free(textPtr,text.length);e.turbotoken_wasm_free(rankPtr,ranks.length);"`
   : null;
 const wasmEncode100kbCommand =
   `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});const text=await Bun.file('${fixture100kb}').text();bridge.encodeUtf8Bytes(text);"`;
 const jsEncode100kbCommand =
   `bun -e "const text=await Bun.file('${fixture100kb}').text();Array.from(new TextEncoder().encode(text));"`;
+const nodeEncode100kbCommand = nodeAvailable
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const text=await readFile('${fixture100kb}','utf8');const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const bytes=new TextEncoder().encode(text);const textPtr=e.turbotoken_wasm_alloc(bytes.length);new Uint8Array(e.memory.buffer).set(bytes,textPtr);const needed=e.turbotoken_encode_utf8_bytes(textPtr,bytes.length,0,0);if(needed<0) throw new Error('encode failed');e.turbotoken_wasm_free(textPtr,bytes.length);"`
+  : null;
 const wasmEncode1mbCommand =
   `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});const text=await Bun.file('${fixture1mb}').text();bridge.encodeUtf8Bytes(text);"`;
 const jsEncode1mbCommand =
   `bun -e "const text=await Bun.file('${fixture1mb}').text();Array.from(new TextEncoder().encode(text));"`;
+const nodeEncode1mbCommand = nodeAvailable
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const text=await readFile('${fixture1mb}','utf8');const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const bytes=new TextEncoder().encode(text);const textPtr=e.turbotoken_wasm_alloc(bytes.length);new Uint8Array(e.memory.buffer).set(bytes,textPtr);const needed=e.turbotoken_encode_utf8_bytes(textPtr,bytes.length,0,0);if(needed<0) throw new Error('encode failed');e.turbotoken_wasm_free(textPtr,bytes.length);"`
+  : null;
 const wasmBpeEncode100kbCommand = rankPayloadInfo
   ? `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});const ranks=new Uint8Array(await Bun.file('${rankPayloadPath}').arrayBuffer());const text=await Bun.file('${fixture100kb}').text();bridge.encodeBpeFromRanks(ranks,text);"`
   : null;
 const wasmBpeEncode1mbCommand = rankPayloadInfo
   ? `bun -e "import { loadWasm } from './js/src/wasm-loader';const bridge=await loadWasm({wasmPath:'${wasmPath}',forceReload:true});const ranks=new Uint8Array(await Bun.file('${rankPayloadPath}').arrayBuffer());const text=await Bun.file('${fixture1mb}').text();bridge.encodeBpeFromRanks(ranks,text);"`
+  : null;
+const nodeBpeEncode100kbCommand = nodeAvailable && rankPayloadInfo
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const ranks=new Uint8Array(await readFile('${rankPayloadPath}'));const text=await readFile('${fixture100kb}','utf8');const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const input=new TextEncoder().encode(text);const rankPtr=e.turbotoken_wasm_alloc(ranks.length);const textPtr=e.turbotoken_wasm_alloc(input.length);new Uint8Array(e.memory.buffer).set(ranks,rankPtr);new Uint8Array(e.memory.buffer).set(input,textPtr);const needed=e.turbotoken_encode_bpe_from_ranks(rankPtr,ranks.length,textPtr,input.length,0,0);if(needed<0) throw new Error('bpe encode failed');e.turbotoken_wasm_free(textPtr,input.length);e.turbotoken_wasm_free(rankPtr,ranks.length);"`
+  : null;
+const nodeBpeEncode1mbCommand = nodeAvailable && rankPayloadInfo
+  ? `node --input-type=module -e "import { readFile } from 'node:fs/promises';const wasm=await readFile('${wasmPath}');const ranks=new Uint8Array(await readFile('${rankPayloadPath}'));const text=await readFile('${fixture1mb}','utf8');const {instance}=await WebAssembly.instantiate(wasm,{});const e=instance.exports;const input=new TextEncoder().encode(text);const rankPtr=e.turbotoken_wasm_alloc(ranks.length);const textPtr=e.turbotoken_wasm_alloc(input.length);new Uint8Array(e.memory.buffer).set(ranks,rankPtr);new Uint8Array(e.memory.buffer).set(input,textPtr);const needed=e.turbotoken_encode_bpe_from_ranks(rankPtr,ranks.length,textPtr,input.length,0,0);if(needed<0) throw new Error('bpe encode failed');e.turbotoken_wasm_free(textPtr,input.length);e.turbotoken_wasm_free(rankPtr,ranks.length);"`
   : null;
 
 const benchCases: BenchCase[] = [
@@ -372,6 +391,36 @@ if (wasmStartupBpeCommand !== null) {
     category: "startup",
   });
 }
+if (nodeStartupCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-startup-first-encode-hello",
+    command: nodeStartupCommand,
+    category: "startup",
+  });
+}
+if (nodeStartupBpeCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-startup-first-bpe-encode-hello",
+    command: nodeStartupBpeCommand,
+    category: "startup",
+  });
+}
+if (nodeEncode100kbCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-encode-utf8-bytes-100kb",
+    command: nodeEncode100kbCommand,
+    category: "throughput",
+    bytesProcessed: fixture100kbBytes,
+  });
+}
+if (nodeEncode1mbCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-encode-utf8-bytes-1mb",
+    command: nodeEncode1mbCommand,
+    category: "throughput",
+    bytesProcessed: fixture1mbBytes,
+  });
+}
 if (wasmBpeEncode100kbCommand !== null) {
   benchCases.push({
     name: "wasm-encode-bpe-o200k-100kb",
@@ -384,6 +433,22 @@ if (wasmBpeEncode1mbCommand !== null) {
   benchCases.push({
     name: "wasm-encode-bpe-o200k-1mb",
     command: wasmBpeEncode1mbCommand,
+    category: "throughput",
+    bytesProcessed: fixture1mbBytes,
+  });
+}
+if (nodeBpeEncode100kbCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-encode-bpe-o200k-100kb",
+    command: nodeBpeEncode100kbCommand,
+    category: "throughput",
+    bytesProcessed: fixture100kbBytes,
+  });
+}
+if (nodeBpeEncode1mbCommand !== null) {
+  benchCases.push({
+    name: "node-wasm-encode-bpe-o200k-1mb",
+    command: nodeBpeEncode1mbCommand,
     category: "throughput",
     bytesProcessed: fixture1mbBytes,
   });
@@ -419,10 +484,22 @@ const memoryCases: Array<{ name: string; command: string }> = [
   { name: "wasm-rss-encode-utf8-bytes-1mb", command: wasmEncode1mbCommand },
   { name: "js-rss-textencoder-u32-1mb", command: jsEncode1mbCommand },
 ];
+if (nodeEncode1mbCommand !== null) {
+  memoryCases.push({
+    name: "node-wasm-rss-encode-utf8-bytes-1mb",
+    command: nodeEncode1mbCommand,
+  });
+}
 if (wasmBpeEncode1mbCommand !== null) {
   memoryCases.push({
     name: "wasm-rss-encode-bpe-o200k-1mb",
     command: wasmBpeEncode1mbCommand,
+  });
+}
+if (nodeBpeEncode1mbCommand !== null) {
+  memoryCases.push({
+    name: "node-wasm-rss-encode-bpe-o200k-1mb",
+    command: nodeBpeEncode1mbCommand,
   });
 }
 const memoryRows = runMemoryRows(memoryCases, memoryRuns);
@@ -459,6 +536,25 @@ const throughputRows = benchRowsWithDerived
     throughputMbPerSec: row.throughputMbPerSec,
     runs: row.runs,
   }));
+
+const browserRows = [
+  {
+    name: "browser-wasm-startup-first-encode-hello",
+    category: "startup",
+    meanMs: null,
+    throughputMbPerSec: null,
+    status: "not-run",
+    reason: "browser benchmark harness is not configured in this local run",
+  },
+  {
+    name: "browser-wasm-encode-bpe-o200k-1mb",
+    category: "throughput",
+    meanMs: null,
+    throughputMbPerSec: null,
+    status: "not-run",
+    reason: "browser benchmark harness is not configured in this local run",
+  },
+];
 
 writeJson(outputPath, {
   generatedAt: new Date().toISOString(),
@@ -500,6 +596,9 @@ writeJson(outputPath, {
     runsPerCommand: memoryRuns,
     workload: "Peak RSS during 1MB encode workloads (UTF-8 byte path and BPE path when rank payload is available)",
     rows: memoryRows,
+  },
+  browser: {
+    rows: browserRows,
   },
   note: "WASM benchmark matrix includes startup latency, throughput MB/s, and RSS-style memory rows for byte-path and optional BPE workloads.",
 });

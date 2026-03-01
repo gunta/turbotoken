@@ -43,7 +43,8 @@ Current project status reminder: scalar rank-BPE is implemented, but the reposit
 | GPU-008 | Metal autoroute BPE calibration | ensure rank payload is available during BPE calibration to emit crossover rows | `DONE (first pass)` |
 | GPU-009 | Hybrid NEON+Metal encode orchestration | move split execution from Python threadpool into native Metal bridge symbol | `DONE (first pass)` |
 | GPU-010 | Metal overlap pipeline | overlap CPU pretokenization with GPU chunk processing for large-text batches only | `DONE (first pass)` |
-| GPU-011 | Metal range batching | batch multi-piece chunk-window stitching through shared range submissions and host-side ordered assembly | `DONE (second pass, keep optional)` |
+| GPU-011 | Metal range batching | batch multi-piece chunk-window stitching through shared range submissions and optional native per-piece layout handoff (`TURBOTOKEN_GPU_NATIVE_LAYOUT_ENABLE=1`, Python fallback retained) | `DONE (third pass, keep optional)` |
+| GPU-012 | Metal direct BPE route | true on-GPU merge route A/B vs stitched route and memory telemetry gating | `DONE (first pass, keep optional/off by default)` |
 | DX-003 | Benchmark governance | hard CI gate runner for startup/count/encode/training/RSS/MBps/GPU memory with CUDA default-off | `DONE (second pass, runner-profile baselines)` |
 | DX-004 | Packaging integrity | verify wheel-embedded native libs by hash and validate npm WASM packaging path | `DONE (first pass)` |
 | DX-005 | Packaging smoke CI | install/load smoke checks for built wheel and packed npm artifact in workflows | `DONE (second pass)` |
@@ -277,6 +278,60 @@ bun run scripts/bench-gpu.ts
 - pure NEON encode remains substantially faster (`73.8 ms`), so hybrid stays an optional/experimental path.
 
 Decision: `keep optional`.
+
+## Experiment GPU-012 (2026-02-28)
+
+### Goal
+
+Ship a first true on-GPU BPE merge route behind a strict parity guard, benchmark it directly against stitched-host flow, and gate adoption with measured results (latency, throughput, GPU memory).
+
+### Implementation
+
+- Added direct-route attempt in `python/turbotoken/_gpu.py` (`_encode_bpe_direct_metal`) to call `encode_bpe_from_bytes(...)` before stitched fallback.
+- Added route controls:
+  - `TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`
+  - `TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`
+  - `TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES`
+- Added benchmark harnesses:
+  - `scripts/bench-gpu-bpe-direct.ts` (A/B direct enabled vs disabled)
+  - quick profile support in `scripts/bench-gpu-crossover.ts` (`TURBOTOKEN_GPU_CROSSOVER_QUICK=1`)
+  - route-level GPU memory row in `scripts/bench-gpu-memory.ts` (`metal-bpe-route-encode-gpu`)
+
+### Commands
+
+```bash
+bun run scripts/bench-gpu-bpe-direct.ts
+```
+
+### Artifacts
+
+- `bench/results/bench-gpu-bpe-direct-1772279949550.json`
+- `bench/results/bench-gpu-crossover-1772279949734.json`
+- `bench/results/bench-gpu-crossover-1772279953167.json`
+- `bench/results/bench-gpu-memory-1772279951347.json`
+- `bench/results/bench-gpu-memory-1772280140470.json`
+- guarded rerun after fixes:
+  - `bench/results/bench-gpu-bpe-direct-1772337431441.json`
+- raw direct stress rerun (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0`):
+  - `bench/results/bench-gpu-bpe-direct-1772337512879.json`
+
+### Result Summary
+
+Root cause:
+- direct route on low-entropy stress text (`'a' * N`) drives very high `bpe_rounds` and spends most wall time in round orchestration.
+- sampled profile on 262,144-byte stress input (direct forced): `bpe_rounds ~= 229k`, with CPU-side orchestration and GPU loop both dominating.
+
+Mitigations applied:
+- default rounds-per-submit raised in Metal bridge (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`: `1 -> 8`).
+- low-entropy direct-route guard added in Python (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1` by default).
+- direct route remains opt-in (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=1` required).
+
+Measured outcome (same quick-profile stress row, 262,144 bytes):
+- original raw direct enabled: `37,176.40 ms` (`~0.0067 MiB/s`)
+- raw direct enabled after round-batching fix: `17,333.93 ms` (`~0.014 MiB/s`)
+- guarded default run (direct enabled, guard on): routed to stitched path and stayed near baseline (`117.58 ms` vs `112.52 ms` disabled).
+
+Decision: `keep optional` and set default direct-route toggle to off (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=0` unless explicitly enabled).
 
 ## Experiment CPU-003 (2026-02-25)
 

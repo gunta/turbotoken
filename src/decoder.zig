@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aarch64 = @import("arch/aarch64.zig");
+const x86_64 = @import("arch/x86_64.zig");
+const wasm_arch = @import("arch/wasm.zig");
 const rank_loader = @import("rank_loader.zig");
 
 pub const Decoder = struct {
@@ -15,6 +17,18 @@ pub const Decoder = struct {
 
         if (builtin.cpu.arch == .aarch64 and aarch64.available() and tokens.len >= 16) {
             if (!aarch64.validateAndDecodeU32ToU8(tokens, out)) {
+                return error.InvalidToken;
+            }
+            return out;
+        }
+        if (builtin.cpu.arch == .x86_64 and x86_64.available() and tokens.len >= 16) {
+            if (!x86_64.validateAndDecodeU32ToU8(tokens, out)) {
+                return error.InvalidToken;
+            }
+            return out;
+        }
+        if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable() and tokens.len >= 16) {
+            if (!wasm_arch.validateAndDecodeU32ToU8(tokens, out)) {
                 return error.InvalidToken;
             }
             return out;

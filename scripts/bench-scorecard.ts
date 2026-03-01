@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePath, runCommand, section, writeJson } from "./_lib";
 
@@ -34,11 +34,15 @@ function latestResultPath(prefix: string, options: { excludes?: string[] } = {})
         name.endsWith(".json") &&
         !name.endsWith(".meta.json") &&
         excludes.every((needle) => !name.includes(needle)),
-    )
-    .sort();
+    );
   if (files.length === 0) {
     return null;
   }
+  files.sort((a, b) => {
+    const am = statSync(join(resultsDir, a)).mtimeMs;
+    const bm = statSync(join(resultsDir, b)).mtimeMs;
+    return am - bm;
+  });
   return join(resultsDir, files[files.length - 1]);
 }
 
@@ -51,6 +55,89 @@ function loadJson(path: string | null): JsonMap | null {
   } catch {
     return null;
   }
+}
+
+function latestGpuMemoryPath(): string | null {
+  const resultsDir = resolvePath("bench", "results");
+  const files = readdirSync(resultsDir)
+    .filter(
+      (name) =>
+        name.startsWith("bench-gpu-memory-") &&
+        name.endsWith(".json") &&
+        !name.endsWith(".meta.json") &&
+        !name.includes("-cuda-"),
+    )
+    .map((name) => ({
+      name,
+      path: join(resultsDir, name),
+      mtimeMs: statSync(join(resultsDir, name)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const file of files) {
+    const payload = loadJson(file.path);
+    if (!payload) {
+      continue;
+    }
+    const env = payload["env"];
+    if (!isRecord(env)) {
+      return file.path;
+    }
+    const skipDirect = String(env["TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL"] ?? "").trim().toLowerCase();
+    const routeBytes = String(env["TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES"] ?? "").trim();
+    if (skipDirect === "1" || skipDirect === "true" || skipDirect === "yes" || skipDirect === "on") {
+      continue;
+    }
+    if (routeBytes.length > 0 && routeBytes !== "1048576") {
+      continue;
+    }
+    return file.path;
+  }
+
+  return files.length > 0 ? files[0].path : null;
+}
+
+function latestGpuBpeDirectPath(): string | null {
+  const resultsDir = resolvePath("bench", "results");
+  const files = readdirSync(resultsDir)
+    .filter(
+      (name) =>
+        name.startsWith("bench-gpu-bpe-direct-") &&
+        name.endsWith(".json") &&
+        !name.endsWith(".meta.json"),
+    )
+    .map((name) => ({
+      name,
+      path: join(resultsDir, name),
+      mtimeMs: statSync(join(resultsDir, name)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const file of files) {
+    const payload = loadJson(file.path);
+    if (!payload) {
+      continue;
+    }
+    const scenarios = payload["scenarios"];
+    if (!isRecord(scenarios)) {
+      return file.path;
+    }
+    const enabled = scenarios["enabled"];
+    if (!isRecord(enabled)) {
+      return file.path;
+    }
+    const env = enabled["env"];
+    if (!isRecord(env)) {
+      return file.path;
+    }
+    const guard = String(env["TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD"] ?? "").trim().toLowerCase();
+    if (guard === "0" || guard === "false" || guard === "no" || guard === "off") {
+      continue;
+    }
+    return file.path;
+  }
+
+  return files.length > 0 ? files[0].path : null;
 }
 
 function commandMeanMs(payload: JsonMap | null, commandName: string): number | null {
@@ -110,6 +197,7 @@ function refreshBenchmarks(): void {
     "scripts/bench-competitors.ts",
     "scripts/bench-chat.ts",
     "scripts/bench-training.ts",
+    "scripts/bench-wasm.ts",
     "scripts/bench-ram.ts",
     "scripts/bench-gpu-memory.ts",
     "scripts/bench-gpu-overlap.ts",
@@ -144,8 +232,10 @@ const artifacts = {
   chatHelpers: latestResultPath("bench-chat-helpers"),
   training: latestResultPath("bench-training-python"),
   ram: latestResultPath("bench-ram"),
-  gpuMemory: latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"] }),
+  wasm: latestResultPath("bench-wasm", { excludes: ["-raw-"] }),
+  gpuMemory: latestGpuMemoryPath(),
   gpuOverlap: latestResultPath("bench-gpu-overlap"),
+  gpuBpeDirect: latestGpuBpeDirectPath(),
 };
 
 const startupCold = loadJson(artifacts.startupCold);
@@ -157,8 +247,10 @@ const competitorsCount = loadJson(artifacts.competitorsCount);
 const chatHelpers = loadJson(artifacts.chatHelpers);
 const training = loadJson(artifacts.training);
 const ram = loadJson(artifacts.ram);
+const wasm = loadJson(artifacts.wasm);
 const gpuMemory = loadJson(artifacts.gpuMemory);
 const gpuOverlap = loadJson(artifacts.gpuOverlap);
+const gpuBpeDirect = loadJson(artifacts.gpuBpeDirect);
 
 const encode100kbRows: CompetitorRow[] = [
   { name: "turbotoken", meanMs: commandMeanMs(competitorsEncode, "python-encode-100kb-turbotoken") ?? Number.NaN },
@@ -285,6 +377,45 @@ const ramRows = extractRamRows(ram).map((row) => ({
   })(),
 }));
 
+const wasmRows = (() => {
+  if (!wasm) {
+    return [];
+  }
+  const benchmark = wasm["benchmark"];
+  if (!isRecord(benchmark)) {
+    return [];
+  }
+  const rows = benchmark["rows"];
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(isRecord).map((row) => ({
+    name: String(row["name"] ?? "unknown"),
+    category: String(row["category"] ?? "unknown"),
+    meanMs: (() => {
+      const meanSeconds = toNumber(row["meanSeconds"]);
+      return meanSeconds == null ? null : meanSeconds * 1000;
+    })(),
+    throughputMbPerSec: toNumber(row["throughputMbPerSec"]),
+  }));
+})();
+
+const wasmNodeRows = wasmRows.filter((row) => row.name.startsWith("node-"));
+let wasmBrowserRows = wasmRows.filter((row) => row.name.startsWith("browser-"));
+if (wasmBrowserRows.length === 0 && wasm) {
+  const browser = wasm["browser"];
+  if (isRecord(browser) && Array.isArray(browser["rows"])) {
+    wasmBrowserRows = browser["rows"].filter(isRecord).map((row) => ({
+      name: String(row["name"] ?? "unknown"),
+      category: String(row["category"] ?? "unknown"),
+      meanMs: toNumber(row["meanMs"]),
+      throughputMbPerSec: toNumber(row["throughputMbPerSec"]),
+      status: row["status"],
+      reason: row["reason"],
+    }));
+  }
+}
+
 const gpuMemoryRows = (() => {
   if (!gpuMemory) {
     return [];
@@ -345,11 +476,16 @@ const payload: JsonMap = {
     chatLimitWinner: winner(chatLimitRows),
     training100kb: training100kbRows,
     training100kbWinner: winner(training100kbRows),
+    wasm,
+    wasmRows,
+    wasmNodeRows,
+    wasmBrowserRows,
     ram1mbEncodePeakRss: ramRows,
     gpuMemory,
     gpuMemoryRows,
     gpuOverlap,
     gpuOverlapRows,
+    gpuBpeDirect,
   },
 };
 

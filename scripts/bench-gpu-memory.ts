@@ -63,12 +63,14 @@ if (probe.available !== true) {
 }
 
 const py = `
-import json,pathlib,statistics,sys,time
+import json,os,pathlib,statistics,sys,time
 sys.path.insert(0,'python')
 from turbotoken import _gpu,get_encoding
 
 runs=int(sys.argv[1])
 bridge=_gpu.get_metal_bridge()
+skip_direct_kernel=os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL","").strip().lower() in {"1","true","yes","on"}
+route_bytes_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES","").strip()
 
 def summarize(name,workload,samples):
     keys=[
@@ -106,9 +108,23 @@ def summarize(name,workload,samples):
     summary["max_device_allocated_mib"]=summary["max_memory_device_allocated_bytes"]/(1024.0*1024.0)
     return summary
 
+def summarize_route(name,workload,samples):
+    summary=summarize(name,workload,samples)
+    route_counts={}
+    for sample in samples:
+        route=str(sample.get("route_kind","unknown"))
+        route_counts[route]=route_counts.get(route,0)+1
+    summary["route_kind_counts"]=route_counts
+    return summary
+
 rows=[]
 fixture_1kb=pathlib.Path("bench/fixtures/english-1kb.txt").read_bytes()
 fixture_1mb=pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes()
+try:
+    route_input_bytes=int(route_bytes_raw) if route_bytes_raw else len(fixture_1mb)
+except ValueError:
+    route_input_bytes=len(fixture_1mb)
+route_input_bytes=max(4096, min(len(fixture_1mb), route_input_bytes))
 
 # UTF-8 byte encode workload
 samples=[]
@@ -167,25 +183,80 @@ except Exception as exc:
     bpe_status["reason"]=str(exc)
 
 if bpe_status["ready"]:
+    route_text='a'*route_input_bytes
+    enc=get_encoding("o200k_base")
+
+    # Route-level BPE workload through Python encode_gpu(device="metal"):
+    # this captures direct-on-GPU vs stitched fallback behavior under env flags.
     samples=[]
-    for _ in range(runs):
-        out=bridge.encode_bpe_from_bytes(fixture_1mb)
-        if out is None:
-            raise RuntimeError("metal encode_bpe_from_bytes failed")
-        profile=_gpu.profile_last() or {}
-        samples.append({
-            "gpu_ns":int(profile.get("bpe_gpu_ns",0)),
-            "cpu_ns":int(profile.get("bpe_cpu_ns",0)),
-            "memory_active_bytes":int(profile.get("memory_active_bytes",0)),
-            "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
-            "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
-            "memory_device_recommended_working_set_bytes":int(profile.get("memory_device_recommended_working_set_bytes",0)),
-        })
-    rows.append(summarize(
-        "metal-bpe-direct-encode-1mb",
-        {"input_bytes":len(fixture_1mb),"kind":"encode_bpe_from_bytes"},
+    prev_force=os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES")
+    os.environ["TURBOTOKEN_METAL_FORCE_ALL_PIECES"]="1"
+    try:
+        for _ in range(runs):
+            out=enc.encode_gpu(
+                [route_text],
+                device='metal',
+                chunk_bytes=65536,
+                overlap_bytes=256,
+                strict_verify=False,
+            )
+            if not out:
+                raise RuntimeError("metal encode_gpu route failed")
+            profile=_gpu.profile_last() or {}
+            bpe_gpu=int(profile.get("bpe_gpu_ns",0))
+            bpe_cpu=int(profile.get("bpe_cpu_ns",0))
+            stitch_gpu=int(profile.get("stitch_gpu_ns",0))
+            stitch_cpu=int(profile.get("stitch_cpu_ns",0))
+            route_kind="unknown"
+            gpu_ns=bpe_gpu
+            cpu_ns=bpe_cpu
+            if bpe_gpu > 0 or int(profile.get("bpe_rounds",0)) > 0:
+                route_kind="direct"
+            elif stitch_gpu > 0 or int(profile.get("stitch_tokens",0)) > 0:
+                route_kind="stitched"
+                gpu_ns=stitch_gpu
+                cpu_ns=stitch_cpu
+            samples.append({
+                "gpu_ns":gpu_ns,
+                "cpu_ns":cpu_ns,
+                "memory_active_bytes":int(profile.get("memory_active_bytes",0)),
+                "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
+                "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
+                "memory_device_recommended_working_set_bytes":int(profile.get("memory_device_recommended_working_set_bytes",0)),
+                "route_kind":route_kind,
+            })
+    finally:
+        if prev_force is None:
+            os.environ.pop("TURBOTOKEN_METAL_FORCE_ALL_PIECES", None)
+        else:
+            os.environ["TURBOTOKEN_METAL_FORCE_ALL_PIECES"]=prev_force
+    rows.append(summarize_route(
+        "metal-bpe-route-encode-gpu",
+        {"input_bytes":route_input_bytes,"kind":"encode_gpu(device=metal)","env_direct_enable":str(_gpu._metal_bpe_direct_enabled())},
         samples,
     ))
+
+    if not skip_direct_kernel:
+        # Direct bridge kernel workload for lower-bound device throughput.
+        samples=[]
+        for _ in range(runs):
+            out=bridge.encode_bpe_from_bytes(fixture_1mb)
+            if out is None:
+                raise RuntimeError("metal encode_bpe_from_bytes failed")
+            profile=_gpu.profile_last() or {}
+            samples.append({
+                "gpu_ns":int(profile.get("bpe_gpu_ns",0)),
+                "cpu_ns":int(profile.get("bpe_cpu_ns",0)),
+                "memory_active_bytes":int(profile.get("memory_active_bytes",0)),
+                "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
+                "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
+                "memory_device_recommended_working_set_bytes":int(profile.get("memory_device_recommended_working_set_bytes",0)),
+            })
+        rows.append(summarize(
+            "metal-bpe-direct-encode-1mb",
+            {"input_bytes":len(fixture_1mb),"kind":"encode_bpe_from_bytes"},
+            samples,
+        ))
 
 print(json.dumps({
     "tool":"gpu-memory-bench",
@@ -194,6 +265,13 @@ print(json.dumps({
     "probe":_gpu.backend_info(),
     "bpe_status":bpe_status,
     "rows":rows,
+    "env":{
+        "TURBOTOKEN_METAL_BPE_DIRECT_ENABLE":os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_ENABLE"),
+        "TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES":os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES"),
+        "TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES":os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES"),
+        "TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL":os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL"),
+        "TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES":os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES"),
+    },
     "note":"GPU memory rows are derived from Metal bridge telemetry: active bytes (last op), bridge working-set bytes (persistent MTLBuffer capacity), and device currentAllocatedSize when reported by the driver. Throughput columns use median GPU/CPU ns and known workload byte totals.",
 }))
 `;

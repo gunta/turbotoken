@@ -185,10 +185,15 @@ export class WasmBridge {
     if (len <= 0) {
       return [];
     }
+    if ((ptr & (BYTES_PER_U32 - 1)) === 0) {
+      const view = new Uint32Array(this.exports.memory.buffer, ptr, len);
+      return Array.from(view);
+    }
+
     const out = new Array<number>(len);
-    const view = new DataView(this.exports.memory.buffer);
+    const dv = new DataView(this.exports.memory.buffer);
     for (let i = 0; i < len; i += 1) {
-      out[i] = view.getUint32(ptr + (i * BYTES_PER_U32), true);
+      out[i] = dv.getUint32(ptr + (i * BYTES_PER_U32), true);
     }
     return out;
   }
@@ -197,9 +202,17 @@ export class WasmBridge {
     if (values.length === 0) {
       return;
     }
-    const view = new DataView(this.exports.memory.buffer);
+    if ((ptr & (BYTES_PER_U32 - 1)) === 0) {
+      const view = new Uint32Array(this.exports.memory.buffer, ptr, values.length);
+      for (let i = 0; i < values.length; i += 1) {
+        view[i] = values[i] >>> 0;
+      }
+      return;
+    }
+
+    const dv = new DataView(this.exports.memory.buffer);
     for (let i = 0; i < values.length; i += 1) {
-      view.setUint32(ptr + (i * BYTES_PER_U32), values[i] >>> 0, true);
+      dv.setUint32(ptr + (i * BYTES_PER_U32), values[i] >>> 0, true);
     }
   }
 

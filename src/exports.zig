@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const aarch64 = @import("arch/aarch64.zig");
+const x86_64 = @import("arch/x86_64.zig");
+const wasm_arch = @import("arch/wasm.zig");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const hash = @import("hash.zig");
 const rank_loader = @import("rank_loader.zig");
@@ -604,6 +606,10 @@ pub export fn turbotoken_count_non_ascii_utf8(
     const in_slice = text[0..text_len];
     const count = if (builtin.cpu.arch == .aarch64 and aarch64.available())
         aarch64.countNonAscii(in_slice)
+    else if (builtin.cpu.arch == .x86_64 and x86_64.available())
+        x86_64.countNonAscii(in_slice)
+    else if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable())
+        wasm_arch.countNonAscii(in_slice)
     else
         countNonAsciiScalar(in_slice);
 
@@ -775,6 +781,14 @@ pub export fn turbotoken_encode_utf8_bytes(
         aarch64.encodeU8ToU32(in_slice, out_slice);
         return @as(isize, @intCast(text_len));
     }
+    if (builtin.cpu.arch == .x86_64 and x86_64.available() and text_len >= 32) {
+        x86_64.encodeU8ToU32(in_slice, out_slice);
+        return @as(isize, @intCast(text_len));
+    }
+    if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable() and text_len >= 16) {
+        wasm_arch.encodeU8ToU32(in_slice, out_slice);
+        return @as(isize, @intCast(text_len));
+    }
 
     encodeUtf8BytesScalar(in_slice, out_slice);
     return @as(isize, @intCast(text_len));
@@ -825,6 +839,18 @@ pub export fn turbotoken_decode_utf8_bytes(
 
     if (builtin.cpu.arch == .aarch64 and aarch64.available() and token_len >= 16) {
         if (!aarch64.validateAndDecodeU32ToU8(in_slice, out_slice)) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_len));
+    }
+    if (builtin.cpu.arch == .x86_64 and x86_64.available() and token_len >= 16) {
+        if (!x86_64.validateAndDecodeU32ToU8(in_slice, out_slice)) {
+            return -1;
+        }
+        return @as(isize, @intCast(token_len));
+    }
+    if (builtin.cpu.arch == .wasm32 and wasm_arch.simdAvailable() and token_len >= 16) {
+        if (!wasm_arch.validateAndDecodeU32ToU8(in_slice, out_slice)) {
             return -1;
         }
         return @as(isize, @intCast(token_len));

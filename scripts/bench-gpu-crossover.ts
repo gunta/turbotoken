@@ -12,18 +12,39 @@ const longBenchmarkEnabled =
   longModeRaw === "on";
 const longBenchmarkEnabledPy = longBenchmarkEnabled ? "True" : "False";
 const longChars = 10_485_760;
+const quickModeRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_QUICK ?? "0").trim().toLowerCase();
+const quickModeEnabled =
+  quickModeRaw === "1" ||
+  quickModeRaw === "true" ||
+  quickModeRaw === "yes" ||
+  quickModeRaw === "on";
+const quickModeEnabledPy = quickModeEnabled ? "True" : "False";
+const calibrateForcePy = quickModeEnabled ? "False" : "True";
 
 const encodeSizes = longBenchmarkEnabled
   ? [1024, 4096, 16384, 65536, 262144, 1048576, longChars]
-  : [1024, 4096, 16384, 65536, 262144, 1048576];
+  : quickModeEnabled
+    ? [262144]
+    : [1024, 4096, 16384, 65536, 262144, 1048576];
 
 const bpeSizes = longBenchmarkEnabled
   ? [65536, 262144, 1048576, longChars]
-  : [65536, 262144, 1048576];
+  : quickModeEnabled
+    ? [262144]
+    : [65536, 262144, 1048576];
+const countBatches = quickModeEnabled ? [2048] : [64, 128, 256, 512, 1024, 2048, 4096, 8192];
+const encodeLoopBaseMiB = quickModeEnabled ? 4 : 16;
+const countLoopBaseBatches = quickModeEnabled ? 4 : 16;
+const bpeLoopBaseMiB = quickModeEnabled ? 1 : 2;
 
 if (longBenchmarkEnabled) {
   console.log(
     `Long mode enabled via TURBOTOKEN_BENCH_LONG=${process.env.TURBOTOKEN_BENCH_LONG}; appending ${longChars.toLocaleString()}-char benchmark row`,
+  );
+}
+if (quickModeEnabled) {
+  console.log(
+    `Quick mode enabled via TURBOTOKEN_GPU_CROSSOVER_QUICK=${process.env.TURBOTOKEN_GPU_CROSSOVER_QUICK}; using reduced loop counts for A/B checks`,
   );
 }
 
@@ -122,7 +143,7 @@ def encode_metal_forced(piece_text):
 encode_sizes=${JSON.stringify(encodeSizes)}
 encode_rows=[]
 for size in encode_sizes:
-    loops=max(8,min(256,(16*1048576)//size))
+    loops=max(1,min(256,(${encodeLoopBaseMiB}*1048576)//size))
     payload=bytes(((i%251)+1) for i in range(size))
     metal_ms=mean_ms(lambda: bridge.encode_utf8_bytes(payload), loops)
     native_ms=None
@@ -143,10 +164,10 @@ for size in encode_sizes:
     })
 
 segment=b'a'*1024
-count_batches=[64,128,256,512,1024,2048,4096,8192]
+count_batches=${JSON.stringify(countBatches)}
 count_rows=[]
 for batch_size in count_batches:
-    loops=max(8,min(256,(16*8192)//batch_size))
+    loops=max(1,min(256,(${countLoopBaseBatches}*8192)//batch_size))
     payload=[segment]*batch_size
     metal_ms=mean_ms(lambda: bridge.count_nonzero_bytes_batch(payload), loops)
     py_ms=mean_ms(lambda: [len(item)-item.count(0) for item in payload], loops)
@@ -166,11 +187,11 @@ for batch_size in count_batches:
         "last_profile":profile,
     })
 
-route=_gpu.calibrate_autoroute(force=True)
+route=_gpu.calibrate_autoroute(force=${calibrateForcePy})
 bpe_sizes=${JSON.stringify(bpeSizes)}
 bpe_rows=[]
 for size in bpe_sizes:
-    loops=max(2,min(8,(2*1048576)//size))
+    loops=max(1,min(8,(${bpeLoopBaseMiB}*1048576)//size))
     text='a'*size
     baseline=enc.encode(text)
     route_backend=_gpu.bpe_route_backend(len(text.encode('utf-8')))
@@ -219,6 +240,10 @@ print(json.dumps({
         "enabled":${longBenchmarkEnabledPy},
         "flag":"TURBOTOKEN_BENCH_LONG",
         "long_chars":${longChars},
+    },
+    "quick_mode":{
+        "enabled":${quickModeEnabledPy},
+        "flag":"TURBOTOKEN_GPU_CROSSOVER_QUICK",
     },
     "bench_sizes":{
         "encode_bytes":encode_sizes,

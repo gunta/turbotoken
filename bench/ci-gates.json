@@ -58,6 +58,45 @@
     }
   },
   "profiles": {
+    "linux-x86_64-cpu": {
+      "host": {
+        "platform": "linux",
+        "arch": "x64"
+      },
+      "relative": {
+        "enabled": true,
+        "cpu": {
+          "startupColdMs": {
+            "baseline": 220,
+            "maxRegressionPct": 35
+          },
+          "encode1mbMs": {
+            "baseline": 320,
+            "maxRegressionPct": 35
+          },
+          "count1mbMs": {
+            "baseline": 320,
+            "maxRegressionPct": 35
+          },
+          "training100kbNativeMs": {
+            "baseline": 500,
+            "maxRegressionPct": 35
+          },
+          "peakRssEncode1mbMb": {
+            "baseline": 520,
+            "maxRegressionPct": 30
+          },
+          "encode1mbMiBPerSec": {
+            "baseline": 2.5,
+            "maxDropPct": 20
+          },
+          "count1mbMiBPerSec": {
+            "baseline": 2.5,
+            "maxDropPct": 20
+          }
+        }
+      }
+    },
     "linux-x64-cpu": {
       "host": {
         "platform": "linux",

@@ -20,10 +20,10 @@ jobs:
       - name: Set up Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.1
+          version: 0.15.2
 
       - name: Install JS deps
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Build WASM
         run: bun run build:wasm

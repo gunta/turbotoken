@@ -167,11 +167,7 @@ export class Encoding {
     if (!this.enableWasmBpe || !this.isReady()) {
       return encodeByteFallback(text);
     }
-    try {
-      return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
-    } catch {
-      return encodeByteFallback(text);
-    }
+    return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
   }
 
   async encodeAsync(text: string): Promise<number[]> {
@@ -179,23 +175,15 @@ export class Encoding {
     if (!this.enableWasmBpe) {
       return encodeByteFallback(text);
     }
-    try {
-      return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
-    } catch {
-      return encodeByteFallback(text);
-    }
+    return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
   }
 
   decode(tokens: readonly number[]): string {
     if (!this.enableWasmBpe || !this.isReady()) {
       return decodeByteFallback(tokens);
     }
-    try {
-      const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
-      return decoder.decode(bytes);
-    } catch {
-      return decodeByteFallback(tokens);
-    }
+    const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
+    return decoder.decode(bytes);
   }
 
   async decodeAsync(tokens: readonly number[]): Promise<string> {
@@ -203,23 +191,15 @@ export class Encoding {
     if (!this.enableWasmBpe) {
       return decodeByteFallback(tokens);
     }
-    try {
-      const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
-      return decoder.decode(bytes);
-    } catch {
-      return decodeByteFallback(tokens);
-    }
+    const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
+    return decoder.decode(bytes);
   }
 
   count(text: string): number {
     if (!this.enableWasmBpe || !this.isReady()) {
       return encodeByteFallback(text).length;
     }
-    try {
-      return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
-    } catch {
-      return encodeByteFallback(text).length;
-    }
+    return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
   }
 
   countTokens(text: string): number {
@@ -234,12 +214,7 @@ export class Encoding {
       const count = encodeByteFallback(text).length;
       return count <= tokenLimit ? count : false;
     }
-    try {
-      return this.bridge!.isWithinTokenLimitBpeFromRanks(this.rankPayload!, text, tokenLimit);
-    } catch {
-      const count = encodeByteFallback(text).length;
-      return count <= tokenLimit ? count : false;
-    }
+    return this.bridge!.isWithinTokenLimitBpeFromRanks(this.rankPayload!, text, tokenLimit);
   }
 
   async isWithinTokenLimitAsync(text: string, tokenLimit: number): Promise<number | false> {
@@ -338,11 +313,7 @@ export class Encoding {
     if (!this.enableWasmBpe) {
       return encodeByteFallback(text).length;
     }
-    try {
-      return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
-    } catch {
-      return encodeByteFallback(text).length;
-    }
+    return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
   }
 
   async encodeFilePath(path: string): Promise<number[]> {

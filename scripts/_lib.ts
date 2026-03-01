@@ -14,6 +14,7 @@ export interface RunOptions {
   env?: Record<string, string>;
   allowFailure?: boolean;
   stdin?: string;
+  timeoutMs?: number;
 }
 
 export interface RunResult {
@@ -117,12 +118,20 @@ export function runCommand(command: string, args: string[], options: RunOptions 
     cwd: options.cwd ?? repoRoot,
     env: { ...process.env, ...options.env },
     input: options.stdin,
+    timeout: options.timeoutMs,
     encoding: "utf8",
   });
 
-  const code = result.status ?? 1;
+  let code = result.status ?? 1;
   const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
+  let stderr = result.stderr ?? "";
+  if (result.error) {
+    if ((result.error as { code?: string }).code === "ETIMEDOUT") {
+      code = 124;
+    }
+    const err = `spawn error: ${result.error.message}`;
+    stderr = stderr.trim().length > 0 ? `${stderr.trim()}\n${err}` : err;
+  }
 
   if (code !== 0 && !options.allowFailure) {
     const rendered = [`Command failed (${code}): ${[command, ...args].join(" ")}`];

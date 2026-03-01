@@ -9,6 +9,12 @@
 ## [Unreleased]
 
 ### Added
+- x86_64 runtime dispatch backend in Zig (`src/arch/x86_64.zig`) for UTF-8 byte encode/decode/count paths with AVX-512 -> AVX2 -> SSE4.2 -> scalar selection.
+- wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
+- `scripts/bench-gpu-bpe-direct.ts` for explicit Metal direct-route A/B comparisons (direct toggle on/off) with crossover + GPU-memory artifact capture.
+- `scripts/bench-cuda-bpe-prototype.ts` as an explicit opt-in CUDA BPE kernel prototype benchmark (`TURBOTOKEN_CUDA_BPE_PROTOTYPE_ENABLE=1`).
+- Route-level Metal GPU memory benchmark row (`metal-bpe-route-encode-gpu`) with route-kind tagging (`direct` vs `stitched`) in `scripts/bench-gpu-memory.ts`.
+- WASM benchmark output now includes explicit Node runtime rows and browser placeholder rows in `scripts/bench-wasm.ts`; scorecard now tracks Node/Browser row groups.
 - Project planning and documentation
   - PRD v2 with multi-platform vision (6 backends: NEON, Metal, WASM, AVX, CUDA, RVV)
   - PROGRESS.md -- phase-by-phase task tracker
@@ -95,6 +101,20 @@
 - `hypothesis` added to Python `dev` dependencies so upstream property-based compatibility tests are reproducible locally
 
 ### Changed
+- Metal direct BPE route (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`) is now **opt-in by default** after A/B benchmarks showed a large regression on the tracked quick-profile workload; stitched/native fallback remains default-safe.
+- Metal direct BPE route now has a default low-entropy safety guard (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`) to avoid pathological repetitive-input regressions.
+- Metal direct BPE host loop now batches multiple rounds per command submission by default (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT=8`, configurable up to 32) to reduce round-submission overhead.
+- GPU crossover benchmark supports quick mode (`TURBOTOKEN_GPU_CROSSOVER_QUICK=1`) with reduced workload sizes/loops for faster A/B iteration.
+- Scorecard artifact selection now uses file modification time (instead of lexicographic filename ordering) to pick latest benchmark outputs reliably.
+- Scorecard now ingests `bench-gpu-bpe-direct` artifacts and ignores `bench-wasm-raw` exports when selecting canonical WASM benchmark inputs.
+- GitHub Actions workflows now target current free-tier runner/toolchain baselines:
+  - benchmark/CI/wheels/WASM on `ubuntu-latest` for Linux jobs
+  - benchmark Metal gates on `macos-latest`
+  - Python setup updated to `3.14` with `check-latest: true`
+  - Zig setup updated to `0.15.2`
+  - Bun installs use `--frozen-lockfile` in workflows
+- Benchmark workflow now includes a post-gate baseline refresh dry-run job that downloads gate artifacts and emits a `ci-gates-refresh-*.json` summary without mutating tracked config.
+- Experimental Metal multi-range stitch host path now includes an opt-in native token layout assembly path (`TURBOTOKEN_GPU_NATIVE_LAYOUT_ENABLE=1`) using `bpe_ranges_token_layout_from_ranks` per contiguous piece-run before falling back to Python token-walk assembly.
 - Core language: C + Assembly -> **Zig + Assembly** (ADR-001)
   - `@Vector` portable SIMD across all targets (NEON, AVX, WASM SIMD, scalar)
   - `comptime` merge table generation at compile time

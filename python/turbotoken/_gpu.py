@@ -193,6 +193,84 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     return max(minimum, value)
 
 
+def _env_flag(name: str, *, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _metal_bpe_direct_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_METAL_BPE_DIRECT_ENABLE", default=False)
+
+
+def _metal_bpe_direct_min_bytes() -> int:
+    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES", 32_768, minimum=1)
+
+
+def _metal_bpe_direct_max_bytes() -> int:
+    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES", 1_048_576, minimum=1)
+
+
+def _metal_bpe_direct_low_entropy_guard_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD", default=True)
+
+
+def _is_low_entropy_direct_input(data: bytes) -> bool:
+    # Avoid pathological direct-kernel cases (very low-entropy repetitive text)
+    # where merge rounds explode and stitched/native paths are far faster.
+    if len(data) < 65_536:
+        return False
+    sample_len = min(len(data), 65_536)
+    sample = data[:sample_len]
+    counts = [0] * 256
+    unique = 0
+    max_count = 0
+    for value in sample:
+        next_count = counts[value] + 1
+        counts[value] = next_count
+        if next_count == 1:
+            unique += 1
+        if next_count > max_count:
+            max_count = next_count
+    if unique > 4:
+        return False
+    return (max_count * 1000) >= (sample_len * 980)
+
+
+def _encode_bpe_direct_metal(
+    rank_payload: bytes,
+    data: bytes,
+    *,
+    token_lens: dict[int, int],
+) -> list[int] | None:
+    if not _metal_bpe_direct_enabled():
+        return None
+
+    direct_min = _metal_bpe_direct_min_bytes()
+    direct_max = _metal_bpe_direct_max_bytes()
+    if len(data) < direct_min or len(data) > direct_max:
+        return None
+    if _metal_bpe_direct_low_entropy_guard_enabled() and _is_low_entropy_direct_input(data):
+        return None
+
+    metal_bridge = get_metal_bridge()
+    if not metal_bridge.available:
+        return None
+    if not _ensure_metal_bpe_rank_table(rank_payload):
+        return None
+
+    gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+    if gpu_tokens is None:
+        return None
+    total_bytes = _token_total_bytes(gpu_tokens, token_lens)
+    if total_bytes != len(data):
+        return None
+    return gpu_tokens
+
+
 def _unpack_u32(ffi: Any, out: Any, written: int) -> list[int]:
     if written <= 0:
         return []
@@ -800,7 +878,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. BPE chunked stitch remains experimental with exactness guards; last_profile includes per-op GPU memory telemetry fields.",
+        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. Large-piece direct GPU BPE merge route is available behind TURBOTOKEN_METAL_BPE_DIRECT_ENABLE (default off) with exactness guards/fallback and a low-entropy safety guard (override via TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0); last_profile includes per-op GPU memory telemetry fields.",
     }
 
 
@@ -1271,6 +1349,14 @@ def _encode_bpe_chunked_stitched_metal(
         return None
 
     token_lens = _rank_token_lens_from_payload(rank_payload)
+    direct_tokens = _encode_bpe_direct_metal(
+        rank_payload,
+        data,
+        token_lens=token_lens,
+    )
+    if direct_tokens is not None:
+        return direct_tokens
+
     full_piece_max_bytes = int(
         os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384")
     )
@@ -1477,15 +1563,32 @@ def _encode_bpe_chunked_stitched_metal_many(
     token_lens = _rank_token_lens_from_payload(rank_payload)
     full_piece_max_bytes = int(os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384"))
     full_piece_gpu_ready = _ensure_metal_bpe_rank_table(rank_payload)
+    native_layout_enabled = os.environ.get("TURBOTOKEN_GPU_NATIVE_LAYOUT_ENABLE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
     per_piece: list[list[int] | None] = [None] * len(ranges)
     long_piece_indices: list[int] = []
     long_piece_ranges: list[tuple[int, int]] = []
     long_piece_num_chunks: list[int] = []
+    long_piece_lengths: dict[int, int] = {}
 
     for piece_idx, (piece_start, piece_end) in enumerate(ranges):
         piece_len = piece_end - piece_start
         piece_bytes = data[piece_start:piece_end]
+
+        if _metal_bpe_direct_enabled():
+            direct_min = _metal_bpe_direct_min_bytes()
+            direct_max = _metal_bpe_direct_max_bytes()
+            if piece_len >= direct_min and piece_len <= direct_max and full_piece_gpu_ready:
+                gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
+                if gpu_tokens is not None:
+                    gpu_total = _token_total_bytes(gpu_tokens, token_lens)
+                    if gpu_total == piece_len:
+                        per_piece[piece_idx] = gpu_tokens
+                        continue
 
         if piece_len <= full_piece_max_bytes and full_piece_gpu_ready:
             gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
@@ -1506,6 +1609,7 @@ def _encode_bpe_chunked_stitched_metal_many(
         long_piece_indices.append(piece_idx)
         long_piece_ranges.append((piece_start, piece_end))
         long_piece_num_chunks.append(num_chunks)
+        long_piece_lengths[piece_idx] = piece_len
 
     if not long_piece_indices:
         if any(piece_tokens is None for piece_tokens in per_piece):
@@ -1554,38 +1658,112 @@ def _encode_bpe_chunked_stitched_metal_many(
         if len(token_offsets) != len(window_ranges) + 1:
             return None
 
-        for local_window_idx in range(len(window_ranges)):
-            token_start = token_offsets[local_window_idx]
-            token_end = token_offsets[local_window_idx + 1]
-            if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+        local_window_idx = 0
+        while local_window_idx < len(window_ranges):
+            run_start = local_window_idx
+            run_window_idx = batch_start + run_start
+            piece_idx = window_piece_indices[run_window_idx]
+            piece_start = window_piece_starts[run_window_idx]
+            num_chunks = window_num_chunks[run_window_idx]
+            piece_len = long_piece_lengths[piece_idx]
+            source_chunk_base = window_chunk_indices[run_window_idx]
+            if source_chunk_base < 0 or source_chunk_base >= num_chunks:
                 return None
 
-            window_idx = batch_start + local_window_idx
-            piece_idx = window_piece_indices[window_idx]
-            piece_start = window_piece_starts[window_idx]
-            ext_start = window_ext_starts[window_idx]
-            ext_end = window_ext_ends[window_idx]
-            local_chunk_idx = window_chunk_indices[window_idx]
-            num_chunks = window_num_chunks[window_idx]
-            if local_chunk_idx < 0 or local_chunk_idx >= num_chunks:
+            run_end = run_start + 1
+            while run_end < len(window_ranges) and window_piece_indices[batch_start + run_end] == piece_idx:
+                run_end += 1
+
+            run_token_start = token_offsets[run_start]
+            run_token_end = token_offsets[run_end]
+            if run_token_start < 0 or run_token_end < run_token_start or run_token_end > len(flat_tokens):
                 return None
 
-            cursor = 0
-            ext_len = ext_end - ext_start
-            for token in flat_tokens[token_start:token_end]:
-                token_len = token_lens.get(token)
-                if token_len is None:
+            run_tokens = flat_tokens[run_token_start:run_token_end]
+            run_starts_local: list[int] = []
+            run_ends_local: list[int] = []
+            run_offsets = [0]
+            chunks_contiguous = native_layout_enabled
+
+            for local_idx in range(run_start, run_end):
+                token_start = token_offsets[local_idx]
+                token_end = token_offsets[local_idx + 1]
+                if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
                     return None
-                next_cursor = cursor + token_len
-                if next_cursor > ext_len:
-                    return None
-                token_start_local = (ext_start + cursor) - piece_start
-                piece_token_starts[piece_idx].append(token_start_local)
-                piece_source_chunks[piece_idx].append(local_chunk_idx)
-                piece_flat_tokens[piece_idx].append(token)
-                cursor = next_cursor
-            if cursor != ext_len:
-                return None
+
+                if native_layout_enabled:
+                    window_idx = batch_start + local_idx
+                    ext_start_local = window_ext_starts[window_idx] - piece_start
+                    ext_end_local = window_ext_ends[window_idx] - piece_start
+                    if ext_start_local < 0 or ext_end_local < ext_start_local or ext_end_local > piece_len:
+                        return None
+
+                    expected_chunk_idx = source_chunk_base + (local_idx - run_start)
+                    if window_chunk_indices[window_idx] != expected_chunk_idx:
+                        chunks_contiguous = False
+
+                    run_starts_local.append(ext_start_local)
+                    run_ends_local.append(ext_end_local)
+                    run_offsets.append(run_offsets[-1] + (token_end - token_start))
+
+            piece_tokens_out = piece_flat_tokens[piece_idx]
+            piece_starts_out = piece_token_starts[piece_idx]
+            piece_chunks_out = piece_source_chunks[piece_idx]
+
+            layout_used = False
+            if native_layout_enabled and chunks_contiguous:
+                layout = native_bridge.bpe_ranges_token_layout_from_ranks(
+                    rank_payload,
+                    input_len=piece_len,
+                    starts=run_starts_local,
+                    ends=run_ends_local,
+                    tokens=run_tokens,
+                    token_offsets=run_offsets,
+                    source_chunk_base=source_chunk_base,
+                    chunk_bytes=chunk_bytes,
+                    num_chunks=num_chunks,
+                )
+                if layout is not None:
+                    token_starts_local, source_chunks = layout
+                    if len(token_starts_local) == len(run_tokens) and len(source_chunks) == len(run_tokens):
+                        piece_starts_out.extend(token_starts_local)
+                        piece_chunks_out.extend(source_chunks)
+                        piece_tokens_out.extend(run_tokens)
+                        layout_used = True
+
+            if not layout_used:
+                for local_idx in range(run_start, run_end):
+                    token_start = token_offsets[local_idx]
+                    token_end = token_offsets[local_idx + 1]
+                    if token_start < 0 or token_end < token_start or token_end > len(flat_tokens):
+                        return None
+
+                    window_idx = batch_start + local_idx
+                    ext_start = window_ext_starts[window_idx]
+                    ext_end = window_ext_ends[window_idx]
+                    local_chunk_idx = window_chunk_indices[window_idx]
+                    if local_chunk_idx < 0 or local_chunk_idx >= num_chunks:
+                        return None
+
+                    cursor = 0
+                    ext_len = ext_end - ext_start
+                    for token_idx in range(token_start, token_end):
+                        token = flat_tokens[token_idx]
+                        token_len = token_lens.get(token)
+                        if token_len is None:
+                            return None
+                        next_cursor = cursor + token_len
+                        if next_cursor > ext_len:
+                            return None
+                        token_start_local = (ext_start + cursor) - piece_start
+                        piece_starts_out.append(token_start_local)
+                        piece_chunks_out.append(local_chunk_idx)
+                        piece_tokens_out.append(token)
+                        cursor = next_cursor
+                    if cursor != ext_len:
+                        return None
+
+            local_window_idx = run_end
 
     for idx, piece_idx in enumerate(long_piece_indices):
         num_chunks = long_piece_num_chunks[idx]
@@ -1721,6 +1899,7 @@ def encode_bpe_chunked_stitched(
 
     stitched: list[int] | None = None
     used_metal_result = False
+    used_direct_metal_result = False
     stitch_cache_key = (hashlib.sha256(rank_payload).hexdigest()[:16], chunk_bytes, overlap_bytes, len(data))
     stitch_cache_state = _metal_stitch_support_cache.get(stitch_cache_key)
     force_repair = os.environ.get("TURBOTOKEN_METAL_STITCH_ALWAYS_REPAIR", "").strip().lower() in {
@@ -1729,7 +1908,13 @@ def encode_bpe_chunked_stitched(
         "yes",
     }
     if prefer_metal_stitch:
-        if stitch_cache_state is False:
+        token_lens = _rank_token_lens_from_payload(rank_payload)
+        direct = _encode_bpe_direct_metal(rank_payload, data, token_lens=token_lens)
+        if direct is not None:
+            stitched = direct
+            used_metal_result = True
+            used_direct_metal_result = True
+        elif stitch_cache_state is False:
             exact = bridge.encode_bpe_from_ranks(rank_payload, data)
             if exact is not None:
                 stitched = exact
@@ -1813,6 +1998,8 @@ def encode_bpe_chunked_stitched(
 
     if prefer_metal_stitch and used_metal_result and stitched is not None:
         should_repair = force_repair or strict_verify or stitch_cache_state is not True
+        if used_direct_metal_result:
+            should_repair = False
         if not should_repair:
             repaired = stitched
         else:
