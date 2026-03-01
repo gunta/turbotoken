@@ -67,6 +67,8 @@ zig build test
 python3 -m pytest -q
 bun run test
 bun run bench
+bun run bench:queue
+bun run bench:lock:status
 bun run sync:upstream
 ```
 
@@ -74,12 +76,19 @@ Notes:
 
 - `bun run test` and several `scripts/*.ts` commands are currently scaffolds and may only print TODO output.
 - If Zig is routed via an environment shim, ensure a real Zig binary is available before reporting build failures.
+- Local benchmark runs are serialized by a machine lock (`bench/.locks/runtime-local-machine`) so only one local benchmark job runs at a time.
+- Use `bun run bench:queue` for default fast sequential local runs (speed-tuned profile, target ~4x shorter wall clock).
+- Use `bun run bench:queue:full` (or `bun run bench:full`) for full-fidelity sequential runs.
+- Queue runs emit `bench/results/bench-queue-*.json` with per-step timing/exit status.
+- Use `bun run bench:lock:status` / `bun run bench:lock:wait` to inspect or wait for lock release before starting local benchmark jobs.
+- Only bypass the local lock (`TURBOTOKEN_BENCH_LOCK_DISABLE=1`) on explicitly isolated hosts/runners where no local contention exists.
 
 ## 7. Engineering Rules for Agents
 
 - Keep changes scoped and minimal; avoid broad refactors unless requested.
 - Preserve placeholder markers until replacing them with real, tested behavior.
 - Do not add synthetic benchmark claims. Only publish measured numbers with reproducible commands.
+- Never run multiple local benchmark jobs concurrently (including from multiple agents/shells); rely on the benchmark lock/queue system.
 - Match existing style per language (Zig, Python, TypeScript) and keep public APIs stable where possible.
 - Prefer adding/adjusting tests with functional changes.
 - Update docs when behavior, commands, or architecture assumptions change.

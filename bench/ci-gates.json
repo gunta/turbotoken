@@ -192,7 +192,7 @@
             "maxRegressionPct": 50
           },
           "directBpeEncodeMiBPerSec": {
-            "baseline": 14.515969,
+            "baseline": 32.872394,
             "maxDropPct": 40
           }
         }

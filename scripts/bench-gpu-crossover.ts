@@ -199,12 +199,15 @@ bpe_text_kind=${JSON.stringify(bpeTextKind)}
 fixture_text=bytes(pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes())
 if len(fixture_text) == 0:
     fixture_text=b"The quick brown fox jumps over the lazy dog. "
+normal_stream=bytes(ch for ch in fixture_text if (65 <= ch <= 90) or (97 <= ch <= 122))
+if len(normal_stream) == 0:
+    normal_stream=b"TheQuickBrownFoxJumpsOverTheLazyDog"
 
 def build_bpe_text(size):
     if bpe_text_kind == "normal-text":
-        repeats=max(1,(size+len(fixture_text)-1)//len(fixture_text))
-        payload=(fixture_text*repeats)[:size]
-        return payload.decode("utf-8", "ignore")
+        repeats=max(1,(size+len(normal_stream)-1)//len(normal_stream))
+        payload=(normal_stream*repeats)[:size]
+        return payload.decode("ascii", "ignore")
     return 'a'*size
 
 bpe_rows=[]

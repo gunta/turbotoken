@@ -168,6 +168,58 @@ def test_encode_gpu_range_batch_toggle_matches_baseline(monkeypatch: pytest.Monk
     assert ranged == baseline
 
 
+def test_encode_gpu_force_all_pieces_ignores_min_metal_piece_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("normal text fixture slice " * 8192).strip()
+    baseline = enc.encode(text)
+
+    monkeypatch.setenv("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ENABLE", "0")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_MIN_TEXT_BYTES", "1")
+    monkeypatch.delenv("TURBOTOKEN_GPU_RANGE_BATCH_MIN_METAL_PIECES", raising=False)
+
+    forced = enc.encode_gpu(
+        [text],
+        device="metal",
+        chunk_bytes=4096,
+        overlap_bytes=512,
+        strict_verify=False,
+    )[0]
+    assert forced == baseline
+
+
+def test_encode_gpu_force_all_pieces_emits_gpu_profile_for_short_normal_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metal_bridge = _gpu.get_metal_bridge()
+    if not metal_bridge.available:
+        pytest.skip("metal bridge unavailable")
+
+    enc = get_encoding("o200k_base")
+    text = ("normal text fixture slice " * 2048).strip()
+    baseline = enc.encode(text)
+
+    monkeypatch.setenv("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "1")
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ENABLE", "0")
+    monkeypatch.setenv("TURBOTOKEN_GPU_RANGE_BATCH_ENABLE", "0")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_DIRECT_ENABLE", "0")
+
+    out = enc.encode_gpu(
+        [text],
+        device="metal",
+        chunk_bytes=65536,
+        overlap_bytes=256,
+        strict_verify=False,
+    )[0]
+    assert out == baseline
+
+    profile = _gpu.profile_last() or {}
+    bpe_gpu_ns = int(profile.get("bpe_gpu_ns", 0))
+    stitch_gpu_ns = int(profile.get("stitch_gpu_ns", 0))
+    assert bpe_gpu_ns > 0 or stitch_gpu_ns > 0
+
+
 def test_chunked_stitch_many_toy_ranges_match_exact_when_native_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:

@@ -2035,6 +2035,27 @@ def encode_bpe_chunked_stitched(
         return None
 
     if len(data) <= chunk_bytes:
+        if prefer_metal_stitch:
+            token_lens = _rank_token_lens_from_payload(rank_payload)
+            direct = _encode_bpe_direct_metal(rank_payload, data, token_lens=token_lens)
+            if direct is not None:
+                return direct
+
+            full_piece_max_bytes = int(os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384"))
+            if len(data) <= full_piece_max_bytes and _ensure_metal_bpe_rank_table(rank_payload):
+                metal_bridge = get_metal_bridge()
+                if metal_bridge.available:
+                    gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+                    if gpu_tokens is not None:
+                        total_bytes = _token_total_bytes(gpu_tokens, token_lens)
+                        if total_bytes == len(data):
+                            if strict_verify:
+                                exact = bridge.encode_bpe_from_ranks(rank_payload, data)
+                                if exact is None:
+                                    return None
+                                if gpu_tokens != exact:
+                                    return exact
+                            return gpu_tokens
         return bridge.encode_bpe_from_ranks(rank_payload, data)
 
     stitched: list[int] | None = None

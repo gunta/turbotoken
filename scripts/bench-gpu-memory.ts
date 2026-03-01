@@ -125,6 +125,9 @@ def summarize_route(name,workload,samples):
 rows=[]
 fixture_1kb=pathlib.Path("bench/fixtures/english-1kb.txt").read_bytes()
 fixture_1mb=pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes()
+normal_stream=bytes(ch for ch in fixture_1mb if (65 <= ch <= 90) or (97 <= ch <= 122))
+if len(normal_stream) == 0:
+    normal_stream=b"TheQuickBrownFoxJumpsOverTheLazyDog"
 try:
     route_input_bytes=int(route_bytes_raw) if route_bytes_raw else len(fixture_1mb)
 except ValueError:
@@ -133,11 +136,9 @@ route_input_bytes=max(4096, min(len(fixture_1mb), route_input_bytes))
 
 def build_route_text(size):
     if route_text_kind == "normal-text":
-        if len(fixture_1mb) == 0:
-            return ("The quick brown fox jumps over the lazy dog. " * ((size // 44) + 1))[:size]
-        repeats=max(1,(size+len(fixture_1mb)-1)//len(fixture_1mb))
-        payload=(fixture_1mb*repeats)[:size]
-        return payload.decode("utf-8","ignore")
+        repeats=max(1,(size+len(normal_stream)-1)//len(normal_stream))
+        payload=(normal_stream*repeats)[:size]
+        return payload.decode("ascii","ignore")
     return "a"*size
 
 # UTF-8 byte encode workload

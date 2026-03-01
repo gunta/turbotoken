@@ -101,10 +101,47 @@ function resolveHyperfineCommand(): string | null {
   return null;
 }
 
+function envFlag(name: string): boolean {
+  const raw = (process.env[name] ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function benchRunScale(): number {
+  const raw = (process.env.TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE ?? "").trim();
+  if (raw.length > 0) {
+    const parsed = Number.parseFloat(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  if (envFlag("TURBOTOKEN_BENCH_FAST")) {
+    return 0.25;
+  }
+  return 1;
+}
+
+function benchMaxRuns(minRuns: number): number | null {
+  const raw = (process.env.TURBOTOKEN_BENCH_HYPERFINE_MAX_RUNS ?? "").trim();
+  if (raw.length > 0) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.max(minRuns, parsed);
+    }
+  }
+  if (envFlag("TURBOTOKEN_BENCH_FAST")) {
+    return minRuns;
+  }
+  return null;
+}
+
 export function runBench(options: BenchOptions): number {
   return withBenchmarkLock(options.name, () => {
-    const warmup = options.warmup ?? 3;
-    const minRuns = options.minRuns ?? 10;
+    const configuredWarmup = options.warmup ?? 3;
+    const configuredMinRuns = options.minRuns ?? 10;
+    const runScale = benchRunScale();
+    const warmup = Math.max(0, Math.floor(configuredWarmup * runScale));
+    const minRuns = Math.max(1, Math.ceil(configuredMinRuns * runScale));
+    const maxRuns = benchMaxRuns(minRuns);
 
     if (options.commands.length === 0) {
       throw new Error("runBench requires at least one command");
@@ -128,6 +165,9 @@ export function runBench(options: BenchOptions): number {
         "--export-json",
         jsonPath,
       ];
+      if (maxRuns != null) {
+        args.push("--max-runs", String(maxRuns));
+      }
 
       for (const item of options.commands) {
         args.push("--command-name", item.name, item.command);
@@ -142,7 +182,17 @@ export function runBench(options: BenchOptions): number {
       if (result.code === 0) {
         if (options.metadata) {
           const metaPath = resolve(resultsDir, `${taggedName}.meta.json`);
-          writeJson(metaPath, options.metadata);
+          writeJson(metaPath, {
+            ...options.metadata,
+            benchmarkTuning: {
+              runScale,
+            configuredWarmup,
+            configuredMinRuns,
+            effectiveWarmup: warmup,
+            effectiveMinRuns: minRuns,
+            effectiveMaxRuns: maxRuns,
+          },
+        });
         }
         console.log(`Wrote Hyperfine JSON: ${jsonPath}`);
         return 0;
@@ -158,7 +208,17 @@ export function runBench(options: BenchOptions): number {
       tool: "manual",
       generatedAt: new Date().toISOString(),
       name: options.name,
-      metadata: options.metadata ?? {},
+      metadata: {
+        ...(options.metadata ?? {}),
+        benchmarkTuning: {
+          runScale,
+          configuredWarmup,
+          configuredMinRuns,
+          effectiveWarmup: warmup,
+          effectiveMinRuns: minRuns,
+          effectiveMaxRuns: maxRuns,
+        },
+      },
       results: manualResults,
     });
     console.log(`Wrote manual benchmark JSON: ${jsonPath}`);

@@ -26,6 +26,7 @@ const scripts = [
   "scripts/bench-gpu.ts",
   "scripts/bench-gpu-memory.ts",
   "scripts/bench-gpu-crossover.ts",
+  "scripts/bench-gpu-bpe-direct.ts",
   "scripts/bench-gpu-overlap.ts",
   "scripts/generate-charts.ts",
   "scripts/bench-scorecard.ts",
@@ -34,6 +35,13 @@ const scripts = [
 const includeCuda = ["1", "true", "yes", "on"].includes(
   (process.env.TURBOTOKEN_BENCH_INCLUDE_CUDA ?? "").trim().toLowerCase(),
 );
+
+const speedRaw = (process.env.TURBOTOKEN_BENCH_SPEED ?? "full").trim().toLowerCase();
+const fastMode = speedRaw === "fast" || speedRaw === "quick";
+const speedProfile = fastMode ? "fast" : "full";
+if (fastMode) {
+  console.log("Benchmark queue speed profile: FAST");
+}
 
 if (includeCuda) {
   const crossoverIndex = scripts.indexOf("scripts/bench-gpu-crossover.ts");
@@ -45,6 +53,24 @@ if (includeCuda) {
 
 let failures = 0;
 const startedAt = Date.now();
+const runEnv: Record<string, string> = fastMode
+  ? {
+    TURBOTOKEN_BENCH_FAST: "1",
+    TURBOTOKEN_BENCH_COMPETITORS_FAST: process.env.TURBOTOKEN_BENCH_COMPETITORS_FAST ?? "1",
+    TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE: process.env.TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE ?? "0.25",
+    TURBOTOKEN_BENCH_HYPERFINE_MAX_RUNS: process.env.TURBOTOKEN_BENCH_HYPERFINE_MAX_RUNS ?? "3",
+    TURBOTOKEN_GPU_CROSSOVER_QUICK: process.env.TURBOTOKEN_GPU_CROSSOVER_QUICK ?? "1",
+    TURBOTOKEN_GPU_MEMORY_RUNS: process.env.TURBOTOKEN_GPU_MEMORY_RUNS ?? "1",
+    TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL: process.env.TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL ?? "1",
+    TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: process.env.TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES ?? "131072",
+    TURBOTOKEN_GPU_OVERLAP_RUNS: process.env.TURBOTOKEN_GPU_OVERLAP_RUNS ?? "1",
+    TURBOTOKEN_GPU_OVERLAP_BATCH: process.env.TURBOTOKEN_GPU_OVERLAP_BATCH ?? "2",
+    TURBOTOKEN_WASM_MIN_RUNS: process.env.TURBOTOKEN_WASM_MIN_RUNS ?? "5",
+    TURBOTOKEN_WASM_MAX_RUNS: process.env.TURBOTOKEN_WASM_MAX_RUNS ?? "5",
+    TURBOTOKEN_WASM_RAM_RUNS: process.env.TURBOTOKEN_WASM_RAM_RUNS ?? "2",
+    TURBOTOKEN_RAM_RUNS: process.env.TURBOTOKEN_RAM_RUNS ?? "2",
+  }
+  : {};
 const stepRows: Array<{
   script: string;
   exitCode: number;
@@ -57,7 +83,7 @@ withBenchmarkLock("bench-all", () => {
   for (const script of scripts) {
     section(`Running ${script}`);
     const stepStart = Date.now();
-    const result = runCommand("bun", ["run", script], { allowFailure: true });
+    const result = runCommand("bun", ["run", script], { allowFailure: true, env: runEnv });
     const stepEnd = Date.now();
     stepRows.push({
       script,
@@ -87,8 +113,11 @@ writeJson(queuePath, {
   finishedAt: new Date(finishedAt).toISOString(),
   elapsedMs: finishedAt - startedAt,
   includeCuda,
+  speedProfile,
+  fastMode,
   failures,
   steps: stepRows,
+  runEnv: Object.keys(runEnv).length > 0 ? runEnv : null,
   note: "Sequential local benchmark queue with machine lock. Remote benchmarks should run on separate hosts/runners.",
 });
 console.log(`Wrote benchmark queue record: ${queuePath}`);

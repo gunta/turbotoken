@@ -84,7 +84,7 @@ function defaultBenchLockDir(): string {
   if (raw.length > 0) {
     return raw;
   }
-  return resolvePath("bench", ".locks", "local-machine");
+  return resolvePath("bench", ".locks", "runtime-local-machine");
 }
 
 function lockOwnerPath(lockDir: string): string {

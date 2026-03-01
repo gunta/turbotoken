@@ -61,8 +61,15 @@ ensureFixtures();
 section("Memory benchmark");
 acquireBenchmarkLock({ label: "bench-ram" });
 const python = pythonExecutable();
+const fastMode = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_BENCH_FAST ?? "").trim().toLowerCase(),
+);
 const runsRaw = process.env.TURBOTOKEN_RAM_RUNS?.trim();
-const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 5) : 5;
+const runs = runsRaw
+  ? Math.max(1, Number.parseInt(runsRaw, 10) || 5)
+  : fastMode
+    ? 2
+    : 5;
 
 const availability = {
   tiktoken: hasPythonModule(python, "tiktoken"),
@@ -179,6 +186,7 @@ writeJson(outputPath, {
   platform: process.platform,
   runsPerCommand: runs,
   availability,
+  fastMode,
   baseline: "python-empty-baseline",
   rows,
   note: "Peak RSS benchmark for o200k_base encode on 1MB fixture. Includes baseline and available competitors.",

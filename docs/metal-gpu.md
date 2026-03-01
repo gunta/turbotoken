@@ -86,11 +86,13 @@ Interpretation:
 - Direct-route safety matrix benchmark script:
   - `bun run scripts/bench-gpu-bpe-direct.ts`
   - runs `low-entropy` + `normal-text` workload profiles with direct route disabled/enabled and captures crossover + memory telemetry for each profile.
+  - normal-text profile uses an alphabetic stream derived from `bench/fixtures/english-1mb.txt` (keeps natural letter distribution but avoids tiny-piece fragmentation in forced-metal A/B runs).
+  - reporting policy: `normal-text` is the primary headline profile for MB/s/latency summaries; `low-entropy` is retained as a stress/safety profile.
   - route memory profile selector: `TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND=low-entropy|normal-text` (used by `scripts/bench-gpu-memory.ts`)
 - Latest matrix artifacts:
   - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
-  - direct safety matrix: `bench/results/bench-gpu-bpe-direct-1772339990653.json`
+  - direct safety matrix: `bench/results/bench-gpu-bpe-direct-1772344263726.json`
 - Auto-route cache:
   - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `4`)
 - Profiling counters exported from C bridge and exposed through Python:

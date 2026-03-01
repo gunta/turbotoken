@@ -69,6 +69,10 @@ interface MemoryRow {
 
 acquireBenchmarkLock({ label: "bench-wasm" });
 
+const fastMode = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_BENCH_FAST ?? "").trim().toLowerCase(),
+);
+
 function mean(values: readonly number[]): number {
   if (values.length === 0) {
     return 0;
@@ -184,6 +188,7 @@ function runHyperfineBench(
   cases: readonly BenchCase[],
   warmup: number,
   runs: number,
+  maxRuns: number | null,
   rawPath: string,
 ): BenchRow[] | null {
   const args = [
@@ -194,6 +199,9 @@ function runHyperfineBench(
     "--export-json",
     rawPath,
   ];
+  if (maxRuns != null) {
+    args.push("--max-runs", String(maxRuns));
+  }
 
   for (const benchCase of cases) {
     args.push("--command-name", benchCase.name, benchCase.command);
@@ -465,9 +473,19 @@ if (nodeBpeEncode1mbCommand !== null) {
   });
 }
 
-const warmup = 3;
+const warmup = fastMode ? 1 : 3;
 const minRunsRaw = process.env.TURBOTOKEN_WASM_MIN_RUNS?.trim();
-const minRuns = minRunsRaw ? Math.max(1, Number.parseInt(minRunsRaw, 10) || 10) : 20;
+const minRuns = minRunsRaw
+  ? Math.max(1, Number.parseInt(minRunsRaw, 10) || 10)
+  : fastMode
+    ? 5
+    : 20;
+const maxRunsRaw = process.env.TURBOTOKEN_WASM_MAX_RUNS?.trim();
+const maxRuns = maxRunsRaw
+  ? Math.max(minRuns, Number.parseInt(maxRunsRaw, 10) || minRuns)
+  : fastMode
+    ? minRuns
+    : null;
 const rawHyperfinePath = resolvePath("bench", "results", `bench-wasm-raw-${Date.now()}.json`);
 
 section("WASM startup + throughput");
@@ -475,7 +493,7 @@ const hyperfine = resolveHyperfineCommand();
 let benchRows: BenchRow[];
 let benchTool: "hyperfine" | "manual";
 if (hyperfine !== null && commandExists(hyperfine)) {
-  const rows = runHyperfineBench(hyperfine, benchCases, warmup, minRuns, rawHyperfinePath);
+  const rows = runHyperfineBench(hyperfine, benchCases, warmup, minRuns, maxRuns, rawHyperfinePath);
   if (rows) {
     benchRows = rows;
     benchTool = "hyperfine";
@@ -490,7 +508,11 @@ if (hyperfine !== null && commandExists(hyperfine)) {
 
 section("WASM memory (RSS)");
 const memoryRunsRaw = process.env.TURBOTOKEN_WASM_RAM_RUNS?.trim();
-const memoryRuns = memoryRunsRaw ? Math.max(1, Number.parseInt(memoryRunsRaw, 10) || 5) : 5;
+const memoryRuns = memoryRunsRaw
+  ? Math.max(1, Number.parseInt(memoryRunsRaw, 10) || 5)
+  : fastMode
+    ? 2
+    : 5;
 const memoryCases: Array<{ name: string; command: string }> = [
   { name: "wasm-rss-encode-utf8-bytes-1mb", command: wasmEncode1mbCommand },
   { name: "js-rss-textencoder-u32-1mb", command: jsEncode1mbCommand },
@@ -596,8 +618,10 @@ writeJson(outputPath, {
   },
   benchmark: {
     tool: benchTool,
+    fastMode,
     warmup,
     minRuns,
+    maxRuns,
     rawHyperfinePath: benchTool === "hyperfine" ? rawHyperfinePath : null,
     rows: benchRowsWithDerived,
   },

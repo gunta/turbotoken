@@ -6,6 +6,9 @@ import { pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 section("GPU benchmark");
 const python = pythonExecutable();
 ensureFixtures();
+const fastMode = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_BENCH_FAST ?? "").trim().toLowerCase(),
+);
 
 const probeResult = Bun.spawnSync({
   cmd: [
@@ -78,8 +81,8 @@ const nativeProbe = Bun.spawnSync({
 });
 const includeNativeBaseline = nativeProbe.exitCode === 0;
 
-const singleIterations = 128;
-const batchIterations = 512;
+const singleIterations = fastMode ? 32 : 128;
+const batchIterations = fastMode ? 128 : 512;
 
 const commands: { name: string; command: string }[] = [
   {
@@ -124,6 +127,7 @@ process.exit(
       encodeTotalBytesPerSample: singleIterations * 1_048_576,
       countBatchTotalBytesPerSample: batchIterations * 4_096 * 1_024,
       backend: "apple-metal",
+      fastMode,
       note: "Experimental Metal backend benchmarks UTF-8 byte-path kernels only (full GPU BPE merge path is still pending).",
       probe,
       includeNativeBaseline,

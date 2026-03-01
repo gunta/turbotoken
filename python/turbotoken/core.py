@@ -989,14 +989,14 @@ class Encoding:
                         route_backend = "metal"
                     else:
                         route_backend = gpu.bpe_route_backend(piece_len)
-                    if route_backend == "metal" and piece_len >= (chunk_bytes * 2):
+                    if route_backend == "metal" and (force_all_metal or piece_len >= (chunk_bytes * 2)):
                         metal_indices.append(idx)
                         metal_ranges.append((start, end))
                     else:
                         cpu_indices.append(idx)
                         cpu_ranges.append((start, end))
 
-                min_metal_ranges = self._gpu_range_batch_min_metal_pieces()
+                min_metal_ranges = 1 if force_all_metal else self._gpu_range_batch_min_metal_pieces()
                 if not metal_ranges or len(metal_ranges) < min_metal_ranges:
                     ranges = []
                     cpu_indices = []
@@ -1102,7 +1102,7 @@ class Encoding:
                 _extend_cached(piece_bytes)
                 continue
 
-            if len(piece_bytes) < (chunk_bytes * 2):
+            if not force_all_metal and len(piece_bytes) < (chunk_bytes * 2):
                 _extend_cached(piece_bytes)
                 continue
 

@@ -6,15 +6,24 @@ import { pythonExecutable, resolvePath, runShell, section } from "./_lib";
 
 ensureFixtures();
 const python = process.env.TURBOTOKEN_BENCH_PYTHON?.trim() || pythonExecutable();
+const fastMode = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_BENCH_COMPETITORS_FAST ?? process.env.TURBOTOKEN_BENCH_FAST ?? "").trim().toLowerCase(),
+);
+if (fastMode) {
+  section("Competitors benchmark fast mode enabled");
+}
 
-const textFixtures = [
+const fullTextFixtures = [
   { id: "1kb", path: "bench/fixtures/english-1kb.txt", bytes: 1_024 },
   { id: "10kb", path: "bench/fixtures/english-10kb.txt", bytes: 10_240 },
   { id: "100kb", path: "bench/fixtures/english-100kb.txt", bytes: 102_400 },
   { id: "1mb", path: "bench/fixtures/english-1mb.txt", bytes: 1_048_576 },
 ] as const;
+const textFixtures = fastMode
+  ? [fullTextFixtures[0], fullTextFixtures[2]]
+  : fullTextFixtures;
 
-const decodeTokenSizes = [1_000, 10_000, 128_000];
+const decodeTokenSizes = fastMode ? [1_000, 10_000] : [1_000, 10_000, 128_000];
 const decodeFixturePath = "bench/fixtures/english-1mb.tokens.json";
 
 function hasPythonModule(name: string): boolean {
@@ -214,11 +223,16 @@ for (const size of decodeTokenSizes) {
   }
 }
 
-const countFixtures = [
-  textFixtures[0], // 1kb
-  textFixtures[2], // 100kb
-  textFixtures[3], // 1mb
-];
+const countFixtures = fastMode
+  ? [
+    textFixtures[0], // 1kb
+    textFixtures[textFixtures.length - 1], // 100kb in fast mode
+  ]
+  : [
+    textFixtures[0], // 1kb
+    textFixtures[2], // 100kb
+    textFixtures[3], // 1mb
+  ];
 const countCommands: BenchCommand[] = [];
 for (const fixture of countFixtures) {
   countCommands.push({
@@ -262,6 +276,7 @@ if (encodeCommands.length > 0) {
       fixtures: textFixtures,
       availability,
       metalAvailable,
+      fastMode,
       note: "Competitor matrix uses Python package APIs on o200k_base where available and Bun JS API rows for gpt-tokenizer; this repository remains in scaffold/early implementation stage.",
     },
   });
@@ -278,6 +293,7 @@ if (decodeCommands.length > 0) {
       decodeTokenSizes,
       decodeFixtureTokenCount: tokenCount,
       availability,
+      fastMode,
       note: "Decode rows use first-N tokens from a 1MB fixture tokenized with o200k_base.",
     },
   });
@@ -292,6 +308,7 @@ if (countCommands.length > 0) {
       encoding: "o200k_base",
       fixtures: countFixtures,
       availability,
+      fastMode,
       note: "tiktoken and token-dagger count rows use len(encode(text)) to keep API behavior comparable.",
     },
   });

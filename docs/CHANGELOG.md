@@ -13,12 +13,22 @@
 - wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
 - `scripts/bench-gpu-bpe-direct.ts` for explicit Metal direct-route A/B comparisons (direct toggle on/off) with crossover + GPU-memory artifact capture.
 - `scripts/bench-gpu-bpe-direct.ts` now runs a profile matrix (`low-entropy`, `normal-text`) and records per-profile direct safety comparisons (slowdown/throughput/parity/route-kind).
+- Metal force-route correctness/perf plumbing:
+  - `Encoding.encode_gpu(...)` now treats `TURBOTOKEN_METAL_FORCE_ALL_PIECES=1` as a true force path (bypasses chunk-size gate and range-batch minimum-piece gate).
+  - `_gpu.encode_bpe_chunked_stitched(...)` now attempts direct/full-piece Metal BPE for `len(data) <= chunk_bytes` when `prefer_metal_stitch=True` before CPU fallback.
+  - normal-text direct A/B fixtures now use an alphabetic stream derived from the English corpus to avoid tiny-piece fragmentation in forced-metal route checks.
 - `scripts/ci-benchmark.ts` now enforces Metal direct-route A/B safety gates from `bench/ci-gates.json` and runs the direct A/B benchmark in GPU governance mode.
 - Local benchmark lock tooling:
   - `acquireBenchmarkLock` / `withBenchmarkLock` in `scripts/_lib.ts`
   - `scripts/bench-lock-status.ts` with `bench:lock:status` and `bench:lock:wait`
   - lock-aware queue artifact `bench/results/bench-queue-*.json` from `scripts/bench-all.ts`
+- `scripts/bench-all.ts` queue now includes `scripts/bench-gpu-bpe-direct.ts` in-sequence so canonical local runs capture direct-route A/B artifacts alongside crossover/memory/overlap rows.
 - `scripts/bench-cuda-bpe-prototype.ts` as an explicit opt-in CUDA BPE kernel prototype benchmark (`TURBOTOKEN_CUDA_BPE_PROTOTYPE_ENABLE=1`).
+- Fast benchmark profile plumbing:
+  - `bench:queue` now defaults to `TURBOTOKEN_BENCH_SPEED=fast` (with `bench:queue:full` / `bench:full` for full-fidelity runs).
+  - `runBench` now supports profile scaling via `TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE` and `TURBOTOKEN_BENCH_FAST=1`.
+  - `bench-competitors` fast mode trims fixture/token-size matrix for iteration cycles.
+  - fast-mode defaults added for WASM (`minRuns` / memory runs), GPU byte-path inner iterations, and RAM benchmark run count.
 - Route-level Metal GPU memory benchmark row (`metal-bpe-route-encode-gpu`) with route-kind tagging (`direct` vs `stitched`) in `scripts/bench-gpu-memory.ts`.
 - WASM benchmark output now includes explicit Node runtime rows and browser placeholder rows in `scripts/bench-wasm.ts`; scorecard now tracks Node/Browser row groups.
 - Project planning and documentation
@@ -114,6 +124,8 @@
 - Scorecard artifact selection now uses file modification time (instead of lexicographic filename ordering) to pick latest benchmark outputs reliably.
 - Scorecard now ingests `bench-gpu-bpe-direct` artifacts and ignores `bench-wasm-raw` exports when selecting canonical WASM benchmark inputs.
 - Local benchmark runners now serialize by default via a shared machine lock (`bench/.locks/local-machine`) to avoid concurrent local noise from multiple agents/processes; nested benchmark subprocesses inherit the lock state instead of deadlocking.
+- Local benchmark lock runtime path moved to `bench/.locks/runtime-local-machine` so lock state is non-tracked and does not mutate tracked files during runs.
+- Scorecard/direct-route reporting now treats `normal-text` as the primary headline profile and keeps `low-entropy` rows as stress/safety telemetry.
 - GitHub Actions workflows now target current free-tier runner/toolchain baselines:
   - benchmark/CI/wheels/WASM on `ubuntu-24.04` for Linux jobs
   - benchmark Metal gates on `macos-14`

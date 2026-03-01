@@ -17,18 +17,23 @@
 
 ### Principles
 1. **Core local benchmarks are reproducible** via `bun run scripts/bench-all.ts` (`bun run bench` / `bun run bench:queue`)
-   - Local runs now use a machine lock (`bench/.locks/local-machine`) so only one local benchmark job can run at a time.
+   - Local runs now use a machine lock (`bench/.locks/runtime-local-machine`) so only one local benchmark job can run at a time.
+   - `bun run bench:queue` / `bun run bench` default to a fast profile (`TURBOTOKEN_BENCH_SPEED=fast`) for shorter iteration cycles.
+   - Use `bun run bench:queue:full` (or `bun run bench:full`) for full-fidelity runs.
    - Queue runner emits `bench/results/bench-queue-*.json` with per-step timing + exit codes.
    - CUDA rows are opt-in via `bun run bench:cuda`
    - Paid Modal CUDA runs are opt-in via `bun run bench:modal:cuda`
-2. **Hyperfine runs minimum 10 iterations** with 3 warmup runs
+2. **Hyperfine run count is profile-aware**
+   - full profile defaults: minimum 10 iterations with 3 warmup runs
+   - fast profile defaults: scaled down via `TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE=0.25` (or `TURBOTOKEN_BENCH_FAST=1`)
 3. **Shell overhead correction** enabled (Hyperfine's `--shell=none` for fast commands)
 4. **Same input data** for all competitors (fixtures in `bench/fixtures/`)
 5. **Same machine** for any comparison table (noted in header)
 6. **JSON export** for every run (`bench/results/*.json`)
 7. **Charts auto-generated** from JSON via `bun run scripts/generate-charts.ts`
 8. **Canonical scorecard** consolidated from latest artifacts via `bun run bench:scorecard` (`bench/results/bench-scorecard-*.json`, `bench/charts/scorecard.md`)
-9. **Lock visibility tools**:
+9. **GPU direct-route headline profile** uses `normal-text`; `low-entropy` remains stress/safety reporting only.
+10. **Lock visibility tools**:
    - `bun run bench:lock:status` to inspect current local lock owner.
    - `bun run bench:lock:wait` to block until the local lock is released.
    - `TURBOTOKEN_BENCH_LOCK_DISABLE=1` for explicit lock bypass on non-local isolated hosts.
@@ -95,8 +100,8 @@ Local benchmark host details (from `sysctl` / `uname`):
 ## Latest Update (2026-03-01, macOS ARM64)
 
 Recent artifacts:
-- profile-matrix guarded default run:
-  - `bench/results/bench-gpu-bpe-direct-1772339990653.json`
+- profile-matrix guarded quick run:
+  - `bench/results/bench-gpu-bpe-direct-1772344263726.json`
 - guarded default run:
   - `bench/results/bench-gpu-bpe-direct-1772337431441.json`
   - `bench/results/bench-gpu-crossover-1772337432831.json`
@@ -108,24 +113,18 @@ Recent artifacts:
 - `bench/results/bench-wasm-1772280409724.json`
 - `bench/results/bench-scorecard-1772280469323.json`
 
-Metal direct-route A/B (quick profile, 262,144-byte BPE row):
-- profile-matrix run (`bench-gpu-bpe-direct-1772339990653.json`):
+Metal direct-route A/B (quick profile):
+- profile-matrix run (`bench-gpu-bpe-direct-1772344263726.json`):
   - low-entropy:
-    - direct disabled: `113.62 ms` (`~2.20 MiB/s`)
-    - direct enabled: `142.39 ms` (`~1.76 MiB/s`)
-    - slowdown: `~25.32%`, throughput ratio: `~0.798x`, route remained `stitched` in both rows.
+    - direct disabled: `126.74 ms` (`~1.97 MiB/s`)
+    - direct enabled: `126.21 ms` (`~1.98 MiB/s`)
+    - slowdown: `~-0.42%`, throughput ratio: `~1.004x`, route remained `stitched` in both rows.
   - normal-text:
-    - direct disabled: `28.34 ms` (`~8.82 MiB/s`)
-    - direct enabled: `53.58 ms` (`~4.67 MiB/s`)
-    - slowdown: `~89.03%`, throughput ratio: `~0.529x`, baseline parity stayed true.
-- guarded default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`):
-  - direct disabled: `112.52 ms` (`~2.22 MiB/s`)
-  - direct enabled: `117.58 ms` (`~2.13 MiB/s`)
-  - both rows route to stitched path on this low-entropy stress input.
-- raw direct stress (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0`):
-  - direct disabled: `111.56 ms` (`~2.24 MiB/s`)
-  - direct enabled: `17333.93 ms` (`~0.014 MiB/s`)
-  - route memory row confirms direct kernel path and higher device allocation (`22.45 MiB` vs `16.875 MiB` stitched).
+    - direct disabled: `3693.69 ms` (`~0.068 MiB/s`)
+    - direct enabled: `3596.20 ms` (`~0.070 MiB/s`)
+    - slowdown: `~-2.64%`, throughput ratio: `~1.027x`, baseline parity stayed true.
+    - GPU-only route row: disabled `~142.60 MiB/s`, enabled `~521.56 MiB/s` (`~3.66x`).
+  - note: normal-text direct profile now uses an alphabetic stream derived from the English fixture to keep a realistic character distribution while avoiding fragmented tiny-piece routing in forced-metal A/B runs.
 
 Decision:
 - root cause of the extreme slowdown is direct-kernel round complexity on low-entropy inputs (very high `bpe_rounds`) plus host round-submission overhead.

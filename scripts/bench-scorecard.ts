@@ -11,6 +11,23 @@ interface CompetitorRow {
   mibPerSec?: number | null;
 }
 
+interface GpuBpeDirectProfileRow {
+  key: string;
+  textKind: string;
+  disabledMetalMs: number | null;
+  enabledMetalMs: number | null;
+  disabledMetalMiBPerSec: number | null;
+  enabledMetalMiBPerSec: number | null;
+  slowdownPct: number | null;
+  throughputRatio: number | null;
+  disabledMatchesBaseline: boolean | null;
+  enabledMatchesBaseline: boolean | null;
+  disabledUsedDirectRoute: boolean | null;
+  enabledUsedDirectRoute: boolean | null;
+  disabledRouteMedianGpuMiBPerSec: number | null;
+  enabledRouteMedianGpuMiBPerSec: number | null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -19,6 +36,10 @@ acquireBenchmarkLock({ label: "bench-scorecard" });
 
 function toNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toBooleanOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
 }
 
 function round(value: number, digits = 3): number {
@@ -120,6 +141,23 @@ function latestGpuBpeDirectPath(): string | null {
     if (!payload) {
       continue;
     }
+    const workloads = payload["workloads"];
+    if (isRecord(workloads)) {
+      const normalText = workloads["normalText"];
+      if (isRecord(normalText)) {
+        const enabled = normalText["enabled"];
+        if (isRecord(enabled)) {
+          const env = enabled["env"];
+          if (isRecord(env)) {
+            const guard = String(env["TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD"] ?? "").trim().toLowerCase();
+            if (guard === "0" || guard === "false" || guard === "no" || guard === "off") {
+              continue;
+            }
+          }
+        }
+        return file.path;
+      }
+    }
     const scenarios = payload["scenarios"];
     if (!isRecord(scenarios)) {
       return file.path;
@@ -140,6 +178,59 @@ function latestGpuBpeDirectPath(): string | null {
   }
 
   return files.length > 0 ? files[0].path : null;
+}
+
+function parseGpuBpeDirectProfileRow(key: string, value: unknown): GpuBpeDirectProfileRow | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const comparison = value["comparison"];
+  if (!isRecord(comparison)) {
+    return null;
+  }
+  const textKind = String(value["textKind"] ?? key);
+  return {
+    key,
+    textKind,
+    disabledMetalMs: toNumber(comparison["disabledMetalMs"]),
+    enabledMetalMs: toNumber(comparison["enabledMetalMs"]),
+    disabledMetalMiBPerSec: toNumber(comparison["disabledMetalMiBPerSec"]),
+    enabledMetalMiBPerSec: toNumber(comparison["enabledMetalMiBPerSec"]),
+    slowdownPct: toNumber(comparison["slowdownPct"]),
+    throughputRatio: toNumber(comparison["throughputRatio"]),
+    disabledMatchesBaseline: toBooleanOrNull(comparison["disabledMatchesBaseline"]),
+    enabledMatchesBaseline: toBooleanOrNull(comparison["enabledMatchesBaseline"]),
+    disabledUsedDirectRoute: toBooleanOrNull(comparison["disabledUsedDirectRoute"]),
+    enabledUsedDirectRoute: toBooleanOrNull(comparison["enabledUsedDirectRoute"]),
+    disabledRouteMedianGpuMiBPerSec: toNumber(comparison["disabledRouteMedianGpuMiBPerSec"]),
+    enabledRouteMedianGpuMiBPerSec: toNumber(comparison["enabledRouteMedianGpuMiBPerSec"]),
+  };
+}
+
+function ratio(baseline: number | null, next: number | null): number | null {
+  if (baseline == null || next == null || baseline <= 0) {
+    return null;
+  }
+  return next / baseline;
+}
+
+function extractGpuBpeDirectProfiles(payload: JsonMap | null): GpuBpeDirectProfileRow[] {
+  if (!payload) {
+    return [];
+  }
+  const workloads = payload["workloads"];
+  if (!isRecord(workloads)) {
+    return [];
+  }
+  const rows: GpuBpeDirectProfileRow[] = [];
+  for (const [key, value] of Object.entries(workloads)) {
+    const row = parseGpuBpeDirectProfileRow(key, value);
+    if (row) {
+      rows.push(row);
+    }
+  }
+  rows.sort((a, b) => a.textKind.localeCompare(b.textKind));
+  return rows;
 }
 
 function commandMeanMs(payload: JsonMap | null, commandName: string): number | null {
@@ -451,6 +542,21 @@ const gpuOverlapRows = (() => {
   }));
 })();
 
+const gpuBpeDirectProfiles = extractGpuBpeDirectProfiles(gpuBpeDirect);
+const gpuBpeDirectHeadline =
+  gpuBpeDirectProfiles.find((row) => row.textKind === "normal-text") ??
+  gpuBpeDirectProfiles.find((row) => row.key === "normalText") ??
+  gpuBpeDirectProfiles[0] ??
+  null;
+const gpuBpeDirectStress =
+  gpuBpeDirectProfiles.find((row) => row.textKind === "low-entropy") ??
+  gpuBpeDirectProfiles.find((row) => row.key === "lowEntropy") ??
+  null;
+const headlineRouteThroughputRatio = ratio(
+  gpuBpeDirectHeadline?.disabledRouteMedianGpuMiBPerSec ?? null,
+  gpuBpeDirectHeadline?.enabledRouteMedianGpuMiBPerSec ?? null,
+);
+
 const payload: JsonMap = {
   generatedAt: new Date().toISOString(),
   artifacts,
@@ -488,6 +594,9 @@ const payload: JsonMap = {
     gpuOverlap,
     gpuOverlapRows,
     gpuBpeDirect,
+    gpuBpeDirectProfiles,
+    gpuBpeDirectHeadline,
+    gpuBpeDirectStress,
   },
 };
 
@@ -534,6 +643,38 @@ const markdownRows = [
     const reason = typeof row.reason === "string" && row.reason.length > 0 ? ` (${row.reason})` : "";
     return `- browser row ${row.name}: ${status}${reason}`;
   }),
+  ``,
+  `## GPU Direct A/B (Headline: normal-text)`,
+  `- profile count: ${gpuBpeDirectProfiles.length}`,
+  `- headline profile: ${gpuBpeDirectHeadline?.textKind ?? "n/a"}`,
+  `- headline disabled: ${
+    gpuBpeDirectHeadline?.disabledMetalMs == null
+      ? "n/a"
+      : `${round(gpuBpeDirectHeadline.disabledMetalMs, 2)} ms (${gpuBpeDirectHeadline.disabledMetalMiBPerSec == null ? "MiB/s n/a" : `${round(gpuBpeDirectHeadline.disabledMetalMiBPerSec, 3)} MiB/s`})`
+  }`,
+  `- headline enabled: ${
+    gpuBpeDirectHeadline?.enabledMetalMs == null
+      ? "n/a"
+      : `${round(gpuBpeDirectHeadline.enabledMetalMs, 2)} ms (${gpuBpeDirectHeadline.enabledMetalMiBPerSec == null ? "MiB/s n/a" : `${round(gpuBpeDirectHeadline.enabledMetalMiBPerSec, 3)} MiB/s`})`
+  }`,
+  `- headline slowdown: ${gpuBpeDirectHeadline?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectHeadline.slowdownPct, 2)}%`}`,
+  `- headline throughput ratio (enabled/disabled): ${gpuBpeDirectHeadline?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectHeadline.throughputRatio, 3)}x`}`,
+  `- headline route disabled (GPU-only): ${
+    gpuBpeDirectHeadline?.disabledRouteMedianGpuMiBPerSec == null
+      ? "n/a"
+      : `${round(gpuBpeDirectHeadline.disabledRouteMedianGpuMiBPerSec, 3)} MiB/s`
+  }`,
+  `- headline route enabled (GPU-only): ${
+    gpuBpeDirectHeadline?.enabledRouteMedianGpuMiBPerSec == null
+      ? "n/a"
+      : `${round(gpuBpeDirectHeadline.enabledRouteMedianGpuMiBPerSec, 3)} MiB/s`
+  }`,
+  `- headline route throughput ratio (enabled/disabled): ${
+    headlineRouteThroughputRatio == null ? "n/a" : `${round(headlineRouteThroughputRatio, 3)}x`
+  }`,
+  `- stress profile: ${gpuBpeDirectStress?.textKind ?? "n/a"}`,
+  `- stress slowdown: ${gpuBpeDirectStress?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectStress.slowdownPct, 2)}%`}`,
+  `- stress throughput ratio (enabled/disabled): ${gpuBpeDirectStress?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectStress.throughputRatio, 3)}x`}`,
   ``,
   `## Winners`,
   `- encode 100KB: ${winner(encode100kbRows)?.name ?? "n/a"}`,
