@@ -1,5 +1,14 @@
 {
   "name": "@turbotoken/turbotoken",
   "version": "0.1.0",
-  "exports": "./mod.ts"
+  "description": "Deno/JSR wrapper for turbotoken (Zig-native tokenizer core).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/turbotoken/turbotoken",
+    "directory": "wrappers/deno"
+  },
+  "exports": {
+    ".": "./mod.ts"
+  }
 }

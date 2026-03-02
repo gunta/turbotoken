@@ -73,7 +73,9 @@ export class Encoding {
       ),
     );
     if (result === -2) return false;
-    if (result < 0) throw new Error(`isWithinTokenLimit returned error code ${result}`);
+    if (result < 0) {
+      throw new Error(`isWithinTokenLimit returned error code ${result}`);
+    }
     return result;
   }
 

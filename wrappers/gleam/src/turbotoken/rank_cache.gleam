@@ -1,5 +1,4 @@
 /// Downloads and caches BPE rank files.
-
 import gleam/erlang/os
 import turbotoken/registry
 

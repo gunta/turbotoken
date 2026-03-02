@@ -60,6 +60,8 @@ wrappers/cpp/CTestTestfile.cmake
 # C#
 wrappers/csharp/**/bin/
 wrappers/csharp/**/obj/
+wrappers/fsharp/**/bin/
+wrappers/fsharp/**/obj/
 wrappers/csharp/**/TestResults/
 wrappers/csharp/*.user
 wrappers/csharp/*.suo
@@ -73,6 +75,7 @@ wrappers/elixir/.elixir_ls/
 wrappers/elixir/erl_crash.dump
 wrappers/gleam/build/
 wrappers/gleam/.gleam/
+wrappers/gleam/manifest.toml
 *.beam
 
 # Go
@@ -84,6 +87,7 @@ wrappers/go/*.test
 # Java / Kotlin / Gradle
 wrappers/kotlin/**/.gradle/
 wrappers/kotlin/**/build/
+wrappers/groovy/.gradle/
 wrappers/java/**/target/
 wrappers/react-native/android/.gradle/
 wrappers/react-native/android/**/build/
@@ -92,6 +96,7 @@ wrappers/react-native/android/.cxx/
 # Flutter / Dart
 wrappers/flutter/**/.dart_tool/
 wrappers/flutter/**/build/
+wrappers/flutter/pubspec.lock
 wrappers/flutter/**/.packages
 wrappers/flutter/**/.flutter-plugins
 wrappers/flutter/**/.flutter-plugins-dependencies
@@ -136,6 +141,10 @@ dist/
 .cache/
 .dmux/
 wrappers/js/native/host/
+/*.tgz
+wrappers/*/*.tgz
+wrappers/*/*.tar
+wrappers/*/*.gem
 
 # Bench outputs
 bench/results/*.json

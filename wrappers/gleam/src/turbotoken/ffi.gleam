@@ -2,7 +2,6 @@
 ///
 /// These external functions call into the Erlang NIF module
 /// (Elixir.TurboToken.Nif) which is shared between Elixir and Gleam.
-
 @external(erlang, "turbotoken_ffi", "version")
 pub fn version() -> String
 
@@ -19,10 +18,7 @@ pub fn decode_bpe(
 ) -> Result(BitArray, String)
 
 @external(erlang, "turbotoken_ffi", "count_bpe")
-pub fn count_bpe(
-  rank_payload: BitArray,
-  text: String,
-) -> Result(Int, String)
+pub fn count_bpe(rank_payload: BitArray, text: String) -> Result(Int, String)
 
 @external(erlang, "turbotoken_ffi", "is_within_token_limit")
 pub fn is_within_token_limit(

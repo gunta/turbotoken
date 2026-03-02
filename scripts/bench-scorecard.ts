@@ -321,6 +321,7 @@ function refreshBenchmarks(): void {
     "scripts/bench-wasm.ts",
     "scripts/bench-ram.ts",
     "scripts/bench-gpu-memory.ts",
+    "scripts/bench-gpu-host-overhead.ts",
     "scripts/bench-gpu-overlap.ts",
   ];
   for (const script of scripts) {
@@ -355,6 +356,7 @@ const artifacts = {
   ram: latestResultPath("bench-ram"),
   wasm: latestResultPath("bench-wasm", { excludes: ["-raw-"] }),
   gpuMemory: latestGpuMemoryPath(),
+  gpuHostOverhead: latestResultPath("bench-gpu-host-overhead"),
   gpuOverlap: latestResultPath("bench-gpu-overlap"),
   gpuBpeDirect: latestGpuBpeDirectPath(),
 };
@@ -370,6 +372,7 @@ const training = loadJson(artifacts.training);
 const ram = loadJson(artifacts.ram);
 const wasm = loadJson(artifacts.wasm);
 const gpuMemory = loadJson(artifacts.gpuMemory);
+const gpuHostOverhead = loadJson(artifacts.gpuHostOverhead);
 const gpuOverlap = loadJson(artifacts.gpuOverlap);
 const gpuBpeDirect = loadJson(artifacts.gpuBpeDirect);
 
@@ -611,6 +614,26 @@ const headlineRouteThroughputRatio = ratio(
   gpuBpeDirectHeadline?.disabledRouteMedianGpuMiBPerSec ?? null,
   gpuBpeDirectHeadline?.enabledRouteMedianGpuMiBPerSec ?? null,
 );
+const gpuHostDigest = (() => {
+  if (!gpuHostOverhead) {
+    return null;
+  }
+  const digest = gpuHostOverhead["digest"];
+  return isRecord(digest) ? digest : null;
+})();
+const gpuHostRows = (() => {
+  if (!gpuHostOverhead) {
+    return [];
+  }
+  const rows = gpuHostOverhead["rows"];
+  return Array.isArray(rows) ? rows.filter(isRecord) : [];
+})();
+const gpuHostNormalEnabled = gpuHostRows.find(
+  (row) => String(row["name"] ?? "") === "route-normal-text-direct-enabled",
+);
+const gpuHostNormalDisabled = gpuHostRows.find(
+  (row) => String(row["name"] ?? "") === "route-normal-text-direct-disabled",
+);
 
 const payload: JsonMap = {
   generatedAt: new Date().toISOString(),
@@ -649,6 +672,8 @@ const payload: JsonMap = {
     ram1mbEncodePeakRss: ramRows,
     gpuMemory,
     gpuMemoryRows,
+    gpuHostOverhead,
+    gpuHostRows,
     gpuOverlap,
     gpuOverlapRows,
     gpuBpeDirect,
@@ -770,6 +795,33 @@ const markdownRows = [
   `- long-lane stress key: ${gpuBpeDirectLongStress?.key ?? "n/a"}`,
   `- long-lane stress slowdown: ${gpuBpeDirectLongStress?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectLongStress.slowdownPct, 2)}%`}`,
   `- long-lane stress throughput ratio (enabled/disabled): ${gpuBpeDirectLongStress?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectLongStress.throughputRatio, 3)}x`}`,
+  ``,
+  `## GPU Host Overhead`,
+  `- digest speedup (raw/cached): ${
+    toNumber(gpuHostDigest?.["speedup_raw_vs_cached"]) == null
+      ? "n/a"
+      : `${round(toNumber(gpuHostDigest?.["speedup_raw_vs_cached"]) ?? Number.NaN, 2)}x`
+  }`,
+  `- rank table cold init: ${
+    toNumber((isRecord(gpuHostOverhead?.["rank_table_init"]) ? gpuHostOverhead?.["rank_table_init"] : null)?.["cold_ms"]) == null
+      ? "n/a"
+      : `${round(toNumber((isRecord(gpuHostOverhead?.["rank_table_init"]) ? gpuHostOverhead?.["rank_table_init"] : null)?.["cold_ms"]) ?? Number.NaN, 3)} ms`
+  }`,
+  `- rank table warm init: ${
+    toNumber((isRecord(gpuHostOverhead?.["rank_table_init"]) ? gpuHostOverhead?.["rank_table_init"] : null)?.["warm_ms"]) == null
+      ? "n/a"
+      : `${round(toNumber((isRecord(gpuHostOverhead?.["rank_table_init"]) ? gpuHostOverhead?.["rank_table_init"] : null)?.["warm_ms"]) ?? Number.NaN, 3)} ms`
+  }`,
+  `- normal-text direct disabled host-overhead: ${
+    toNumber(gpuHostNormalDisabled?.["mean_host_overhead_ms"]) == null
+      ? "n/a"
+      : `${round(toNumber(gpuHostNormalDisabled?.["mean_host_overhead_ms"]) ?? Number.NaN, 3)} ms`
+  }`,
+  `- normal-text direct enabled host-overhead: ${
+    toNumber(gpuHostNormalEnabled?.["mean_host_overhead_ms"]) == null
+      ? "n/a"
+      : `${round(toNumber(gpuHostNormalEnabled?.["mean_host_overhead_ms"]) ?? Number.NaN, 3)} ms`
+  }`,
   ``,
   `## Winners`,
   `- encode 100KB: ${winner(encode100kbRows)?.name ?? "n/a"}`,

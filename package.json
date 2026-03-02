@@ -4,6 +4,22 @@
   "private": false,
   "type": "module",
   "description": "turbotoken monorepo scripts and JS wrapper",
+  "license": "MIT",
+  "homepage": "https://github.com/turbotoken/turbotoken",
+  "bugs": {
+    "url": "https://github.com/turbotoken/turbotoken/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/turbotoken/turbotoken.git"
+  },
+  "keywords": [
+    "tokenizer",
+    "bpe",
+    "tiktoken",
+    "zig",
+    "wasm"
+  ],
   "main": "./wrappers/js/src/index.ts",
   "module": "./wrappers/js/src/index.ts",
   "types": "./wrappers/js/src/index.ts",
@@ -43,6 +59,8 @@
     "bench:native-bytes": "bun run scripts/bench-native-byte-path.ts",
     "bench:gpu-crossover": "bun run scripts/bench-gpu-crossover.ts",
     "bench:gpu-bpe-direct": "bun run scripts/bench-gpu-bpe-direct.ts",
+    "bench:gpu-host-overhead": "bun run scripts/bench-gpu-host-overhead.ts",
+    "bench:gpu-sweep": "bun run scripts/bench-gpu-knob-sweep.ts",
     "bench:gpu-overlap": "bun run scripts/bench-gpu-overlap.ts",
     "bench:gpu-memory": "bun run scripts/bench-gpu-memory.ts",
     "bench:gpu-memory:cuda": "bun run scripts/bench-gpu-memory-cuda.ts",
@@ -70,6 +88,11 @@
     "bench:wasm:comparisons": "bun run scripts/build-wasm-comparisons.ts",
     "bench:browser:competitors": "bun run scripts/bench-browser-competitors.ts",
     "build:wheels": "bun run scripts/build-wheels.ts",
+    "release:check": "bun run scripts/release-readiness.ts",
+    "release:check:ga": "bun run scripts/release-readiness.ts --tier=ga",
+    "release:dry-run": "bun run scripts/release-readiness.ts --dry-run",
+    "release:dry-run:ga": "bun run scripts/release-readiness.ts --dry-run --tier=ga --fail-on-skipped",
+    "release:smoke:ga": "bun run scripts/ga-wrapper-smoke.ts",
     "verify:npm-package": "bun run scripts/verify-npm-package.ts",
     "smoke:wheel-install": "bun run scripts/smoke-wheel-install.ts",
     "smoke:npm-install": "bun run scripts/smoke-npm-install.ts",
@@ -87,6 +110,9 @@
     "@turbotoken/native-linux-arm64-gnu": "0.1.0-dev",
     "@turbotoken/native-linux-arm64-musl": "0.1.0-dev",
     "@turbotoken/native-win32-x64-gnu": "0.1.0-dev"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "gpt-tokenizer": "3.4.0",

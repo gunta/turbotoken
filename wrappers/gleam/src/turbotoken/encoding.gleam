@@ -1,5 +1,4 @@
 /// Encoding type and operations for BPE tokenization.
-
 import turbotoken/ffi
 import turbotoken/registry.{type EncodingSpec}
 
@@ -9,11 +8,7 @@ pub opaque type Encoding {
 }
 
 /// Create a new Encoding (used internally by turbotoken.get_encoding).
-pub fn new(
-  name: String,
-  spec: EncodingSpec,
-  rank_payload: BitArray,
-) -> Encoding {
+pub fn new(name: String, spec: EncodingSpec, rank_payload: BitArray) -> Encoding {
   Encoding(name: name, spec: spec, rank_payload: rank_payload)
 }
 
@@ -23,18 +18,12 @@ pub fn name(enc: Encoding) -> String {
 }
 
 /// Encode text into a list of BPE token IDs.
-pub fn encode(
-  enc: Encoding,
-  text: String,
-) -> Result(List(Int), String) {
+pub fn encode(enc: Encoding, text: String) -> Result(List(Int), String) {
   ffi.encode_bpe(enc.rank_payload, text)
 }
 
 /// Decode a list of BPE token IDs back to a UTF-8 string.
-pub fn decode(
-  enc: Encoding,
-  tokens: List(Int),
-) -> Result(BitArray, String) {
+pub fn decode(enc: Encoding, tokens: List(Int)) -> Result(BitArray, String) {
   ffi.decode_bpe(enc.rank_payload, tokens)
 }
 
@@ -44,10 +33,7 @@ pub fn count(enc: Encoding, text: String) -> Result(Int, String) {
 }
 
 /// Alias for count.
-pub fn count_tokens(
-  enc: Encoding,
-  text: String,
-) -> Result(Int, String) {
+pub fn count_tokens(enc: Encoding, text: String) -> Result(Int, String) {
   count(enc, text)
 }
 

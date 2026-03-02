@@ -96,6 +96,16 @@ Interpretation:
   - normal-text profile uses an alphabetic stream derived from `bench/fixtures/english-1mb.txt` (keeps natural letter distribution but avoids tiny-piece fragmentation in forced-metal A/B runs).
   - reporting policy: `normal-text` is the primary headline profile for MB/s/latency summaries; `low-entropy` is retained as a stress/safety profile.
   - route memory profile selector: `TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND=low-entropy|normal-text` (used by `scripts/bench-gpu-memory.ts`)
+- Host-overhead microbenchmark script:
+  - `bun run scripts/bench-gpu-host-overhead.ts`
+  - isolates host-side costs for Metal BPE route paths:
+    - cached rank-payload digest vs raw SHA256 per call
+    - cold vs warm rank-table initialization
+    - wall-clock vs GPU-only timing deltas (disabled/enabled direct route) on normal-text and optional low-entropy stress text
+  - useful for tuning host/runtime overhead independently from kernel throughput.
+- Automated knob sweep script:
+  - `bun run scripts/bench-gpu-knob-sweep.ts`
+  - executes staged tuning over BPE threadgroup and submit/compaction knobs, ranks candidates by normal-text direct-enabled wall time, and writes a sweep artifact under `bench/results/bench-gpu-knob-sweep-*.json`.
 - Latest matrix artifacts:
   - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
@@ -139,6 +149,20 @@ New BPE crossover rows in the same artifact show:
   - `bench/results/bench-gpu-bpe-direct-1772432813845.json`
   - `bench/results/bench-gpu-crossover-1772432841004.json`
   show forced-metal normal-text returning to sub-millisecond parity-safe behavior on the tracked `262,144`-byte profile.
+
+2026-03-03 kernel-tuning env knobs:
+- threadgroup occupancy controls are now tunable without recompiling Python:
+  - generic kernels: `TURBOTOKEN_METAL_THREADS_PER_GROUP_MULT`
+  - encode kernel: `TURBOTOKEN_METAL_ENCODE_THREADS_PER_GROUP_MULT`
+  - count kernel absolute threads override: `TURBOTOKEN_METAL_COUNT_THREADS_PER_GROUP`
+  - BPE kernel absolute overrides:
+    - `TURBOTOKEN_METAL_BPE_RESET_THREADS`
+    - `TURBOTOKEN_METAL_BPE_FIND_THREADS`
+    - `TURBOTOKEN_METAL_BPE_MARK_THREADS`
+    - `TURBOTOKEN_METAL_BPE_APPLY_THREADS`
+    - `TURBOTOKEN_METAL_BPE_COMPACT_THREADS`
+    - `TURBOTOKEN_METAL_BPE_EMIT_THREADS`
+- keep parity gates on while tuning; use `bench-gpu-bpe-direct` + `bench-gpu-host-overhead` to separate kernel wins from host-side regressions.
 
 ## Next Steps Toward Full GPU BPE
 

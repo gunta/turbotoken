@@ -38,6 +38,7 @@ Agents must keep this status explicit in docs, PRs, and benchmark claims.
 - `asm/`: architecture-specific assembly stubs/implementations.
 - `gpu/`: Metal and CUDA experiments.
 - `wrappers/`: all language wrappers (each package has its own README).
+- `wrappers/release-matrix.json`: source of truth for wrapper publish targets/dry-runs.
 - `wrappers/python/`: Python package and tests.
 - `wrappers/js/`: JS/TS wrapper and smoke tests.
 - `scripts/`: Bun TypeScript automation/benchmark/sync scripts.
@@ -68,6 +69,8 @@ zig build test
 python3 -m pytest -q
 bun run test
 bun run bench
+bun run release:check
+bun run release:dry-run
 bun run bench:queue
 bun run bench:lock:status
 TURBOTOKEN_RALPH_LOOP_ENABLE=1 bun run ralph:loop

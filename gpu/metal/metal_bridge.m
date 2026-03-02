@@ -1057,10 +1057,32 @@ static void update_memory_profile_locked(uint64_t active_bytes) {
 static MTLSize threads_per_group_for(id<MTLComputePipelineState> pipeline) {
     NSUInteger width = [pipeline threadExecutionWidth];
     NSUInteger max_threads = [pipeline maxTotalThreadsPerThreadgroup];
+    if (max_threads == 0) {
+        return MTLSizeMake(1, 1, 1);
+    }
+    if (width == 0) {
+        width = 32;
+    }
+    if (width > max_threads) {
+        width = max_threads;
+    }
 
-    NSUInteger threads = width > 0 ? width * 8 : 256;
+    uint32_t multiplier = 8u;
+    const char *mult_env = getenv("TURBOTOKEN_METAL_THREADS_PER_GROUP_MULT");
+    if (mult_env != NULL && mult_env[0] != '\0') {
+        char *end = NULL;
+        const unsigned long parsed = strtoul(mult_env, &end, 10);
+        if (end != mult_env && parsed > 0ul) {
+            multiplier = (uint32_t)(parsed > 64ul ? 64ul : parsed);
+        }
+    }
+
+    NSUInteger threads = width * (NSUInteger)multiplier;
     if (threads > max_threads) {
         threads = max_threads;
+    }
+    if (threads < width) {
+        threads = width;
     }
     if (threads == 0) {
         threads = 1;
@@ -1075,8 +1097,18 @@ static MTLSize encode_threads_per_group_for(id<MTLComputePipelineState> pipeline
         width = 32;
     }
 
+    uint32_t multiplier = 2u;
+    const char *mult_env = getenv("TURBOTOKEN_METAL_ENCODE_THREADS_PER_GROUP_MULT");
+    if (mult_env != NULL && mult_env[0] != '\0') {
+        char *end = NULL;
+        const unsigned long parsed = strtoul(mult_env, &end, 10);
+        if (end != mult_env && parsed > 0ul) {
+            multiplier = (uint32_t)(parsed > 64ul ? 64ul : parsed);
+        }
+    }
+
     // Each thread processes a larger byte chunk, so favor occupancy over giant groups.
-    NSUInteger threads = width * 2;
+    NSUInteger threads = width * (NSUInteger)multiplier;
     if (threads > max_threads) {
         threads = max_threads;
     }
@@ -1104,12 +1136,71 @@ static bool is_power_of_two_u32(uint32_t value) {
     return value > 0 && (value & (value - 1u)) == 0u;
 }
 
+static uint32_t parse_env_u32_bounded(
+    const char *name,
+    uint32_t default_value,
+    uint32_t min_value,
+    uint32_t max_value
+) {
+    const char *raw = getenv(name);
+    if (raw == NULL || raw[0] == '\0') {
+        return default_value;
+    }
+    char *end = NULL;
+    const unsigned long parsed = strtoul(raw, &end, 10);
+    if (end == raw || parsed == 0ul) {
+        return default_value;
+    }
+    uint32_t value = (uint32_t)(parsed > UINT32_MAX ? UINT32_MAX : parsed);
+    if (value < min_value) {
+        value = min_value;
+    }
+    if (value > max_value) {
+        value = max_value;
+    }
+    return value;
+}
+
+static MTLSize threads_per_group_for_bpe_kernel(
+    id<MTLComputePipelineState> pipeline,
+    const char *env_name
+) {
+    const MTLSize fallback = threads_per_group_for(pipeline);
+    const NSUInteger max_threads = [pipeline maxTotalThreadsPerThreadgroup];
+    if (max_threads == 0) {
+        return MTLSizeMake(1, 1, 1);
+    }
+    const NSUInteger width = [pipeline threadExecutionWidth] > 0 ? [pipeline threadExecutionWidth] : 1;
+    const uint32_t override = parse_env_u32_bounded(env_name, 0u, 1u, (uint32_t)max_threads);
+    if (override == 0u) {
+        return fallback;
+    }
+    NSUInteger threads = (NSUInteger)override;
+    if (threads > max_threads) {
+        threads = max_threads;
+    }
+    if (threads < width) {
+        threads = width;
+    }
+    return MTLSizeMake(threads, 1, 1);
+}
+
 static NSUInteger count_threads_per_group_for(
     id<MTLComputePipelineState> pipeline,
     size_t input_len,
     size_t segment_count
 ) {
     const NSUInteger max_threads = [pipeline maxTotalThreadsPerThreadgroup];
+    const uint32_t override = parse_env_u32_bounded(
+        "TURBOTOKEN_METAL_COUNT_THREADS_PER_GROUP",
+        0u,
+        1u,
+        max_threads > UINT32_MAX ? UINT32_MAX : (uint32_t)max_threads
+    );
+    if (override > 0u) {
+        return (NSUInteger)override;
+    }
+
     const NSUInteger capped = max_threads < 256 ? max_threads : 256;
     if (capped == 0) {
         return 1;
@@ -2334,12 +2425,18 @@ long turbotoken_metal_bpe_encode_from_bytes(
         use_active_compaction ? g_bpe_apply_active_pipeline : g_bpe_apply_pipeline;
 
     const MTLSize reset_grid = MTLSizeMake(1, 1, 1);
-    const MTLSize reset_threads = threads_per_group_for(g_bpe_reset_pipeline);
-    const MTLSize find_threads = threads_per_group_for(find_pipeline);
-    const MTLSize mark_threads = threads_per_group_for(mark_pipeline);
-    const MTLSize apply_threads = threads_per_group_for(apply_pipeline);
-    const MTLSize compact_threads = threads_per_group_for(g_bpe_compact_pipeline);
-    const MTLSize emit_threads = threads_per_group_for(g_bpe_emit_pipeline);
+    const MTLSize reset_threads =
+        threads_per_group_for_bpe_kernel(g_bpe_reset_pipeline, "TURBOTOKEN_METAL_BPE_RESET_THREADS");
+    const MTLSize find_threads =
+        threads_per_group_for_bpe_kernel(find_pipeline, "TURBOTOKEN_METAL_BPE_FIND_THREADS");
+    const MTLSize mark_threads =
+        threads_per_group_for_bpe_kernel(mark_pipeline, "TURBOTOKEN_METAL_BPE_MARK_THREADS");
+    const MTLSize apply_threads =
+        threads_per_group_for_bpe_kernel(apply_pipeline, "TURBOTOKEN_METAL_BPE_APPLY_THREADS");
+    const MTLSize compact_threads =
+        threads_per_group_for_bpe_kernel(g_bpe_compact_pipeline, "TURBOTOKEN_METAL_BPE_COMPACT_THREADS");
+    const MTLSize emit_threads =
+        threads_per_group_for_bpe_kernel(g_bpe_emit_pipeline, "TURBOTOKEN_METAL_BPE_EMIT_THREADS");
     id<MTLBuffer> current_active_indices_buffer = g_bpe_active_indices_a_u32_buffer;
     id<MTLBuffer> next_active_indices_buffer = g_bpe_active_indices_b_u32_buffer;
     id<MTLBuffer> current_active_count_buffer = g_bpe_active_count_a_u32_buffer;

@@ -27,6 +27,7 @@ const scripts = [
   "scripts/bench-gpu-memory.ts",
   "scripts/bench-gpu-crossover.ts",
   "scripts/bench-gpu-bpe-direct.ts",
+  "scripts/bench-gpu-host-overhead.ts",
   "scripts/bench-gpu-overlap.ts",
   "scripts/generate-charts.ts",
   "scripts/bench-scorecard.ts",

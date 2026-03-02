@@ -11,6 +11,29 @@
 
     <name>turbotoken</name>
     <description>The fastest BPE tokenizer on every platform - Java bindings</description>
+    <url>https://github.com/turbotoken/turbotoken/tree/main/wrappers/java</url>
+
+    <licenses>
+        <license>
+            <name>MIT</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>TurboToken Contributors</name>
+            <organization>turbotoken</organization>
+            <organizationUrl>https://github.com/turbotoken</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm>
+        <connection>scm:git:https://github.com/turbotoken/turbotoken.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/turbotoken/turbotoken.git</developerConnection>
+        <url>https://github.com/turbotoken/turbotoken</url>
+    </scm>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>

@@ -1,0 +1,267 @@
+name: Release Readiness
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  release-check:
+    name: Release Metadata Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Run release readiness check
+        run: bun run release:check
+
+      - name: Upload release check artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-check
+          path: |
+            dist/release/release-readiness-*.json
+            dist/release/release-readiness-*.md
+
+  ga-package-matrix:
+    name: Resolve GA Package Matrix
+    needs:
+      - release-check
+    runs-on: ubuntu-24.04
+    outputs:
+      package_matrix: ${{ steps.collect.outputs.package_matrix }}
+      has_ga: ${{ steps.collect.outputs.has_ga }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_MATRIX="$(python3 - <<'PY'
+import json
+from pathlib import Path
+
+matrix = json.loads(Path("wrappers/release-matrix.json").read_text())
+rows = [
+    {"id": pkg["id"], "ecosystem": pkg["ecosystem"]}
+    for pkg in matrix.get("packages", [])
+    if pkg.get("supportTier") == "ga"
+]
+print(json.dumps(rows, separators=(",", ":")))
+PY
+          )"
+          if [[ "$PACKAGE_MATRIX" == "[]" ]]; then
+            echo "has_ga=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_ga=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "package_matrix=$PACKAGE_MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Resolved GA package matrix: $PACKAGE_MATRIX"
+
+  release-dry-run-ga:
+    name: GA Dry Run (${{ matrix.package.id }})
+    needs:
+      - release-check
+      - ga-package-matrix
+    if: needs.ga-package-matrix.outputs.has_ga == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.ga-package-matrix.outputs.package_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: matrix.package.ecosystem == 'npm' || matrix.package.ecosystem == 'jsr'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+
+      - name: Set up Python
+        if: matrix.package.ecosystem == 'pypi'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          check-latest: true
+
+      - name: Set up Rust
+        if: matrix.package.ecosystem == 'crates'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        if: matrix.package.ecosystem == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          check-latest: true
+
+      - name: Set up Deno
+        if: matrix.package.ecosystem == 'jsr'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Set up Zig
+        if: matrix.package.ecosystem == 'npm'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Run GA release dry-run
+        run: bun run scripts/release-readiness.ts --dry-run --tier=ga --package-id=${{ matrix.package.id }} --fail-on-skipped
+
+      - name: Upload GA dry-run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-ga-${{ matrix.package.id }}
+          path: |
+            dist/release/release-readiness-*.json
+            dist/release/release-readiness-*.md
+
+  ga-wrapper-smoke:
+    name: GA Wrapper Smoke (${{ matrix.package.id }})
+    needs:
+      - release-check
+      - ga-package-matrix
+      - release-dry-run-ga
+    if: needs.ga-package-matrix.outputs.has_ga == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.ga-package-matrix.outputs.package_matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: matrix.package.ecosystem == 'npm' || matrix.package.ecosystem == 'jsr'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          check-latest: true
+
+      - name: Set up Python
+        if: matrix.package.ecosystem == 'pypi'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          check-latest: true
+
+      - name: Set up Rust
+        if: matrix.package.ecosystem == 'crates'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go
+        if: matrix.package.ecosystem == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          check-latest: true
+
+      - name: Set up Deno
+        if: matrix.package.ecosystem == 'jsr'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Set up Zig
+        if: matrix.package.ecosystem == 'npm' || matrix.package.ecosystem == 'jsr' || matrix.package.ecosystem == 'crates' || matrix.package.ecosystem == 'go'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Install Python deps (PyPI smoke)
+        if: matrix.package.ecosystem == 'pypi'
+        run: |
+          python -m pip install -U pip uv
+          uv venv .venv
+          uv pip install --python .venv/bin/python -e .[dev]
+
+      - name: Build native library (FFI smoke targets)
+        if: matrix.package.ecosystem == 'jsr' || matrix.package.ecosystem == 'crates' || matrix.package.ecosystem == 'go'
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Run GA wrapper smoke
+        run: bun run scripts/ga-wrapper-smoke.ts --package-id=${{ matrix.package.id }}
+
+      - name: Upload GA wrapper smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ga-wrapper-smoke-${{ matrix.package.id }}
+          path: |
+            dist/release/ga-wrapper-smoke-*.json
+            dist/npm/smoke-npm-install-*.json
+
+  release-dry-run:
+    name: Release Dry Run
+    needs:
+      - release-check
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          check-latest: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install JS deps
+        run: bun install --frozen-lockfile
+
+      - name: Run release dry-run matrix
+        run: bun run release:dry-run
+
+      - name: Upload release dry-run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-readiness-dry-run
+          path: |
+            dist/release/release-readiness-*.json
+            dist/release/release-readiness-*.md

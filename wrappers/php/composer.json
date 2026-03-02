@@ -4,6 +4,12 @@
     "version": "0.1.0",
     "type": "library",
     "license": "MIT",
+    "homepage": "https://github.com/turbotoken/turbotoken/tree/main/wrappers/php",
+    "keywords": ["tokenizer", "bpe", "tiktoken", "ffi", "zig"],
+    "support": {
+        "issues": "https://github.com/turbotoken/turbotoken/issues",
+        "source": "https://github.com/turbotoken/turbotoken"
+    },
     "require": {
         "php": ">=7.4",
         "ext-ffi": "*"

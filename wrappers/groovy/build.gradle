@@ -28,6 +28,21 @@ publishing {
         maven(MavenPublication) {
             from components.java
             artifactId = 'turbotoken-groovy'
+            pom {
+                name = 'turbotoken-groovy'
+                description = 'Groovy wrapper for turbotoken.'
+                url = 'https://github.com/turbotoken/turbotoken/tree/main/wrappers/groovy'
+                licenses {
+                    license {
+                        name = 'MIT'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+                scm {
+                    connection = 'scm:git:https://github.com/turbotoken/turbotoken.git'
+                    url = 'https://github.com/turbotoken/turbotoken'
+                }
+            }
         }
     }
 }

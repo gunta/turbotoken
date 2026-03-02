@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2021"
 description = "The fastest BPE tokenizer on every platform — Rust binding"
 license = "MIT"
+repository = "https://github.com/turbotoken/turbotoken"
+homepage = "https://github.com/turbotoken/turbotoken/tree/main/wrappers/rust"
+documentation = "https://docs.rs/turbotoken"
+readme = "README.md"
+keywords = ["tokenizer", "bpe", "tiktoken", "zig", "ffi"]
+categories = ["text-processing", "api-bindings"]
 links = "turbotoken"
 
 [dependencies]

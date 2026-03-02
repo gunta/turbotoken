@@ -35,7 +35,7 @@ jobs:
         run: bun run smoke:npm-install
 
       - name: Run JS smoke tests
-        run: bun test js/tests/smoke.test.ts
+        run: bun test wrappers/js/tests/smoke.test.ts
 
       - name: Upload npm smoke artifacts
         if: always()

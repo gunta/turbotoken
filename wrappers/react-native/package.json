@@ -30,10 +30,17 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/nickvr/turbotoken.git",
-    "directory": "react-native"
+    "url": "https://github.com/turbotoken/turbotoken.git",
+    "directory": "wrappers/react-native"
+  },
+  "homepage": "https://github.com/turbotoken/turbotoken/tree/main/wrappers/react-native",
+  "bugs": {
+    "url": "https://github.com/turbotoken/turbotoken/issues"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
     "react": ">=18.0.0",
     "react-native": ">=0.72.0"

@@ -4,6 +4,11 @@ target = "erlang"
 description = "The fastest BPE tokenizer on every platform — drop-in tiktoken replacement"
 licences = ["MIT"]
 
+[repository]
+type = "github"
+user = "turbotoken"
+repo = "turbotoken"
+
 [dependencies]
 gleam_stdlib = ">= 0.34.0 and < 2.0.0"
 gleam_erlang = ">= 0.25.0 and < 2.0.0"

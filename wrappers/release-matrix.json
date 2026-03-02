@@ -1,0 +1,403 @@
+{
+  "packages": [
+    {
+      "id": "npm-turbotoken",
+      "ecosystem": "npm",
+      "packageName": "turbotoken",
+      "wrapperDir": ".",
+      "manifestPath": "package.json",
+      "readmePath": "README.md",
+      "publishCommand": "npm publish --access public",
+      "dryRun": {
+        "command": "npm",
+        "args": [
+          "pack",
+          "--silent"
+        ],
+        "cwd": "."
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "npm-react-native",
+      "ecosystem": "npm",
+      "packageName": "react-native-turbotoken",
+      "wrapperDir": "wrappers/react-native",
+      "manifestPath": "wrappers/react-native/package.json",
+      "readmePath": "wrappers/react-native/README.md",
+      "publishCommand": "npm publish --access public",
+      "dryRun": {
+        "command": "npm",
+        "args": [
+          "pack",
+          "--silent"
+        ],
+        "cwd": "wrappers/react-native"
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "pypi-python",
+      "ecosystem": "pypi",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/python",
+      "manifestPath": "pyproject.toml",
+      "readmePath": "wrappers/python/README.md",
+      "publishCommand": "python -m twine upload dist/*",
+      "dryRun": {
+        "command": "python3",
+        "args": [
+          "-c",
+          "import pathlib,tomllib; tomllib.loads(pathlib.Path('pyproject.toml').read_text())"
+        ],
+        "cwd": "."
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "crates-rust",
+      "ecosystem": "crates",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/rust",
+      "manifestPath": "wrappers/rust/Cargo.toml",
+      "readmePath": "wrappers/rust/README.md",
+      "publishCommand": "cargo publish",
+      "dryRun": {
+        "command": "cargo",
+        "args": [
+          "package",
+          "--allow-dirty",
+          "--no-verify"
+        ],
+        "cwd": "wrappers/rust"
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "golang-go",
+      "ecosystem": "go",
+      "packageName": "github.com/turbotoken/turbotoken-go",
+      "wrapperDir": "wrappers/go",
+      "manifestPath": "wrappers/go/go.mod",
+      "readmePath": "wrappers/go/README.md",
+      "publishCommand": "git tag + push (Go module proxy indexing)",
+      "dryRun": {
+        "command": "go",
+        "args": [
+          "list",
+          "./..."
+        ],
+        "cwd": "wrappers/go"
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "rubygems-ruby",
+      "ecosystem": "rubygems",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/ruby",
+      "manifestPath": "wrappers/ruby/turbotoken.gemspec",
+      "readmePath": "wrappers/ruby/README.md",
+      "publishCommand": "gem push turbotoken-<version>.gem",
+      "dryRun": {
+        "command": "gem",
+        "args": [
+          "build",
+          "turbotoken.gemspec"
+        ],
+        "cwd": "wrappers/ruby"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "packagist-php",
+      "ecosystem": "packagist",
+      "packageName": "turbotoken/turbotoken",
+      "wrapperDir": "wrappers/php",
+      "manifestPath": "wrappers/php/composer.json",
+      "readmePath": "wrappers/php/README.md",
+      "publishCommand": "git tag + Packagist auto-update",
+      "dryRun": {
+        "command": "composer",
+        "args": [
+          "validate",
+          "--strict"
+        ],
+        "cwd": "wrappers/php"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "maven-java",
+      "ecosystem": "maven",
+      "packageName": "com.turbotoken:turbotoken",
+      "wrapperDir": "wrappers/java",
+      "manifestPath": "wrappers/java/pom.xml",
+      "readmePath": "wrappers/java/README.md",
+      "publishCommand": "mvn deploy",
+      "dryRun": {
+        "command": "mvn",
+        "args": [
+          "-q",
+          "-DskipTests",
+          "package"
+        ],
+        "cwd": "wrappers/java"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "nuget-csharp",
+      "ecosystem": "nuget",
+      "packageName": "TurboToken",
+      "wrapperDir": "wrappers/csharp",
+      "manifestPath": "wrappers/csharp/TurboToken.csproj",
+      "readmePath": "wrappers/csharp/README.md",
+      "publishCommand": "dotnet nuget push",
+      "dryRun": {
+        "command": "dotnet",
+        "args": [
+          "--info"
+        ],
+        "cwd": "wrappers/csharp"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "nuget-fsharp",
+      "ecosystem": "nuget",
+      "packageName": "TurboToken.FSharp",
+      "wrapperDir": "wrappers/fsharp",
+      "manifestPath": "wrappers/fsharp/TurboToken.FSharp.fsproj",
+      "readmePath": "wrappers/fsharp/README.md",
+      "publishCommand": "dotnet nuget push",
+      "dryRun": {
+        "command": "dotnet",
+        "args": [
+          "--info"
+        ],
+        "cwd": "wrappers/fsharp"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "hex-elixir",
+      "ecosystem": "hex",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/elixir",
+      "manifestPath": "wrappers/elixir/mix.exs",
+      "readmePath": "wrappers/elixir/README.md",
+      "publishCommand": "mix hex.publish",
+      "dryRun": {
+        "command": "mix",
+        "args": [
+          "hex.build"
+        ],
+        "cwd": "wrappers/elixir"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "gleam-hex",
+      "ecosystem": "gleam",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/gleam",
+      "manifestPath": "wrappers/gleam/gleam.toml",
+      "readmePath": "wrappers/gleam/README.md",
+      "publishCommand": "gleam publish",
+      "dryRun": {
+        "command": "gleam",
+        "args": [
+          "format",
+          "--check",
+          "src",
+          "test"
+        ],
+        "cwd": "wrappers/gleam"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "clojars-clojure",
+      "ecosystem": "clojars",
+      "packageName": "com.turbotoken/turbotoken-clj",
+      "wrapperDir": "wrappers/clojure",
+      "manifestPath": "wrappers/clojure/project.clj",
+      "readmePath": "wrappers/clojure/README.md",
+      "publishCommand": "lein deploy clojars",
+      "dryRun": {
+        "command": "lein",
+        "args": [
+          "test"
+        ],
+        "cwd": "wrappers/clojure"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "maven-kotlin",
+      "ecosystem": "maven",
+      "packageName": "com.turbotoken:turbotoken-kotlin",
+      "wrapperDir": "wrappers/kotlin",
+      "manifestPath": "wrappers/kotlin/build.gradle.kts",
+      "readmePath": "wrappers/kotlin/README.md",
+      "publishCommand": "gradle publish",
+      "dryRun": {
+        "command": "gradle",
+        "args": [
+          "-q",
+          "help"
+        ],
+        "cwd": "wrappers/kotlin"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "maven-groovy",
+      "ecosystem": "maven",
+      "packageName": "com.turbotoken:turbotoken-groovy",
+      "wrapperDir": "wrappers/groovy",
+      "manifestPath": "wrappers/groovy/build.gradle",
+      "readmePath": "wrappers/groovy/README.md",
+      "publishCommand": "gradle publish",
+      "dryRun": {
+        "command": "gradle",
+        "args": [
+          "-q",
+          "help"
+        ],
+        "cwd": "wrappers/groovy"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "julia-registry",
+      "ecosystem": "julia",
+      "packageName": "TurboToken",
+      "wrapperDir": "wrappers/julia",
+      "manifestPath": "wrappers/julia/Project.toml",
+      "readmePath": "wrappers/julia/README.md",
+      "publishCommand": "Tag + register in Julia General registry",
+      "dryRun": {
+        "command": "julia",
+        "args": [
+          "--project=.",
+          "-e",
+          "using Pkg; Pkg.test()"
+        ],
+        "cwd": "wrappers/julia"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "cran-r",
+      "ecosystem": "cran",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/r",
+      "manifestPath": "wrappers/r/DESCRIPTION",
+      "readmePath": "wrappers/r/README.md",
+      "publishCommand": "R CMD submit to CRAN",
+      "dryRun": {
+        "command": "R",
+        "args": [
+          "CMD",
+          "build",
+          "."
+        ],
+        "cwd": "wrappers/r"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "scala-maven",
+      "ecosystem": "maven",
+      "packageName": "com.turbotoken:turbotoken-scala",
+      "wrapperDir": "wrappers/scala",
+      "manifestPath": "wrappers/scala/build.sbt",
+      "readmePath": "wrappers/scala/README.md",
+      "publishCommand": "sbt publish",
+      "dryRun": {
+        "command": "sbt",
+        "args": [
+          "-no-colors",
+          "package"
+        ],
+        "cwd": "wrappers/scala"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "swiftpm-swift",
+      "ecosystem": "swiftpm",
+      "packageName": "TurboToken",
+      "wrapperDir": "wrappers/swift",
+      "manifestPath": "wrappers/swift/Package.swift",
+      "readmePath": "wrappers/swift/README.md",
+      "publishCommand": "Tag release for Swift Package Index",
+      "dryRun": {
+        "command": "sh",
+        "args": [
+          "-c",
+          "test -f Package.swift"
+        ],
+        "cwd": "wrappers/swift"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "luarocks-lua",
+      "ecosystem": "luarocks",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/lua",
+      "manifestPath": "wrappers/lua/turbotoken-dev-1.rockspec",
+      "readmePath": "wrappers/lua/README.md",
+      "publishCommand": "luarocks upload",
+      "dryRun": {
+        "command": "luarocks",
+        "args": [
+          "lint",
+          "turbotoken-dev-1.rockspec"
+        ],
+        "cwd": "wrappers/lua"
+      },
+      "supportTier": "experimental"
+    },
+    {
+      "id": "jsr-deno",
+      "ecosystem": "jsr",
+      "packageName": "@turbotoken/turbotoken",
+      "wrapperDir": "wrappers/deno",
+      "manifestPath": "wrappers/deno/deno.json",
+      "readmePath": "wrappers/deno/README.md",
+      "publishCommand": "jsr publish",
+      "dryRun": {
+        "command": "deno",
+        "args": [
+          "fmt",
+          "--check",
+          "."
+        ],
+        "cwd": "wrappers/deno"
+      },
+      "supportTier": "ga"
+    },
+    {
+      "id": "pub-flutter",
+      "ecosystem": "pub",
+      "packageName": "turbotoken",
+      "wrapperDir": "wrappers/flutter",
+      "manifestPath": "wrappers/flutter/pubspec.yaml",
+      "readmePath": "wrappers/flutter/README.md",
+      "publishCommand": "flutter pub publish",
+      "dryRun": {
+        "command": "flutter",
+        "args": [
+          "pub",
+          "get"
+        ],
+        "cwd": "wrappers/flutter"
+      },
+      "supportTier": "experimental"
+    }
+  ]
+}

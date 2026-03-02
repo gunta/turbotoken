@@ -14,3 +14,16 @@ mix test
 Notes:
 - Native source is in `wrappers/elixir/c_src` with shared support in `wrappers/nif`.
 - Build is orchestrated by `elixir_make`.
+
+## Publish
+
+This package is tracked in `wrappers/release-matrix.json`.
+
+From repo root:
+
+```bash
+bun run release:check
+bun run release:dry-run
+```
+
+Then run the ecosystem-specific publish command from `docs/PUBLISHING.md`.

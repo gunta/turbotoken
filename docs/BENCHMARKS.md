@@ -91,6 +91,8 @@
   - Metal gates (quick profile on free runner envelope): `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal`
   - Metal gates against fast artifacts: `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal --artifact-speed=fast`
   - Direct-route A/B profile matrix: `bun run scripts/bench-gpu-bpe-direct.ts`
+  - Metal host-overhead microbench: `bun run scripts/bench-gpu-host-overhead.ts`
+  - Metal knob sweep (staged auto-tuning): `bun run scripts/bench-gpu-knob-sweep.ts`
   - Single crossover profile run: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=normal-text bun run scripts/bench-gpu-crossover.ts`
   - fast competitors mode keeps mandatory `python-encode-1mb-turbotoken` / `python-count-1mb-turbotoken` rows so CI 1MB gates remain measurable.
 - Packaging smoke checks are now CI-wired:

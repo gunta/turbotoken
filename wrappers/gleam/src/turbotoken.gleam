@@ -2,7 +2,6 @@
 ///
 /// Drop-in replacement for tiktoken with identical output.
 ///
-
 import turbotoken/encoding.{type Encoding}
 import turbotoken/ffi
 import turbotoken/rank_cache
@@ -20,14 +19,11 @@ pub type TurbotokenError {
 }
 
 /// Get an encoding by name (e.g. "cl100k_base", "o200k_base").
-pub fn get_encoding(
-  name: String,
-) -> Result(Encoding, TurbotokenError) {
+pub fn get_encoding(name: String) -> Result(Encoding, TurbotokenError) {
   case registry.get_encoding_spec(name) {
     Ok(spec) ->
       case rank_cache.ensure_rank_file(name) {
-        Ok(rank_payload) ->
-          Ok(encoding.new(name, spec, rank_payload))
+        Ok(rank_payload) -> Ok(encoding.new(name, spec, rank_payload))
         Error(reason) -> Error(RankLoadFailed(reason))
       }
     Error(_) -> Error(UnknownEncoding(name))

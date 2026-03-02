@@ -7,6 +7,8 @@ Description: A drop-in replacement for tiktoken providing the fastest BPE
     tokenization on every platform. Uses a Zig + hand-written assembly core
     with platform-specific SIMD backends.
 License: MIT + file LICENSE
+URL: https://github.com/turbotoken/turbotoken/tree/main/wrappers/r
+BugReports: https://github.com/turbotoken/turbotoken/issues
 SystemRequirements: libturbotoken
 Imports: utils
 Suggests: testthat (>= 3.0)

@@ -6,6 +6,12 @@ Gem::Specification.new do |s|
   s.authors     = ["TurboToken Contributors"]
   s.license     = "MIT"
   s.homepage    = "https://github.com/turbotoken/turbotoken"
+  s.metadata = {
+    "homepage_uri" => "https://github.com/turbotoken/turbotoken/tree/main/wrappers/ruby",
+    "source_code_uri" => "https://github.com/turbotoken/turbotoken",
+    "bug_tracker_uri" => "https://github.com/turbotoken/turbotoken/issues",
+    "changelog_uri" => "https://github.com/turbotoken/turbotoken/blob/main/docs/CHANGELOG.md"
+  }
 
   s.files       = Dir["lib/**/*.rb", "LICENSE", "README.md"]
   s.require_paths = ["lib"]

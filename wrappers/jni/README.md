@@ -10,3 +10,7 @@ This is not a standalone package. It provides native glue consumed by:
 
 Primary file:
 - `wrappers/jni/turbotoken_jni.c`
+
+## Publish
+
+This directory is support-only glue and is not published as a standalone package.

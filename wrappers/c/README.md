@@ -118,3 +118,16 @@ turbotoken_encode_bpe_from_ranks(ranks, len, text, text_len, tokens, n);
 cd build
 TURBOTOKEN_RANK_FILE=/path/to/cl100k_base.tiktoken ctest
 ```
+
+## Publish
+
+This package is tracked in `wrappers/release-matrix.json`.
+
+From repo root:
+
+```bash
+bun run release:check
+bun run release:dry-run
+```
+
+Then run the ecosystem-specific publish command from `docs/PUBLISHING.md`.

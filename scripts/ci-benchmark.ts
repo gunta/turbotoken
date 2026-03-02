@@ -1173,6 +1173,7 @@ function runScripts(mode: Mode, benchmarkSpeed: "fast" | "full" | null): void {
     "scripts/bench-gpu-memory.ts",
     "scripts/bench-gpu-crossover.ts",
     "scripts/bench-gpu-bpe-direct.ts",
+    "scripts/bench-gpu-host-overhead.ts",
     "scripts/bench-gpu-overlap.ts",
   ];
 
@@ -1253,6 +1254,7 @@ const artifacts = {
     latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"], speedProfile: artifactSpeed }),
   gpuBpeDirect: gpuBpeDirectSamplePaths[0] ?? null,
   gpuBpeDirectSamples: gpuBpeDirectSamplePaths,
+  gpuHostOverhead: latestResultPath("bench-gpu-host-overhead", { speedProfile: artifactSpeed }),
   gpuOverlap: gpuOverlapSamplePaths[0] ?? null,
   gpuOverlapSamples: gpuOverlapSamplePaths,
 };
@@ -1272,6 +1274,7 @@ const artifactSpeeds = {
   ram: artifactSpeedProfile(artifacts.ram ?? "", ram),
   gpuMemory: artifactSpeedProfile(artifacts.gpuMemory ?? "", gpuMemory),
   gpuBpeDirect: artifactSpeedProfile(artifacts.gpuBpeDirect ?? "", loadJson(artifacts.gpuBpeDirect)),
+  gpuHostOverhead: artifactSpeedProfile(artifacts.gpuHostOverhead ?? "", loadJson(artifacts.gpuHostOverhead)),
   gpuOverlap: artifactSpeedProfile(artifacts.gpuOverlap ?? "", loadJson(artifacts.gpuOverlap)),
 };
 const training1mbGateEligible = artifactSpeeds.training !== "fast";

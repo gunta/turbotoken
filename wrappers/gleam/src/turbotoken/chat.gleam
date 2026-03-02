@@ -1,5 +1,4 @@
 /// Chat message encoding support for TurboToken.
-
 import gleam/list
 import turbotoken/encoding.{type Encoding}
 
@@ -25,10 +24,7 @@ pub type TemplateMode {
 }
 
 /// Resolve a chat template by mode.
-pub fn resolve_chat_template(
-  mode: TemplateMode,
-  eot_token: Int,
-) -> ChatTemplate {
+pub fn resolve_chat_template(mode: TemplateMode, eot_token: Int) -> ChatTemplate {
   case mode {
     TurbotokenV1 ->
       ChatTemplate(
@@ -96,12 +92,7 @@ fn encode_messages(
                   content_tokens,
                   padding,
                 ])
-              encode_messages(
-                enc,
-                rest,
-                template,
-                list.append(acc, msg_tokens),
-              )
+              encode_messages(enc, rest, template, list.append(acc, msg_tokens))
             }
             Error(e) -> Error(e)
           }

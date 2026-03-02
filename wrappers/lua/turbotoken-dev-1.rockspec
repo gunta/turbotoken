@@ -1,7 +1,7 @@
 package = "turbotoken"
 version = "dev-1"
 source = {
-    url = "git+https://github.com/aspect-build/turbotoken.git",
+    url = "git+https://github.com/turbotoken/turbotoken.git",
     tag = "v0.1.0",
 }
 description = {
@@ -11,7 +11,7 @@ description = {
         assembly for maximum performance. This Lua binding uses LuaJIT FFI or
         cffi-lua to call the native library.
     ]],
-    homepage = "https://github.com/aspect-build/turbotoken",
+    homepage = "https://github.com/turbotoken/turbotoken/tree/main/wrappers/lua",
     license = "MIT",
 }
 dependencies = {

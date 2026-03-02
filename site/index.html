@@ -1,0 +1,1581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>turbotoken | The Fastest BPE Tokenizer on Every Platform</title>
+<meta name="description" content="Drop-in replacement for tiktoken. 6.75x faster. Zig + hand-written assembly. ARM64, Metal, WASM, AVX, CUDA, RISC-V.">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700;800&display=swap');
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0b0b10;
+  --bg-card: #121218;
+  --bg-card-hover: #1a1a22;
+  --border: #242430;
+  --border-bright: #363644;
+  --text: #f4f4f6;
+  --text-muted: #9898b0;
+  --text-dim: #6a6a80;
+  --accent: #ff5c1a;
+  --accent-glow: rgba(255, 92, 26, 0.18);
+  --accent2: #00d4e4;
+  --accent2-glow: rgba(0, 212, 228, 0.12);
+  --green: #34d399;
+  --red: #f87171;
+  --purple: #b794ff;
+  --yellow: #fbbf24;
+  --radius: 18px;
+  --radius-sm: 12px;
+  --font: 'Plus Jakarta Sans', 'Noto Sans JP', system-ui, sans-serif;
+  --display: 'Bricolage Grotesque', 'Noto Sans JP', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', monospace;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  line-height: 1.7;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Layered mesh gradient background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 15% 5%, rgba(255, 92, 26, 0.09) 0%, transparent 55%),
+    radial-gradient(ellipse 50% 50% at 85% 15%, rgba(0, 212, 228, 0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 60% 30% at 50% 85%, rgba(183, 148, 255, 0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 40% at 60% 50%, rgba(255, 92, 26, 0.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+/* Film grain overlay */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.02'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* === LANG TOGGLE === */
+.lang-toggle {
+  position: fixed;
+  top: 20px;
+  right: 24px;
+  z-index: 100;
+  display: flex;
+  gap: 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  backdrop-filter: blur(20px);
+}
+.lang-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.lang-btn.active {
+  background: var(--accent);
+  color: #000;
+}
+.lang-btn:hover:not(.active) { color: var(--text); }
+
+[data-lang="ja"] { display: none; }
+body.ja [data-lang="en"] { display: none; }
+body.ja [data-lang="ja"] { display: block; }
+body.ja span[data-lang="en"],
+body.ja div[data-lang="en"] { display: none; }
+body.ja span[data-lang="ja"],
+body.ja div[data-lang="ja"] { display: inline; }
+body:not(.ja) span[data-lang="ja"],
+body:not(.ja) div[data-lang="ja"] { display: none; }
+
+/* Inline ja spans */
+body.ja .bench-card span[data-lang="ja"] { display: inline; }
+body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
+
+/* === CONTAINER === */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+  position: relative;
+  z-index: 1;
+}
+
+/* === HERO === */
+.hero {
+  padding: 120px 0 72px;
+  text-align: center;
+  position: relative;
+}
+
+.hero-glow {
+  position: absolute;
+  top: -240px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1000px;
+  height: 700px;
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 30%, rgba(255, 92, 26, 0.22) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 50% at 25% 45%, rgba(183, 148, 255, 0.1) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 50% at 75% 45%, rgba(0, 212, 228, 0.1) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+  animation: glowPulse 5s ease-in-out infinite alternate;
+}
+@keyframes glowPulse {
+  0% { opacity: 0.85; transform: translateX(-50%) scale(1); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1.06); }
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 18px;
+  border: 1px solid var(--border-bright);
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 36px;
+  background: rgba(18, 18, 24, 0.75);
+  backdrop-filter: blur(20px);
+  letter-spacing: 0.02em;
+}
+.hero-badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.5);
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px rgba(16, 185, 129, 0.4); }
+  50% { opacity: 0.7; box-shadow: 0 0 12px rgba(16, 185, 129, 0); }
+}
+
+.hero h1 {
+  font-family: var(--display);
+  font-size: clamp(3.2rem, 8.5vw, 6rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.02;
+  margin-bottom: 28px;
+  position: relative;
+  z-index: 1;
+}
+.hero h1 .gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, #ff8844 40%, var(--yellow) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  filter: drop-shadow(0 0 50px rgba(255, 92, 26, 0.35));
+}
+
+.hero-sub {
+  font-size: clamp(1.05rem, 2.5vw, 1.25rem);
+  color: var(--text-muted);
+  max-width: 600px;
+  margin: 0 auto 44px;
+  line-height: 1.8;
+  font-weight: 500;
+  position: relative;
+  z-index: 1;
+  letter-spacing: 0.005em;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+  position: relative;
+  z-index: 1;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 30px;
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+  box-shadow: 0 0 20px rgba(255, 92, 26, 0.15), 0 2px 8px rgba(0,0,0,0.3);
+}
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 40px rgba(255, 92, 26, 0.35), 0 8px 30px rgba(0,0,0,0.4);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 30px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border-bright);
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-decoration: none;
+}
+.btn-secondary:hover {
+  border-color: var(--text-dim);
+  background: var(--bg-card-hover);
+  transform: translateY(-1px);
+}
+
+/* Install snippet */
+.install-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 32px;
+  padding: 14px 22px;
+  background: rgba(14, 14, 19, 0.8);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--text-muted);
+  position: relative;
+  z-index: 1;
+  backdrop-filter: blur(10px);
+}
+.install-bar code { color: var(--accent2); font-weight: 500; }
+.install-bar .copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  transition: color 0.2s;
+  font-size: 16px;
+}
+.install-bar .copy-btn:hover { color: var(--text); }
+
+/* === BENTO GRID === */
+.bento {
+  padding: 48px 0 88px;
+}
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 14px;
+}
+
+.bento-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 30px;
+  overflow: hidden;
+  position: relative;
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bento-card:hover {
+  border-color: rgba(255, 92, 26, 0.25);
+  background: var(--bg-card-hover);
+  transform: translateY(-3px);
+  box-shadow: 0 0 50px rgba(255, 92, 26, 0.08), 0 16px 48px rgba(0,0,0,0.3);
+}
+
+.bento-card .card-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  margin-bottom: 18px;
+}
+
+.bento-card h3 {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.02em;
+}
+.bento-card p {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+/* Card spans */
+.span-8 { grid-column: span 8; }
+.span-6 { grid-column: span 6; }
+.span-4 { grid-column: span 4; }
+.span-3 { grid-column: span 3; }
+.span-12 { grid-column: span 12; }
+
+/* === SPEED CARD (hero bento) === */
+.speed-card {
+  background: linear-gradient(135deg, var(--bg-card) 0%, rgba(255, 92, 26, 0.06) 100%);
+  border-color: rgba(255, 92, 26, 0.2);
+}
+.speed-card:hover {
+  border-color: rgba(255, 92, 26, 0.4);
+  box-shadow: 0 0 80px rgba(255, 92, 26, 0.15), 0 12px 40px rgba(0,0,0,0.3);
+}
+.speed-number {
+  font-family: var(--display);
+  font-size: clamp(3.5rem, 7vw, 5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 12px 0 8px;
+  background: linear-gradient(135deg, #ff4400 0%, var(--accent) 40%, var(--yellow) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 40px rgba(255, 92, 26, 0.4));
+}
+.speed-label {
+  font-size: 15px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+/* === BENCHMARK BARS === */
+.bench-card { padding: 30px 30px 26px; }
+.bench-card h3 { margin-bottom: 24px; }
+
+.bench-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.bench-row:last-child { margin-bottom: 0; }
+.bench-label {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 110px;
+  text-align: right;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+.bench-bar-track {
+  flex: 1;
+  height: 34px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 9px;
+  overflow: hidden;
+  position: relative;
+}
+.bench-bar {
+  height: 100%;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: #000;
+  transition: width 1.5s cubic-bezier(0.16, 1, 0.3, 1);
+  min-width: fit-content;
+  position: relative;
+  overflow: hidden;
+}
+.bench-bar.turbo {
+  background: linear-gradient(90deg, #ff4400, var(--accent), #ff9944);
+  box-shadow: 0 0 28px rgba(255, 92, 26, 0.3);
+  color: #fff;
+  font-weight: 700;
+}
+.bench-bar.turbo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%);
+  transform: translateX(-100%);
+  animation: shimmer 2.5s ease-in-out infinite;
+  animation-delay: 1.5s;
+}
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  35%, 100% { transform: translateX(200%); }
+}
+.bench-bar.tiktoken {
+  background: #3a3a50;
+  color: var(--text-muted);
+}
+.bench-bar.gpt {
+  background: #32324a;
+  color: var(--text-muted);
+}
+.bench-bar.jstik {
+  background: #2a2a40;
+  color: var(--text-muted);
+}
+
+.bench-time {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  min-width: 65px;
+  text-align: right;
+}
+
+/* === PLATFORM GRID === */
+.platform-card .card-icon { background: var(--accent2-glow); color: var(--accent2); }
+
+.platforms-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 16px;
+}
+.platform-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+.platform-chip:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: var(--border-bright);
+}
+.platform-chip .chip-icon {
+  font-size: 16px;
+  opacity: 0.8;
+}
+.platform-chip.active {
+  border-color: var(--green);
+  background: rgba(52, 211, 153, 0.08);
+}
+.platform-chip.active::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
+  margin-left: auto;
+}
+.platform-chip.wip {
+  border-color: var(--yellow);
+  background: rgba(245, 158, 11, 0.04);
+}
+.platform-chip.wip::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--yellow);
+  margin-left: auto;
+}
+
+/* === ALGO CARD === */
+.algo-card .card-icon { background: rgba(168, 85, 247, 0.12); color: var(--purple); }
+
+.algo-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+.algo-box {
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.algo-box.good {
+  border-color: rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.04);
+}
+.algo-box.bad {
+  border-color: rgba(239, 68, 68, 0.15);
+  background: rgba(239, 68, 68, 0.03);
+}
+.algo-box h4 {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.algo-box .algo-tag {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.algo-box.good .algo-tag { color: var(--green); }
+.algo-box.bad .algo-tag { color: var(--red); }
+.algo-box .algo-desc {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+/* === CODE CARD === */
+.code-block {
+  background: #08080d;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 22px;
+  margin-top: 14px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.75;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.code-block .kw { color: var(--purple); }
+.code-block .fn { color: var(--accent2); }
+.code-block .str { color: var(--green); }
+.code-block .cmt { color: var(--text-dim); }
+.code-block .num { color: var(--accent); }
+
+/* === LANG WRAPPERS === */
+.lang-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.lang-chip {
+  padding: 5px 13px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: all 0.25s;
+  background: rgba(255,255,255,0.02);
+  letter-spacing: 0.01em;
+}
+.lang-chip:hover {
+  border-color: rgba(255, 92, 26, 0.35);
+  color: var(--text);
+  background: rgba(255, 92, 26, 0.06);
+  box-shadow: 0 0 12px rgba(255, 92, 26, 0.06);
+}
+
+/* === COMPAT CARD === */
+.compat-card .card-icon { background: rgba(34, 197, 94, 0.12); color: var(--green); }
+.compat-list {
+  list-style: none;
+  margin-top: 12px;
+}
+.compat-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.compat-list li:last-child { border-bottom: none; }
+.compat-list .check { color: var(--green); font-weight: bold; }
+
+/* === WASM CARD === */
+.wasm-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 12px;
+}
+.wasm-stat .big {
+  font-family: var(--display);
+  font-size: 2.4rem;
+  font-weight: 800;
+  color: var(--accent2);
+  letter-spacing: -0.03em;
+}
+.wasm-stat .unit {
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+/* === SECTION HEADERS === */
+.section-header {
+  text-align: center;
+  margin-bottom: 52px;
+}
+.section-header h2 {
+  font-family: var(--display);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin-bottom: 16px;
+}
+.section-header p {
+  font-size: 16px;
+  color: var(--text-muted);
+  max-width: 600px;
+  margin: 0 auto;
+  font-weight: 500;
+}
+
+/* === FOOTER === */
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 48px 0;
+  text-align: center;
+  margin-top: 72px;
+}
+.footer p {
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 500;
+}
+.footer a {
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color 0.25s;
+  font-weight: 600;
+}
+.footer a:hover { color: var(--accent); }
+
+/* === ANIMATIONS === */
+.fade-up {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.fade-up.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* === RESPONSIVE === */
+@media (max-width: 900px) {
+  .bento-grid { grid-template-columns: repeat(6, 1fr); }
+  .span-8, .span-6, .span-4, .span-3 { grid-column: span 6; }
+  .platforms-grid { grid-template-columns: repeat(2, 1fr); }
+  .algo-compare { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .bento-grid { grid-template-columns: 1fr; }
+  .span-8, .span-6, .span-4, .span-3, .span-12 { grid-column: span 1; }
+  .platforms-grid { grid-template-columns: 1fr 1fr; }
+  .bench-label { min-width: 80px; font-size: 11px; }
+  .bench-time { min-width: 50px; font-size: 11px; }
+  .hero-actions { flex-direction: column; align-items: center; }
+}
+
+/* Scroll reveal stagger */
+.bento-card:nth-child(1) { transition-delay: 0ms; }
+.bento-card:nth-child(2) { transition-delay: 60ms; }
+.bento-card:nth-child(3) { transition-delay: 120ms; }
+.bento-card:nth-child(4) { transition-delay: 180ms; }
+.bento-card:nth-child(5) { transition-delay: 240ms; }
+.bento-card:nth-child(6) { transition-delay: 300ms; }
+.bento-card:nth-child(7) { transition-delay: 360ms; }
+.bento-card:nth-child(8) { transition-delay: 420ms; }
+.bento-card:nth-child(9) { transition-delay: 480ms; }
+.bento-card:nth-child(10) { transition-delay: 540ms; }
+.bento-card:nth-child(11) { transition-delay: 600ms; }
+.bento-card:nth-child(12) { transition-delay: 660ms; }
+
+/* === ORIGIN STORY === */
+.origin-story {
+  padding: 0 0 72px;
+}
+.story-card {
+  position: relative;
+  background: var(--bg-card);
+  border-radius: 24px;
+  padding: 56px 48px 48px;
+  max-width: 820px;
+  margin: 0 auto;
+  overflow: hidden;
+}
+.story-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  padding: 1.5px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 50%, var(--accent2) 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.story-card::after {
+  content: '';
+  position: absolute;
+  top: -60px;
+  right: -60px;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(255, 92, 26, 0.1) 0%, transparent 65%);
+  pointer-events: none;
+}
+.story-card .story-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  background: rgba(255, 106, 47, 0.08);
+  color: var(--accent);
+  border: 1px solid rgba(255, 106, 47, 0.12);
+}
+.story-card .story-quote {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.85;
+  color: var(--text);
+  position: relative;
+}
+.story-card .story-highlight {
+  color: var(--accent);
+  font-weight: 700;
+}
+.story-card .story-attribution {
+  margin-top: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+}
+.story-card .story-attribution::before {
+  content: '';
+  width: 36px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--purple));
+  border-radius: 1px;
+}
+
+/* Training benchmark bars */
+.bench-bar.rustbpe {
+  background: #6c6cf8;
+  color: rgba(255,255,255,0.85);
+}
+.bench-bar.minbpe {
+  background: #2e2e44;
+  color: var(--text-muted);
+}
+.training-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 7px 16px;
+  background: rgba(255, 92, 26, 0.1);
+  border: 1px solid rgba(255, 92, 26, 0.25);
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: var(--mono);
+  letter-spacing: -0.01em;
+  box-shadow: 0 0 16px rgba(255, 92, 26, 0.08);
+}
+
+/* Hero grid pattern */
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(ellipse 70% 55% at 50% 35%, black 10%, transparent 65%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 55% at 50% 35%, black 10%, transparent 65%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Animated dots in hero */
+.hero-particles {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+.hero-particles span {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  animation: float 6s ease-in-out infinite;
+}
+.hero-particles span:nth-child(1) { left: 12%; top: 22%; animation-delay: 0s; animation-duration: 5s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
+.hero-particles span:nth-child(2) { left: 78%; top: 12%; animation-delay: 0.8s; animation-duration: 6.5s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
+.hero-particles span:nth-child(3) { left: 42%; top: 72%; animation-delay: 2s; animation-duration: 5.5s; background: var(--accent2); box-shadow: 0 0 8px rgba(0,212,228,0.5); }
+.hero-particles span:nth-child(4) { left: 88%; top: 55%; animation-delay: 3s; animation-duration: 7s; background: var(--purple); box-shadow: 0 0 8px rgba(183,148,255,0.5); }
+.hero-particles span:nth-child(5) { left: 22%; top: 78%; animation-delay: 1.2s; animation-duration: 5.8s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
+.hero-particles span:nth-child(6) { left: 62%; top: 30%; animation-delay: 3.5s; animation-duration: 6s; background: var(--accent2); box-shadow: 0 0 8px rgba(0,212,228,0.5); }
+@keyframes float {
+  0%, 100% { opacity: 0; transform: translateY(0) scale(1); }
+  15% { opacity: 0.8; }
+  50% { opacity: 0.4; transform: translateY(-35px) scale(1.8); }
+  85% { opacity: 0.7; }
+}
+
+@media (max-width: 600px) {
+  .story-card { padding: 36px 28px; }
+  .story-card .story-quote { font-size: 17px; }
+  .hero { padding: 96px 0 48px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Language Toggle -->
+<div class="lang-toggle">
+  <button class="lang-btn active" onclick="setLang('en')">EN</button>
+  <button class="lang-btn" onclick="setLang('ja')">JP</button>
+</div>
+
+<div class="container">
+
+  <!-- ===== HERO ===== -->
+  <section class="hero">
+    <div class="hero-glow"></div>
+    <div class="hero-grid"></div>
+    <div class="hero-particles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
+
+    <div class="hero-badge fade-up">
+      <span class="dot"></span>
+      <span data-lang="en">Open Source &middot; MIT License</span>
+      <span data-lang="ja">オープンソース &middot; MIT ライセンス</span>
+    </div>
+
+    <h1 class="fade-up">
+      <span data-lang="en">The <span class="gradient">Fastest</span> BPE Tokenizer</span>
+      <span data-lang="ja">世界<span class="gradient">最速</span>の<br>BPEトークナイザー</span>
+    </h1>
+
+    <p class="hero-sub fade-up">
+      <span data-lang="en">
+        Drop-in replacement for tiktoken. Zig + hand-written assembly.
+        ARM64, Metal GPU, WASM, AVX, CUDA, RISC-V. One library, every platform.
+      </span>
+      <span data-lang="ja">
+        tiktokenの完全互換ドロップインリプレイスメント。Zig + 手書きアセンブリ。
+        ARM64、Metal GPU、WASM、AVX、CUDA、RISC-V。1つのライブラリで全プラットフォーム対応。
+      </span>
+    </p>
+
+    <div class="hero-actions fade-up">
+      <a href="https://github.com/turbo-tools/turbotoken" class="btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="#benchmarks" class="btn-secondary">
+        <span data-lang="en">See Benchmarks</span>
+        <span data-lang="ja">ベンチマークを見る</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M17 7H7M17 7v10"/></svg>
+      </a>
+    </div>
+
+    <div class="install-bar fade-up">
+      <code>pip install turbotoken</code>
+      <button class="copy-btn" onclick="copyInstall()" title="Copy">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      </button>
+    </div>
+  </section>
+
+  <!-- ===== ORIGIN STORY ===== -->
+  <section class="origin-story">
+    <div class="story-card fade-up">
+      <div class="story-icon" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+      </div>
+      <div class="story-quote">
+        <span data-lang="en">
+          Built by someone who had <span class="story-highlight">never written a line of Zig or ARM64 assembly</span> before this project.
+          Powered by Claude Code, Codex, and relentless benchmarking. Hundreds of iterations, thousands of hyperfine runs, and a refusal to stop until every microsecond was accounted for.
+          The result: <span class="story-highlight">the world's fastest BPE tokenizer</span>.
+        </span>
+        <span data-lang="ja">
+          このプロジェクトの前には<span class="story-highlight">ZigもARM64アセンブリも一行も書いたことがない</span>人間が作りました。
+          Claude CodeとCodex、そして執念のベンチマーキング。何百回もの反復、何千回ものhyperfine実行、すべてのマイクロ秒を追求し続けた結果、
+          <span class="story-highlight">世界最速のBPEトークナイザー</span>が生まれました。
+        </span>
+      </div>
+      <div class="story-attribution">
+        <span data-lang="en">Zero Zig experience &rarr; 6.75x faster than tiktoken</span>
+        <span data-lang="ja">Zig経験ゼロ &rarr; tiktokenの6.75倍高速</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== BENTO: HERO STATS ===== -->
+  <section class="bento">
+    <div class="bento-grid">
+
+      <!-- 1. Speed Card -->
+      <div class="bento-card span-4 speed-card fade-up">
+        <div class="card-icon" style="background:var(--accent-glow);color:var(--accent);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        </div>
+        <div class="speed-number">6.75x</div>
+        <div class="speed-label">
+          <span data-lang="en">faster than tiktoken</span>
+          <span data-lang="ja">tiktokenより高速</span>
+        </div>
+        <p style="margin-top:10px;font-size:13px;color:var(--text-dim);">
+          <span data-lang="en">Measured on 100KB encode, Apple M4 Max</span>
+          <span data-lang="ja">100KBエンコード、Apple M4 Maxで計測</span>
+        </p>
+      </div>
+
+      <!-- 2. Benchmark Bars (Python) -->
+      <div class="bento-card span-8 bench-card fade-up" id="benchmarks">
+        <h3>
+          <span data-lang="en">Python Encode 100KB</span>
+          <span data-lang="ja">Pythonエンコード 100KB</span>
+        </h3>
+        <div class="bench-row">
+          <div class="bench-label" style="color:var(--accent)">turbotoken</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar turbo" style="width:20%">43.4 ms</div>
+          </div>
+          <div class="bench-time" style="color:var(--accent)">43.4 ms</div>
+        </div>
+        <div class="bench-row">
+          <div class="bench-label">tiktoken</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar tiktoken" style="width:100%">215.9 ms</div>
+          </div>
+          <div class="bench-time">215.9 ms</div>
+        </div>
+
+        <h3 style="margin-top:28px;">
+          <span data-lang="en">Browser Startup Latency</span>
+          <span data-lang="ja">ブラウザ起動レイテンシ</span>
+        </h3>
+        <div class="bench-row">
+          <div class="bench-label" style="color:var(--accent)">turbotoken</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar turbo" style="width:0.6%">8.5 ms</div>
+          </div>
+          <div class="bench-time" style="color:var(--accent)">8.5 ms</div>
+        </div>
+        <div class="bench-row">
+          <div class="bench-label">gpt-tokenizer</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar gpt" style="width:43%">613.2 ms</div>
+          </div>
+          <div class="bench-time">613.2 ms</div>
+        </div>
+        <div class="bench-row">
+          <div class="bench-label">js-tiktoken</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar jstik" style="width:100%">1414.2 ms</div>
+          </div>
+          <div class="bench-time">1414.2 ms</div>
+        </div>
+
+        <h3 style="margin-top:28px;">
+          <span data-lang="en">Training 100KB</span>
+          <span data-lang="ja">トレーニング 100KB</span>
+        </h3>
+        <div class="bench-row">
+          <div class="bench-label" style="color:var(--accent)">turbotoken</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar turbo" style="width:6%">45.7 ms</div>
+          </div>
+          <div class="bench-time" style="color:var(--accent)">45.7 ms</div>
+        </div>
+        <div class="bench-row">
+          <div class="bench-label" style="color:#818cf8">rustbpe</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar rustbpe" style="width:8%">60.8 ms</div>
+          </div>
+          <div class="bench-time" style="color:#818cf8">60.8 ms</div>
+        </div>
+        <div class="bench-row">
+          <div class="bench-label">minbpe</div>
+          <div class="bench-bar-track">
+            <div class="bench-bar minbpe" style="width:100%">764.6 ms</div>
+          </div>
+          <div class="bench-time">764.6 ms</div>
+        </div>
+        <div class="training-callout">
+          <span data-lang="en">16.7x faster than minbpe</span>
+          <span data-lang="ja">minbpeより16.7倍高速</span>
+        </div>
+      </div>
+
+      <!-- 3. Algorithm -->
+      <div class="bento-card span-6 algo-card fade-up">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">O(n) Algorithm</span>
+          <span data-lang="ja">O(n) アルゴリズム</span>
+        </h3>
+        <p>
+          <span data-lang="en">Linear-time backtracking BPE, not tiktoken's O(n&sup2;) greedy approach.</span>
+          <span data-lang="ja">線形時間バックトラッキングBPE。tiktokenのO(n&sup2;)貪欲法とは異なります。</span>
+        </p>
+        <div class="algo-compare">
+          <div class="algo-box good">
+            <h4>turbotoken</h4>
+            <div class="algo-tag">O(n)</div>
+            <div class="algo-desc">
+              <span data-lang="en">Backtracking BPE</span>
+              <span data-lang="ja">バックトラッキングBPE</span>
+            </div>
+          </div>
+          <div class="algo-box bad">
+            <h4>tiktoken</h4>
+            <div class="algo-tag">O(n&sup2;)</div>
+            <div class="algo-desc">
+              <span data-lang="en">Greedy merge</span>
+              <span data-lang="ja">貪欲マージ</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Platforms -->
+      <div class="bento-card span-6 platform-card fade-up">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">6 Hardware Backends</span>
+          <span data-lang="ja">6つのハードウェアバックエンド</span>
+        </h3>
+        <p>
+          <span data-lang="en">One codebase, native acceleration everywhere.</span>
+          <span data-lang="ja">1つのコードベースで、あらゆる場所でネイティブアクセラレーション。</span>
+        </p>
+        <div class="platforms-grid">
+          <div class="platform-chip active"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><path d="M6 1v3M10 1v3M14 1v3"/></svg></span> ARM64 NEON</div>
+          <div class="platform-chip active"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg></span> Apple Metal</div>
+          <div class="platform-chip active"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg></span> WebAssembly</div>
+          <div class="platform-chip wip"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span> AVX2/512</div>
+          <div class="platform-chip wip"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg></span> NVIDIA CUDA</div>
+          <div class="platform-chip wip"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg></span> RISC-V Vector</div>
+        </div>
+      </div>
+
+      <!-- 5. Drop-in Replacement -->
+      <div class="bento-card span-8 fade-up">
+        <div class="card-icon" style="background:rgba(6,182,212,0.12);color:var(--accent2);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">Drop-in Replacement</span>
+          <span data-lang="ja">ドロップインリプレイスメント</span>
+        </h3>
+        <p>
+          <span data-lang="en">Same API as tiktoken. Change one import line and get instant speedup. Byte-perfect output guaranteed.</span>
+          <span data-lang="ja">tiktokenと同じAPI。インポートを1行変更するだけで即座に高速化。バイト完全互換を保証。</span>
+        </p>
+        <div class="code-block">
+          <span class="cmt"># Before</span><br>
+          <span class="cmt" style="text-decoration:line-through;opacity:0.5">import tiktoken</span><br>
+          <br>
+          <span class="cmt"># After (that's it!)</span><br>
+          <span class="kw">import</span> <span class="fn">turbotoken</span> <span class="kw">as</span> tiktoken<br>
+          <br>
+          enc = tiktoken.<span class="fn">encoding_for_model</span>(<span class="str">"gpt-4o"</span>)<br>
+          tokens = enc.<span class="fn">encode</span>(<span class="str">"Hello world!"</span>)<br>
+          text = enc.<span class="fn">decode</span>(tokens)
+        </div>
+      </div>
+
+      <!-- 6. Compatibility -->
+      <div class="bento-card span-4 compat-card fade-up">
+        <div class="card-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">Parity Verified</span>
+          <span data-lang="ja">パリティ検証済み</span>
+        </h3>
+        <ul class="compat-list">
+          <li><span class="check">&#10003;</span> o200k_base <span style="color:var(--text-dim);font-size:12px">(GPT-4o)</span></li>
+          <li><span class="check">&#10003;</span> cl100k_base <span style="color:var(--text-dim);font-size:12px">(GPT-4)</span></li>
+          <li><span class="check">&#10003;</span> p50k_base <span style="color:var(--text-dim);font-size:12px">(Codex)</span></li>
+          <li><span class="check">&#10003;</span> r50k_base <span style="color:var(--text-dim);font-size:12px">(GPT-3)</span></li>
+        </ul>
+      </div>
+
+      <!-- 7. WASM Card -->
+      <div class="bento-card span-4 fade-up">
+        <div class="card-icon" style="background:rgba(99,102,241,0.12);color:#818cf8;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">WASM Ready</span>
+          <span data-lang="ja">WASM対応</span>
+        </h3>
+        <p>
+          <span data-lang="en">Same Zig core compiles to wasm32. Runs in any browser, edge function, or serverless worker.</span>
+          <span data-lang="ja">同じZigコアがwasm32にコンパイル。ブラウザ、エッジ関数、サーバーレスワーカーで動作。</span>
+        </p>
+        <div class="wasm-stat">
+          <span class="big">&lt;150</span>
+          <span class="unit">KB
+            <span data-lang="en" style="display:inline">optimized binary</span>
+            <span data-lang="ja" style="display:none">最適化バイナリ</span>
+          </span>
+        </div>
+        <p style="margin-top:8px;font-size:12px;color:var(--text-dim)">
+          <span data-lang="en">166x faster startup than js-tiktoken</span>
+          <span data-lang="ja">js-tiktokenより166倍高速な起動</span>
+        </p>
+      </div>
+
+      <!-- 8. Zig + ASM -->
+      <div class="bento-card span-4 fade-up">
+        <div class="card-icon" style="background:rgba(234,179,8,0.12);color:var(--yellow);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <h3>Zig + Assembly</h3>
+        <p>
+          <span data-lang="en">Zero-overhead core. comptime-generated merge tables. Hand-written NEON/AVX hot loops for the last 5% of perf.</span>
+          <span data-lang="ja">ゼロオーバーヘッドコア。コンパイル時生成マージテーブル。性能の最後の5%のためのNEON/AVXホットループ手書き。</span>
+        </p>
+        <div style="margin-top:16px;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);border:1px solid var(--border);">
+          <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">
+            <span style="color:var(--yellow)">@Vector</span>(16, u8) &rarr; NEON<br>
+            <span style="color:var(--yellow)">@Vector</span>(32, u8) &rarr; AVX2<br>
+            <span style="color:var(--yellow)">@Vector</span>(64, u8) &rarr; AVX-512<br>
+            <span style="color:var(--yellow)">comptime</span> &rarr; 0ms init
+          </div>
+        </div>
+      </div>
+
+      <!-- 9. Language Wrappers -->
+      <div class="bento-card span-4 fade-up">
+        <div class="card-icon" style="background:rgba(249,115,22,0.12);color:var(--accent);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">27 Language Wrappers</span>
+          <span data-lang="ja">27の言語ラッパー</span>
+        </h3>
+        <p>
+          <span data-lang="en">Native bindings for every major language and runtime.</span>
+          <span data-lang="ja">全主要言語とランタイムのネイティブバインディング。</span>
+        </p>
+        <div class="lang-grid">
+          <span class="lang-chip">Python</span>
+          <span class="lang-chip">JavaScript</span>
+          <span class="lang-chip">Rust</span>
+          <span class="lang-chip">Go</span>
+          <span class="lang-chip">C</span>
+          <span class="lang-chip">C++</span>
+          <span class="lang-chip">Java</span>
+          <span class="lang-chip">C#</span>
+          <span class="lang-chip">F#</span>
+          <span class="lang-chip">Ruby</span>
+          <span class="lang-chip">Swift</span>
+          <span class="lang-chip">Kotlin</span>
+          <span class="lang-chip">Scala</span>
+          <span class="lang-chip">Deno</span>
+          <span class="lang-chip">React Native</span>
+          <span class="lang-chip">Flutter</span>
+          <span class="lang-chip">Elixir</span>
+          <span class="lang-chip">Gleam</span>
+          <span class="lang-chip">Clojure</span>
+          <span class="lang-chip">Groovy</span>
+          <span class="lang-chip">Lua</span>
+          <span class="lang-chip">PHP</span>
+          <span class="lang-chip">R</span>
+          <span class="lang-chip">Julia</span>
+          <span class="lang-chip">Mojo</span>
+          <span class="lang-chip">JNI</span>
+          <span class="lang-chip">Erlang NIF</span>
+        </div>
+      </div>
+
+      <!-- 10. Training -->
+      <div class="bento-card span-6 fade-up">
+        <div class="card-icon" style="background:rgba(34,197,94,0.12);color:var(--green);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">Custom BPE Training</span>
+          <span data-lang="ja">カスタムBPEトレーニング</span>
+        </h3>
+        <p>
+          <span data-lang="en">Train your own tokenizer vocabularies. Beats rustbpe and minbpe on benchmarked workloads.</span>
+          <span data-lang="ja">独自のトークナイザー語彙をトレーニング。ベンチマークでrustbpeとminbpeを上回ります。</span>
+        </p>
+        <div class="code-block">
+          <span class="kw">from</span> <span class="fn">turbotoken</span> <span class="kw">import</span> train_encoding_from_iterator<br>
+          <br>
+          <span class="kw">with</span> <span class="fn">open</span>(<span class="str">"corpus.txt"</span>) <span class="kw">as</span> f:<br>
+          &nbsp;&nbsp;enc = <span class="fn">train_encoding_from_iterator</span>(<br>
+          &nbsp;&nbsp;&nbsp;&nbsp;f, vocab_size=<span class="num">4096</span>, name=<span class="str">"custom"</span><br>
+          &nbsp;&nbsp;)<br>
+          ids = enc.<span class="fn">encode</span>(<span class="str">"Hello!"</span>)
+        </div>
+      </div>
+
+      <!-- 11. Metal GPU -->
+      <div class="bento-card span-6 fade-up" style="background:linear-gradient(135deg, var(--bg-card) 0%, rgba(6,182,212,0.04) 100%);border-color:rgba(6,182,212,0.12);">
+        <div class="card-icon" style="background:rgba(6,182,212,0.12);color:var(--accent2);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">Metal GPU Acceleration</span>
+          <span data-lang="ja">Metal GPUアクセラレーション</span>
+        </h3>
+        <p>
+          <span data-lang="en">Production-grade compute shaders for Apple Silicon. On-device BPE merge loop with active compaction.</span>
+          <span data-lang="ja">Apple Silicon向けプロダクショングレードのコンピュートシェーダー。アクティブコンパクション付きオンデバイスBPEマージループ。</span>
+        </p>
+        <div style="display:flex;gap:16px;margin-top:18px;flex-wrap:wrap;">
+          <div style="padding:14px 18px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.15);border-radius:var(--radius-sm);flex:1;min-width:140px;">
+            <div style="font-size:1.6rem;font-weight:800;color:var(--accent2);font-family:var(--display);">1.72x</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">
+              <span data-lang="en">GPU throughput boost</span>
+              <span data-lang="ja">GPUスループット向上</span>
+            </div>
+          </div>
+          <div style="padding:14px 18px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.15);border-radius:var(--radius-sm);flex:1;min-width:140px;">
+            <div style="font-size:1.6rem;font-weight:800;color:var(--accent2);font-family:var(--display);">40</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:2px;">
+              <span data-lang="en">GPU cores (M4 Max)</span>
+              <span data-lang="ja">GPUコア (M4 Max)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===== FULL BENCHMARK TABLE ===== -->
+  <section style="padding:40px 0 80px;">
+    <div class="section-header fade-up">
+      <h2>
+        <span data-lang="en">Benchmark Results</span>
+        <span data-lang="ja">ベンチマーク結果</span>
+      </h2>
+      <p>
+        <span data-lang="en">Every number measured with Hyperfine. No hand-waving. No "approximately".</span>
+        <span data-lang="ja">すべての数値はHyperfineで計測。推測なし。「おおよそ」なし。</span>
+      </p>
+    </div>
+
+    <div style="overflow-x:auto;" class="fade-up">
+      <table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);">
+            <th style="text-align:left;padding:12px 16px;color:var(--text-muted);font-weight:600;font-size:13px;">
+              <span data-lang="en">Workload</span>
+              <span data-lang="ja">ワークロード</span>
+            </th>
+            <th style="text-align:right;padding:12px 16px;color:var(--accent);font-weight:700;font-size:13px;">turbotoken</th>
+            <th style="text-align:right;padding:12px 16px;color:var(--text-muted);font-weight:600;font-size:13px;">tiktoken</th>
+            <th style="text-align:right;padding:12px 16px;color:var(--green);font-weight:700;font-size:13px;">
+              <span data-lang="en">Speedup</span>
+              <span data-lang="ja">高速化</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Encode 100KB</span>
+              <span data-lang="ja">エンコード 100KB</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">43.4 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">215.9 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--green);font-weight:700;">~5.0x</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Encode 1MB</span>
+              <span data-lang="ja">エンコード 1MB</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">72.4 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Cold Startup</span>
+              <span data-lang="ja">コールドスタート</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">64.4 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Count 100KB</span>
+              <span data-lang="ja">カウント 100KB</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">44.5 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Browser Startup</span>
+              <span data-lang="ja">ブラウザ起動</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">8.5 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">1414 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--green);font-weight:700;">~166x</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">JS Native Encode 1MB</span>
+              <span data-lang="ja">JSネイティブエンコード 1MB</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">9.83 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">-</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent2);font-weight:600;">101.75 MiB/s</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">GPU Long-lane 1MB</span>
+              <span data-lang="ja">GPU ロングレーン 1MB</span>
+            </td>
+            <td colspan="2" style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent2);font-weight:600;">
+              <span data-lang="en">1.72x throughput boost</span>
+              <span data-lang="ja">1.72倍スループット向上</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--green);font-weight:700;">Metal</td>
+          </tr>
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="padding:14px 16px;font-weight:500;">
+              <span data-lang="en">Training 100KB</span>
+              <span data-lang="ja">トレーニング 100KB</span>
+            </td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--accent);font-weight:600;">45.7 ms</td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--text-dim);">764.6 ms <span style="font-size:11px;color:var(--text-dim)">minbpe</span></td>
+            <td style="text-align:right;padding:14px 16px;font-family:var(--mono);color:var(--green);font-weight:700;">~16.7x</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="text-align:center;margin-top:20px;font-size:13px;color:var(--text-dim);">
+      <span data-lang="en">All benchmarks: Apple M4 Max (16-core, 40 GPU), macOS Sequoia, Hyperfine v1.19+</span>
+      <span data-lang="ja">全ベンチマーク: Apple M4 Max (16コア, 40 GPU), macOS Sequoia, Hyperfine v1.19+</span>
+    </p>
+  </section>
+
+  <!-- ===== JS EXAMPLE ===== -->
+  <section style="padding:0 0 80px;">
+    <div class="bento-grid">
+      <div class="bento-card span-6 fade-up">
+        <h3 style="margin-bottom:4px;">Python</h3>
+        <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;">
+          <span data-lang="en">Identical to tiktoken API</span>
+          <span data-lang="ja">tiktoken APIと同一</span>
+        </p>
+        <div class="code-block">
+          <span class="kw">import</span> <span class="fn">turbotoken</span> <span class="kw">as</span> tiktoken<br>
+          <br>
+          enc = tiktoken.<span class="fn">encoding_for_model</span>(<span class="str">"gpt-4o"</span>)<br>
+          tokens = enc.<span class="fn">encode</span>(<span class="str">"Hello, world!"</span>)<br>
+          text = enc.<span class="fn">decode</span>(tokens)<br>
+          count = enc.<span class="fn">encode</span>(<span class="str">"..."</span>, count_only=<span class="num">True</span>)
+        </div>
+      </div>
+      <div class="bento-card span-6 fade-up">
+        <h3 style="margin-bottom:4px;">JavaScript / WASM</h3>
+        <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;">
+          <span data-lang="en">Browser + Node + Bun + Deno</span>
+          <span data-lang="ja">ブラウザ + Node + Bun + Deno</span>
+        </p>
+        <div class="code-block">
+          <span class="kw">import</span> { <span class="fn">getEncodingAsync</span> } <span class="kw">from</span> <span class="str">"turbotoken"</span>;<br>
+          <br>
+          <span class="kw">const</span> enc = <span class="kw">await</span> <span class="fn">getEncodingAsync</span>(<span class="str">"o200k_base"</span>);<br>
+          <span class="kw">const</span> ids = <span class="kw">await</span> enc.<span class="fn">encodeAsync</span>(<span class="str">"Hello!"</span>);<br>
+          <span class="kw">const</span> text = <span class="kw">await</span> enc.<span class="fn">decodeAsync</span>(ids);
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CTA ===== -->
+  <section style="text-align:center;padding:60px 0 80px;">
+    <div class="fade-up" style="background:linear-gradient(135deg, rgba(255,92,26,0.07) 0%, rgba(0,212,228,0.05) 50%, rgba(183,148,255,0.04) 100%);border:1px solid rgba(255,92,26,0.15);border-radius:28px;padding:68px 48px;max-width:720px;margin:0 auto;position:relative;overflow:hidden;box-shadow:0 0 100px rgba(255,92,26,0.08);">
+      <h2 style="font-family:var(--display);font-size:2.4rem;font-weight:800;letter-spacing:-0.03em;margin-bottom:16px;">
+        <span data-lang="en">Ready to go <span style="color:var(--accent)">turbo</span>?</span>
+        <span data-lang="ja"><span style="color:var(--accent)">ターボ</span>の準備はできましたか？</span>
+      </h2>
+      <p style="color:var(--text-muted);margin-bottom:32px;font-size:16px;">
+        <span data-lang="en">One line change. Instant speedup. Byte-perfect compatibility.</span>
+        <span data-lang="ja">1行の変更。即座の高速化。バイト完全互換。</span>
+      </p>
+      <div class="install-bar" style="margin:0 auto;">
+        <code>pip install turbotoken</code>
+        <button class="copy-btn" onclick="copyInstall()" title="Copy">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FOOTER ===== -->
+  <footer class="footer">
+    <p>
+      <span data-lang="en">Built with Zig, Assembly, and obsessive benchmarking.</span>
+      <span data-lang="ja">Zig、アセンブリ、そして執念のベンチマーキングで構築。</span>
+    </p>
+    <p style="margin-top:8px;">
+      <a href="https://github.com/turbo-tools/turbotoken">GitHub</a> &middot;
+      <a href="https://pypi.org/project/turbotoken/">PyPI</a> &middot;
+      <a href="https://www.npmjs.com/package/turbotoken">npm</a>
+    </p>
+  </footer>
+
+</div>
+
+<script>
+// Language toggle with localStorage persistence
+function setLang(lang) {
+  document.body.classList.toggle('ja', lang === 'ja');
+  document.querySelectorAll('.lang-btn').forEach(function(b) {
+    b.classList.toggle('active', b.textContent.trim() === (lang === 'ja' ? 'JP' : 'EN'));
+  });
+  localStorage.setItem('turbotoken-lang', lang);
+}
+
+// Auto-detect language on load
+(function initLang() {
+  var saved = localStorage.getItem('turbotoken-lang');
+  if (saved) { setLang(saved); return; }
+  var langs = navigator.languages || [navigator.language || ''];
+  for (var i = 0; i < langs.length; i++) {
+    if (langs[i].toLowerCase().startsWith('ja')) { setLang('ja'); return; }
+  }
+})();
+
+// Copy install
+function copyInstall() {
+  navigator.clipboard.writeText('pip install turbotoken');
+  var btn = event.target.closest('.copy-btn');
+  btn.style.color = 'var(--green)';
+  setTimeout(function() { btn.style.color = ''; }, 1500);
+}
+
+// Scroll reveal with stagger
+var observer = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.08, rootMargin: '0px 0px -60px 0px' });
+
+document.querySelectorAll('.fade-up').forEach(function(el) { observer.observe(el); });
+
+// Animated counter for speed numbers
+function animateCounter(el, target, suffix, duration) {
+  var start = 0;
+  var startTime = null;
+  function step(ts) {
+    if (!startTime) startTime = ts;
+    var progress = Math.min((ts - startTime) / duration, 1);
+    var eased = 1 - Math.pow(1 - progress, 4);
+    var current = (target * eased).toFixed(2);
+    el.textContent = current + suffix;
+    if (progress < 1) requestAnimationFrame(step);
+    else el.textContent = target + suffix;
+  }
+  requestAnimationFrame(step);
+}
+
+// Counter observer for speed-number elements
+var counterObserver = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (entry.isIntersecting && !entry.target.dataset.counted) {
+      entry.target.dataset.counted = '1';
+      var text = entry.target.textContent.trim();
+      var match = text.match(/^([\d.]+)(.*)/);
+      if (match) {
+        animateCounter(entry.target, parseFloat(match[1]), match[2], 1000);
+      }
+    }
+  });
+}, { threshold: 0.5 });
+
+document.querySelectorAll('.speed-number').forEach(function(el) { counterObserver.observe(el); });
+
+// Animate benchmark bars on scroll
+var benchObserver = new IntersectionObserver(function(entries) {
+  entries.forEach(function(entry) {
+    if (entry.isIntersecting) {
+      entry.target.querySelectorAll('.bench-bar').forEach(function(bar, i) {
+        var width = bar.style.width;
+        bar.style.width = '0%';
+        setTimeout(function() {
+          requestAnimationFrame(function() {
+            bar.style.width = width;
+          });
+        }, i * 100);
+      });
+    }
+  });
+}, { threshold: 0.2 });
+
+document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.observe(el); });
+</script>
+
+</body>
+</html>

@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "turbotoken"
 version = "0.1.0.dev0"
 description = "High-performance tiktoken-compatible tokenizer"
-readme = "README.md"
+readme = "wrappers/python/README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "turbotoken contributors" }]
@@ -24,6 +24,11 @@ dev = [
 
 [project.scripts]
 turbotoken = "turbotoken.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/turbotoken/turbotoken"
+Repository = "https://github.com/turbotoken/turbotoken"
+Issues = "https://github.com/turbotoken/turbotoken/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["wrappers/python/turbotoken"]

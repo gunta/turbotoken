@@ -1,6 +1,5 @@
 /// Encoding specifications and model-to-encoding mapping.
 /// Mirrors the Python turbotoken._registry module.
-
 import gleam/dict.{type Dict}
 import gleam/list
 import gleam/string
@@ -201,9 +200,7 @@ fn model_prefix_to_encoding_list() -> List(#(String, String)) {
 }
 
 /// Get the encoding spec for a given encoding name.
-pub fn get_encoding_spec(
-  name: String,
-) -> Result(EncodingSpec, String) {
+pub fn get_encoding_spec(name: String) -> Result(EncodingSpec, String) {
   case dict.get(encoding_specs(), name) {
     Ok(spec) -> Ok(spec)
     Error(_) -> Error("Unknown encoding: " <> name)
@@ -211,9 +208,7 @@ pub fn get_encoding_spec(
 }
 
 /// Map a model name to an encoding name.
-pub fn model_to_encoding(
-  model: String,
-) -> Result(String, String) {
+pub fn model_to_encoding(model: String) -> Result(String, String) {
   case dict.get(model_to_encoding_map(), model) {
     Ok(enc) -> Ok(enc)
     Error(_) -> model_prefix_lookup(model, model_prefix_to_encoding_list())

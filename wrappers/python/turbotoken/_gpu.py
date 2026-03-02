@@ -29,7 +29,12 @@ except ModuleNotFoundError:  # pragma: no cover - surfaced via bridge.error
 
 def _repo_root() -> Path:
     package_dir = Path(__file__).resolve().parent
-    return package_dir.parents[1]
+    for parent in package_dir.parents:
+        if (parent / "gpu" / "metal" / "metal_bridge.m").exists():
+            return parent
+    if len(package_dir.parents) > 1:
+        return package_dir.parents[1]
+    return package_dir.parent
 
 
 def _bridge_source_candidates() -> list[Path | None]:
@@ -193,6 +198,15 @@ class _OverlapPerfState:
 
 _overlap_perf_cache: dict[tuple[int, int, int], _OverlapPerfState] = {}
 _overlap_perf_lock = Lock()
+
+
+@lru_cache(maxsize=16)
+def _rank_payload_digest(rank_payload: bytes) -> str:
+    return hashlib.sha256(rank_payload).hexdigest()
+
+
+def _rank_payload_digest_short(rank_payload: bytes) -> str:
+    return _rank_payload_digest(rank_payload)[:16]
 
 
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -739,7 +753,7 @@ def _run_owner_batch_pipeline(
 
 
 def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
-    digest = hashlib.sha256(rank_payload).hexdigest()
+    digest = _rank_payload_digest(rank_payload)
     cached = _rank_token_len_cache.get(digest)
     if cached is not None:
         return cached
@@ -819,7 +833,7 @@ def _build_metal_pair_hash_table(
 
 
 def _ensure_metal_bpe_rank_table(rank_payload: bytes) -> bool:
-    digest = hashlib.sha256(rank_payload).hexdigest()
+    digest = _rank_payload_digest(rank_payload)
     if _metal_bpe_rank_table_ready.get(digest) is True:
         return True
 
@@ -2398,7 +2412,7 @@ def encode_bpe_chunked_stitched(
     stitched: list[int] | None = None
     used_metal_result = False
     used_direct_metal_result = False
-    stitch_cache_key = (hashlib.sha256(rank_payload).hexdigest()[:16], chunk_bytes, overlap_bytes, len(data))
+    stitch_cache_key = (_rank_payload_digest_short(rank_payload), chunk_bytes, overlap_bytes, len(data))
     stitch_cache_state = _metal_stitch_support_cache.get(stitch_cache_key)
     force_repair = os.environ.get("TURBOTOKEN_METAL_STITCH_ALWAYS_REPAIR", "").strip().lower() in {
         "1",

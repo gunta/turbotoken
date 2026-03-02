@@ -10,6 +10,7 @@ SIMD backends, and a compatibility-focused Python API.
 - Early implementation, actively under development.
 - Language bindings are organized under `wrappers/` (see `wrappers/README.md`).
 - Each wrapper package has its own `README.md` with language-specific setup/usage notes.
+- Release/publish governance is tracked in `wrappers/release-matrix.json` and `docs/PUBLISHING.md`.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
 - Native Zig CPU acceleration is available for key byte-path primitives, with x86 runtime dispatch (AVX-512/AVX2/SSE4.2/scalar) now wired in `src/arch/x86_64.zig`.
 - Apple Metal backend now includes an experimental on-device BPE merge loop (`find -> mark -> apply` + active compaction + GPU emit), but remains parity-guarded/experimental and is not the default route.
@@ -119,11 +120,20 @@ bun run test:upstream-alias
 bun run build:wheels
 ```
 
+Cross-ecosystem publish readiness:
+
+```bash
+bun run release:check
+bun run release:dry-run
+```
+
 Benchmark entrypoints:
 
 ```bash
 bun run bench       # default local suite (CUDA excluded)
 bun run bench:js-backends  # Bun native vs WASM backend comparison
+bun run bench:gpu-host-overhead  # Metal route host-overhead microbench (hash/rank-init/wall-vs-GPU)
+bun run bench:gpu-sweep  # staged Metal knob sweep (threads/rounds/compaction)
 bun run bench:cuda  # include local CUDA rows explicitly
 bun run bench:scorecard  # consolidate latest artifacts into a canonical scorecard
 bun run bench:modal:cuda  # paid remote Modal CUDA run (explicitly confirmed)
