@@ -205,24 +205,18 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
   position: relative;
 }
 
-.hero-glow {
+.hero-shader {
   position: absolute;
-  top: -240px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 1000px;
-  height: 700px;
-  background:
-    radial-gradient(ellipse 90% 70% at 50% 30%, rgba(255, 92, 26, 0.22) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 50% at 25% 45%, rgba(183, 148, 255, 0.1) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 50% at 75% 45%, rgba(0, 212, 228, 0.1) 0%, transparent 50%);
-  pointer-events: none;
+  inset: -100px -50px;
   z-index: 0;
-  animation: glowPulse 5s ease-in-out infinite alternate;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 0%, transparent 70%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, black 0%, transparent 70%);
 }
-@keyframes glowPulse {
-  0% { opacity: 0.85; transform: translateX(-50%) scale(1); }
-  100% { opacity: 1; transform: translateX(-50%) scale(1.06); }
+.hero-shader canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .hero-badge {
@@ -1042,35 +1036,6 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
   z-index: 0;
 }
 
-/* Animated dots in hero */
-.hero-particles {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  z-index: 0;
-}
-.hero-particles span {
-  position: absolute;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--accent);
-  opacity: 0;
-  animation: float 6s ease-in-out infinite;
-}
-.hero-particles span:nth-child(1) { left: 12%; top: 22%; animation-delay: 0s; animation-duration: 5s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
-.hero-particles span:nth-child(2) { left: 78%; top: 12%; animation-delay: 0.8s; animation-duration: 6.5s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
-.hero-particles span:nth-child(3) { left: 42%; top: 72%; animation-delay: 2s; animation-duration: 5.5s; background: var(--accent2); box-shadow: 0 0 8px rgba(0,212,228,0.5); }
-.hero-particles span:nth-child(4) { left: 88%; top: 55%; animation-delay: 3s; animation-duration: 7s; background: var(--purple); box-shadow: 0 0 8px rgba(183,148,255,0.5); }
-.hero-particles span:nth-child(5) { left: 22%; top: 78%; animation-delay: 1.2s; animation-duration: 5.8s; box-shadow: 0 0 8px rgba(255,92,26,0.5); }
-.hero-particles span:nth-child(6) { left: 62%; top: 30%; animation-delay: 3.5s; animation-duration: 6s; background: var(--accent2); box-shadow: 0 0 8px rgba(0,212,228,0.5); }
-@keyframes float {
-  0%, 100% { opacity: 0; transform: translateY(0) scale(1); }
-  15% { opacity: 0.8; }
-  50% { opacity: 0.4; transform: translateY(-35px) scale(1.8); }
-  85% { opacity: 0.7; }
-}
 
 @media (max-width: 600px) {
   .topnav { padding: 10px 16px; }
@@ -1119,9 +1084,8 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
 
   <!-- ===== HERO ===== -->
   <section class="hero">
-    <div class="hero-glow"></div>
+    <div class="hero-shader" id="hero-shader"></div>
     <div class="hero-grid"></div>
-    <div class="hero-particles"><span></span><span></span><span></span><span></span><span></span><span></span></div>
 
     <div class="hero-badge fade-up">
       <span class="dot"></span>
@@ -1901,6 +1865,133 @@ var benchObserver = new IntersectionObserver(function(entries) {
 }, { threshold: 0.2 });
 
 document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.observe(el); });
+
+// === WebGL Hero Shader ===
+(function() {
+  var container = document.getElementById('hero-shader');
+  if (!container) return;
+
+  var canvas = document.createElement('canvas');
+  container.appendChild(canvas);
+  var gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
+  if (!gl) return;
+
+  var vertSrc = 'attribute vec2 a_pos;void main(){gl_Position=vec4(a_pos,0,1);}';
+  var fragSrc = [
+    'precision highp float;',
+    'uniform float u_time;',
+    'uniform vec2 u_res;',
+    '',
+    'vec3 hash3(vec3 p){',
+    '  p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));',
+    '  return fract(sin(p)*43758.5453);',
+    '}',
+    '',
+    'float noise(vec3 p){',
+    '  vec3 i=floor(p),f=fract(p);',
+    '  f=f*f*(3.0-2.0*f);',
+    '  return mix(mix(mix(dot(hash3(i),f),dot(hash3(i+vec3(1,0,0)),f-vec3(1,0,0)),f.x),',
+    '    mix(dot(hash3(i+vec3(0,1,0)),f-vec3(0,1,0)),dot(hash3(i+vec3(1,1,0)),f-vec3(1,1,0)),f.x),f.y),',
+    '    mix(mix(dot(hash3(i+vec3(0,0,1)),f-vec3(0,0,1)),dot(hash3(i+vec3(1,0,1)),f-vec3(1,0,1)),f.x),',
+    '    mix(dot(hash3(i+vec3(0,1,1)),f-vec3(0,1,1)),dot(hash3(i+vec3(1,1,1)),f-vec3(1,1,1)),f.x),f.y),f.z);',
+    '}',
+    '',
+    'float fbm(vec3 p){',
+    '  float v=0.0,a=0.5;',
+    '  for(int i=0;i<5;i++){v+=a*noise(p);p*=2.0;a*=0.5;}',
+    '  return v;',
+    '}',
+    '',
+    'void main(){',
+    '  vec2 uv=(gl_FragCoord.xy/u_res)*2.0-1.0;',
+    '  uv.x*=u_res.x/u_res.y;',
+    '  float t=u_time*0.15;',
+    '',
+    '  // Flowing domain warp',
+    '  vec3 p=vec3(uv*1.8,t);',
+    '  float n1=fbm(p+vec3(fbm(p+vec3(1.7,9.2,t*0.3)),fbm(p+vec3(8.3,2.8,t*0.2)),0.0));',
+    '  float n2=fbm(p+vec3(fbm(p+vec3(4.1,3.7,-t*0.25)),fbm(p+vec3(2.9,7.1,t*0.15)),0.0));',
+    '',
+    '  // Color palette: orange -> amber -> cyan',
+    '  vec3 col1=vec3(1.0,0.27,0.0);',    // #ff4400
+    '  vec3 col2=vec3(1.0,0.36,0.1);',     // #ff5c1a
+    '  vec3 col3=vec3(0.98,0.75,0.14);',   // #fbbf24
+    '  vec3 col4=vec3(0.0,0.83,0.89);',    // #00d4e4
+    '  vec3 col5=vec3(0.72,0.58,1.0);',    // #b794ff
+    '',
+    '  vec3 c=mix(col1,col2,smoothstep(-0.2,0.3,n1));',
+    '  c=mix(c,col3,smoothstep(0.1,0.6,n2));',
+    '  c=mix(c,col4,smoothstep(0.4,0.8,n1*n2));',
+    '  c=mix(c,col5,smoothstep(0.5,0.9,n2*0.5+0.5*sin(t+uv.x)));',
+    '',
+    '  // Intensity mask: brighter in center, fading out',
+    '  float d=length(uv)*0.7;',
+    '  float mask=smoothstep(1.2,0.0,d);',
+    '  float intensity=mask*(0.12+0.08*n1);',
+    '',
+    '  gl_FragColor=vec4(c*intensity,intensity*0.9);',
+    '}'
+  ].join('\n');
+
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    return s;
+  }
+
+  var prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
+  gl.linkProgram(prog);
+  gl.useProgram(prog);
+
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  var posLoc = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  var uTime = gl.getUniformLocation(prog, 'u_time');
+  var uRes = gl.getUniformLocation(prog, 'u_res');
+
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = container.clientWidth;
+    var h = container.clientHeight;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 100);
+  });
+  resize();
+
+  var startTime = performance.now();
+  var running = true;
+
+  function render() {
+    if (!running) return;
+    var t = (performance.now() - startTime) * 0.001;
+    gl.uniform1f(uTime, t);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+
+  // Pause when not visible
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) { running = false; }
+    else { running = true; startTime = performance.now(); requestAnimationFrame(render); }
+  });
+
+  requestAnimationFrame(render);
+})();
 </script>
 
 </body>
