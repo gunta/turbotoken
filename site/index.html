@@ -1873,7 +1873,7 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
 
   var canvas = document.createElement('canvas');
   container.appendChild(canvas);
-  var gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
+  var gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true });
   if (!gl) return;
 
   var vertSrc = 'attribute vec2 a_pos;void main(){gl_Position=vec4(a_pos,0,1);}';
@@ -1882,54 +1882,47 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
     'uniform float u_time;',
     'uniform vec2 u_res;',
     '',
-    'vec3 hash3(vec3 p){',
-    '  p=vec3(dot(p,vec3(127.1,311.7,74.7)),dot(p,vec3(269.5,183.3,246.1)),dot(p,vec3(113.5,271.9,124.6)));',
-    '  return fract(sin(p)*43758.5453);',
-    '}',
+    'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}',
     '',
-    'float noise(vec3 p){',
-    '  vec3 i=floor(p),f=fract(p);',
+    'float vnoise(vec2 p){',
+    '  vec2 i=floor(p),f=fract(p);',
     '  f=f*f*(3.0-2.0*f);',
-    '  return mix(mix(mix(dot(hash3(i),f),dot(hash3(i+vec3(1,0,0)),f-vec3(1,0,0)),f.x),',
-    '    mix(dot(hash3(i+vec3(0,1,0)),f-vec3(0,1,0)),dot(hash3(i+vec3(1,1,0)),f-vec3(1,1,0)),f.x),f.y),',
-    '    mix(mix(dot(hash3(i+vec3(0,0,1)),f-vec3(0,0,1)),dot(hash3(i+vec3(1,0,1)),f-vec3(1,0,1)),f.x),',
-    '    mix(dot(hash3(i+vec3(0,1,1)),f-vec3(0,1,1)),dot(hash3(i+vec3(1,1,1)),f-vec3(1,1,1)),f.x),f.y),f.z);',
+    '  float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));',
+    '  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);',
     '}',
     '',
-    'float fbm(vec3 p){',
+    'float fbm(vec2 p){',
     '  float v=0.0,a=0.5;',
-    '  for(int i=0;i<5;i++){v+=a*noise(p);p*=2.0;a*=0.5;}',
+    '  mat2 rot=mat2(cos(0.5),sin(0.5),-sin(0.5),cos(0.5));',
+    '  for(int i=0;i<6;i++){v+=a*vnoise(p);p=rot*p*2.0;a*=0.5;}',
     '  return v;',
     '}',
     '',
     'void main(){',
-    '  vec2 uv=(gl_FragCoord.xy/u_res)*2.0-1.0;',
-    '  uv.x*=u_res.x/u_res.y;',
-    '  float t=u_time*0.15;',
+    '  vec2 uv=gl_FragCoord.xy/u_res;',
+    '  vec2 p=(uv*2.0-1.0)*vec2(u_res.x/u_res.y,1.0);',
+    '  float t=u_time*0.12;',
     '',
-    '  // Flowing domain warp',
-    '  vec3 p=vec3(uv*1.8,t);',
-    '  float n1=fbm(p+vec3(fbm(p+vec3(1.7,9.2,t*0.3)),fbm(p+vec3(8.3,2.8,t*0.2)),0.0));',
-    '  float n2=fbm(p+vec3(fbm(p+vec3(4.1,3.7,-t*0.25)),fbm(p+vec3(2.9,7.1,t*0.15)),0.0));',
+    '  float n1=fbm(p*1.5+vec2(t*0.7,t*0.3));',
+    '  float warp=fbm(p*2.0+vec2(n1*2.0,t*0.5));',
+    '  float n2=fbm(p*1.2+vec2(warp*1.5,-t*0.4));',
     '',
-    '  // Color palette: orange -> amber -> cyan',
-    '  vec3 col1=vec3(1.0,0.27,0.0);',    // #ff4400
-    '  vec3 col2=vec3(1.0,0.36,0.1);',     // #ff5c1a
-    '  vec3 col3=vec3(0.98,0.75,0.14);',   // #fbbf24
-    '  vec3 col4=vec3(0.0,0.83,0.89);',    // #00d4e4
-    '  vec3 col5=vec3(0.72,0.58,1.0);',    // #b794ff
+    '  vec3 orange=vec3(1.0,0.27,0.0);',
+    '  vec3 amber=vec3(0.98,0.75,0.14);',
+    '  vec3 cyan=vec3(0.0,0.83,0.89);',
+    '  vec3 purple=vec3(0.72,0.58,1.0);',
     '',
-    '  vec3 c=mix(col1,col2,smoothstep(-0.2,0.3,n1));',
-    '  c=mix(c,col3,smoothstep(0.1,0.6,n2));',
-    '  c=mix(c,col4,smoothstep(0.4,0.8,n1*n2));',
-    '  c=mix(c,col5,smoothstep(0.5,0.9,n2*0.5+0.5*sin(t+uv.x)));',
+    '  vec3 c=mix(orange,amber,smoothstep(0.3,0.7,n1));',
+    '  c=mix(c,cyan,smoothstep(0.5,0.8,warp)*0.4);',
+    '  c=mix(c,purple,smoothstep(0.55,0.85,n2)*0.3);',
     '',
-    '  // Intensity mask: brighter in center, fading out',
-    '  float d=length(uv)*0.7;',
-    '  float mask=smoothstep(1.2,0.0,d);',
-    '  float intensity=mask*(0.12+0.08*n1);',
+    '  float dist=length(p)*0.55;',
+    '  float mask=1.0-smoothstep(0.0,1.4,dist);',
+    '  mask*=mask;',
+    '  float glow=mask*(0.3+0.2*warp);',
     '',
-    '  gl_FragColor=vec4(c*intensity,intensity*0.9);',
+    '  vec3 col=c*glow;',
+    '  gl_FragColor=vec4(col*glow,glow);',
     '}'
   ].join('\n');
 
@@ -1937,6 +1930,9 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
     var s = gl.createShader(type);
     gl.shaderSource(s, src);
     gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.error('Shader error:', gl.getShaderInfoLog(s));
+    }
     return s;
   }
 
@@ -1944,6 +1940,10 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
   gl.attachShader(prog, compile(gl.VERTEX_SHADER, vertSrc));
   gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fragSrc));
   gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('Link error:', gl.getProgramInfoLog(prog));
+    return;
+  }
   gl.useProgram(prog);
 
   var buf = gl.createBuffer();
@@ -1956,12 +1956,16 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
   var uTime = gl.getUniformLocation(prog, 'u_time');
   var uRes = gl.getUniformLocation(prog, 'u_res');
 
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
   function resize() {
-    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     var w = container.clientWidth;
     var h = container.clientHeight;
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    if (w === 0 || h === 0) return;
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
     gl.viewport(0, 0, canvas.width, canvas.height);
   }
 
@@ -1978,13 +1982,14 @@ document.querySelectorAll('.bench-card').forEach(function(el) { benchObserver.ob
   function render() {
     if (!running) return;
     var t = (performance.now() - startTime) * 0.001;
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.uniform1f(uTime, t);
     gl.uniform2f(uRes, canvas.width, canvas.height);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     requestAnimationFrame(render);
   }
 
-  // Pause when not visible
   document.addEventListener('visibilitychange', function() {
     if (document.hidden) { running = false; }
     else { running = true; startTime = performance.now(); requestAnimationFrame(render); }
