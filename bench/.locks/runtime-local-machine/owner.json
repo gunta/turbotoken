@@ -1,0 +1,13 @@
+{
+  "token": "70824-1772489020601-0f973cdbe7a57",
+  "pid": 70824,
+  "host": "CA-20035319",
+  "acquiredAt": "2026-03-02T22:03:40.601Z",
+  "acquiredEpochMs": 1772489020601,
+  "label": "bench-gpu-direct-sweep",
+  "cwd": "/Users/a12907/Documents/GitHub/turbotoken",
+  "argv": [
+    "/Users/a12907/.proto/tools/bun/1.3.10/bun",
+    "/Users/a12907/Documents/GitHub/turbotoken/scripts/bench-gpu-direct-sweep.ts"
+  ]
+}

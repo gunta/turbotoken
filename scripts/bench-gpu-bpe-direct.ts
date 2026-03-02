@@ -45,6 +45,25 @@ const WORKLOADS: WorkloadProfile[] = [
   },
 ];
 
+const WORKLOAD_KEY_SET = new Set(WORKLOADS.map((row) => row.key));
+
+function selectedWorkloads(): WorkloadProfile[] {
+  const raw = (process.env.TURBOTOKEN_GPU_BPE_DIRECT_WORKLOADS ?? "").trim();
+  if (!raw) {
+    return WORKLOADS;
+  }
+  const wanted = new Set(
+    raw
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => WORKLOAD_KEY_SET.has(part as WorkloadProfile["key"])) as WorkloadProfile["key"][],
+  );
+  if (wanted.size === 0) {
+    return WORKLOADS;
+  }
+  return WORKLOADS.filter((row) => wanted.has(row.key));
+}
+
 function isRecord(value: unknown): value is JsonMap {
   return typeof value === "object" && value !== null;
 }
@@ -365,9 +384,10 @@ section("GPU BPE direct A/B benchmark");
 acquireBenchmarkLock({ label: "bench-gpu-bpe-direct" });
 const speedProfile = benchSpeedProfile();
 const outputPath = resolvePath("bench", "results", `bench-gpu-bpe-direct-${Date.now()}.json`);
+const workloadRows = selectedWorkloads();
 
 const workloads: Record<string, JsonMap> = {};
-for (const workload of WORKLOADS) {
+for (const workload of workloadRows) {
   section(`Workload profile: ${workload.key} (${workload.textKind}, ${workload.inputBytes} bytes, lane=${workload.lane})`);
   const disabled = runScenario(false, workload);
   const enabled = runScenario(true, workload);
@@ -393,9 +413,10 @@ writeJson(outputPath, {
   note: "A/B run for true on-GPU BPE direct merge route vs host-stitched path on low-entropy and normal-text profiles.",
   matrix: {
     directEnable: [false, true],
-    textProfiles: WORKLOADS.map((row) => row.textKind),
-    inputBytes: WORKLOADS.map((row) => row.inputBytes),
-    lanes: WORKLOADS.map((row) => row.lane),
+    textProfiles: workloadRows.map((row) => row.textKind),
+    inputBytes: workloadRows.map((row) => row.inputBytes),
+    lanes: workloadRows.map((row) => row.lane),
+    selectedWorkloads: workloadRows.map((row) => row.key),
   },
   workloads,
   scenarios: {

@@ -61,6 +61,7 @@
     "bench:gpu-bpe-direct": "bun run scripts/bench-gpu-bpe-direct.ts",
     "bench:gpu-host-overhead": "bun run scripts/bench-gpu-host-overhead.ts",
     "bench:gpu-sweep": "bun run scripts/bench-gpu-knob-sweep.ts",
+    "bench:gpu-direct-sweep": "bun run scripts/bench-gpu-direct-sweep.ts",
     "bench:gpu-overlap": "bun run scripts/bench-gpu-overlap.ts",
     "bench:gpu-memory": "bun run scripts/bench-gpu-memory.ts",
     "bench:gpu-memory:cuda": "bun run scripts/bench-gpu-memory-cuda.ts",
