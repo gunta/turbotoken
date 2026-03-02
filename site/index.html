@@ -731,6 +731,136 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
   font-weight: 500;
 }
 
+/* === WHY IT MATTERS (narrative) === */
+.narrative {
+  padding: 80px 0 48px;
+}
+.narrative-header {
+  text-align: center;
+  margin-bottom: 56px;
+}
+.narrative-header h2 {
+  font-family: var(--display);
+  font-size: 36px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin: 0 0 16px;
+}
+.narrative-header p {
+  font-size: 18px;
+  color: var(--text-muted);
+  max-width: 640px;
+  margin: 0 auto;
+  line-height: 1.7;
+}
+.narrative-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+.narrative-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 36px 32px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.narrative-card:hover {
+  border-color: rgba(255, 92, 26, 0.2);
+  box-shadow: 0 0 40px rgba(255, 92, 26, 0.05);
+}
+.narrative-card .nc-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+.narrative-card .nc-icon svg {
+  width: 22px;
+  height: 22px;
+}
+.narrative-card .nc-icon.orange { background: rgba(255, 92, 26, 0.08); color: var(--accent); border-color: rgba(255, 92, 26, 0.12); }
+.narrative-card .nc-icon.green { background: rgba(52, 211, 153, 0.08); color: var(--green); border-color: rgba(52, 211, 153, 0.12); }
+.narrative-card .nc-icon.blue { background: rgba(0, 212, 228, 0.08); color: var(--accent2); border-color: rgba(0, 212, 228, 0.12); }
+.narrative-card h3 {
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+}
+.narrative-card p {
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.75;
+  margin: 0;
+}
+.narrative-card .nc-stat {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+  background: rgba(255, 92, 26, 0.08);
+  border: 1px solid rgba(255, 92, 26, 0.15);
+  border-radius: 6px;
+  padding: 3px 10px;
+  margin-top: 14px;
+}
+.narrative-card .nc-stat.green { color: var(--green); background: rgba(52, 211, 153, 0.08); border-color: rgba(52, 211, 153, 0.15); }
+.narrative-card .nc-stat.blue { color: var(--accent2); background: rgba(0, 212, 228, 0.08); border-color: rgba(0, 212, 228, 0.15); }
+.narrative-explainer {
+  max-width: 720px;
+  margin: 56px auto 0;
+  text-align: center;
+  padding: 32px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.narrative-explainer p {
+  font-size: 16px;
+  color: var(--text-muted);
+  line-height: 1.8;
+  margin: 0;
+}
+.narrative-explainer strong {
+  color: var(--text);
+}
+@media (max-width: 800px) {
+  .narrative-grid { grid-template-columns: 1fr; }
+  .narrative-header h2 { font-size: 28px; }
+}
+
+/* === WIP DISCLAIMER === */
+.wip-banner {
+  max-width: 720px;
+  margin: 0 auto 48px;
+  padding: 20px 28px;
+  background: rgba(251, 191, 36, 0.04);
+  border: 1px solid rgba(251, 191, 36, 0.15);
+  border-radius: 12px;
+  text-align: center;
+}
+.wip-banner p {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.7;
+  margin: 0;
+}
+.wip-banner strong {
+  color: #fbbf24;
+  font-weight: 700;
+}
+
 /* === FOOTER === */
 .footer {
   border-top: 1px solid var(--border);
@@ -1032,6 +1162,74 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
       <button class="copy-btn" onclick="copyInstall()" title="Copy">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
       </button>
+    </div>
+  </section>
+
+  <!-- ===== WHY IT MATTERS ===== -->
+  <section class="narrative">
+    <div class="narrative-header fade-up">
+      <h2>
+        <span data-lang="en">Why Tokenization Matters</span>
+        <span data-lang="ja">なぜトークナイゼーションが重要なのか</span>
+      </h2>
+      <p>
+        <span data-lang="en">Every message you send to ChatGPT, Claude, or Gemini must be converted into numbers before the AI can read it. That conversion is called <strong style="color:var(--text)">tokenization</strong>. It happens on every single API call, billions of times a day, across the entire industry.</span>
+        <span data-lang="ja">ChatGPT、Claude、Geminiに送るすべてのメッセージは、AIが読める数値に変換する必要があります。その変換が<strong style="color:var(--text)">トークナイゼーション</strong>です。すべてのAPIコールで実行され、業界全体で1日に数十億回行われています。</span>
+      </p>
+    </div>
+
+    <div class="narrative-grid">
+      <div class="narrative-card fade-up">
+        <div class="nc-icon orange">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">The Scale</span>
+          <span data-lang="ja">その規模</span>
+        </h3>
+        <p>
+          <span data-lang="en">The world processes over 50 trillion tokens per day. OpenAI alone handles 6 billion tokens per minute. Google processes 1.3 quadrillion tokens per month. Every single one goes through a tokenizer.</span>
+          <span data-lang="ja">世界では1日に50兆トークン以上が処理されています。OpenAIだけで毎分60億トークン。Googleは毎月1.3京トークンを処理。そのすべてがトークナイザーを通過します。</span>
+        </p>
+        <span class="nc-stat">50T+ tokens/day globally</span>
+      </div>
+
+      <div class="narrative-card fade-up">
+        <div class="nc-icon green">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">The Cost</span>
+          <span data-lang="ja">そのコスト</span>
+        </h3>
+        <p>
+          <span data-lang="en">AI inference is a $106B market. 6.75x faster tokenization means ~62 million CPU-hours freed per year globally. On GPU instances where tokenization blocks the pipeline, that translates to $50-200M in recoverable infrastructure cost.</span>
+          <span data-lang="ja">AI推論市場は1,060億ドル規模。6.75倍高速なトークナイゼーションは、年間約6,200万CPU時間の解放を意味します。GPU上でトークナイゼーションがボトルネックとなる場合、5,000万〜2億ドルのインフラコスト削減に相当します。</span>
+        </p>
+        <span class="nc-stat green">~62M CPU-hours saved/year</span>
+      </div>
+
+      <div class="narrative-card fade-up">
+        <div class="nc-icon blue">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></svg>
+        </div>
+        <h3>
+          <span data-lang="en">The Energy</span>
+          <span data-lang="ja">そのエネルギー</span>
+        </h3>
+        <p>
+          <span data-lang="en">AI data centers consume 415 TWh per year globally, and 80-90% of that is inference. Faster tokenization at full adoption could save millions of tonnes of CO2 per year. Performance is sustainability.</span>
+          <span data-lang="ja">AIデータセンターは年間415TWhを消費し、その80〜90%が推論です。高速トークナイゼーションの全面採用で、年間数百万トンのCO2削減が可能に。パフォーマンスはサステナビリティです。</span>
+        </p>
+        <span class="nc-stat blue">415 TWh/year in AI inference</span>
+      </div>
+    </div>
+
+    <div class="narrative-explainer fade-up">
+      <p>
+        <span data-lang="en"><strong>Think of it this way:</strong> tokenization is the toll booth on the highway to AI. Every request stops there. Making the toll booth 6.75x faster means the entire highway moves faster. For every person using AI, for every API call, for every company building on top of LLMs.</span>
+        <span data-lang="ja"><strong>わかりやすく言えば：</strong>トークナイゼーションはAIへの高速道路の料金所です。すべてのリクエストがそこで止まります。料金所を6.75倍速くすれば、高速道路全体が速くなります。AIを使うすべての人、すべてのAPIコール、LLMの上に構築するすべての企業のために。</span>
+      </p>
     </div>
   </section>
 
@@ -1575,6 +1773,14 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
       </div>
     </div>
   </section>
+
+  <!-- ===== WIP DISCLAIMER ===== -->
+  <div class="wip-banner fade-up">
+    <p>
+      <span data-lang="en"><strong>Work in Progress.</strong> turbotoken is under active development. APIs may change. ARM64 NEON and Metal GPU backends are production-grade. WASM is functional. AVX, CUDA, and RISC-V are in progress. Follow the <a href="https://github.com/gunta/turbotoken" style="color:#fbbf24;text-decoration:underline;">GitHub repo</a> for updates.</span>
+      <span data-lang="ja"><strong>開発中。</strong> turbotokenは活発に開発中です。APIは変更される可能性があります。ARM64 NEONとMetal GPUバックエンドは本番品質。WASMは動作可能。AVX、CUDA、RISC-Vは開発中。最新情報は<a href="https://github.com/gunta/turbotoken" style="color:#fbbf24;text-decoration:underline;">GitHubリポジトリ</a>をフォローしてください。</span>
+    </p>
+  </div>
 
   <!-- ===== FOOTER ===== -->
   <footer class="footer">
