@@ -1,0 +1,37 @@
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+
+  dependencies {
+    classpath "com.android.tools.build:gradle:7.4.2"
+  }
+}
+
+apply plugin: "com.android.library"
+
+android {
+  namespace "com.turbotoken.rn"
+  compileSdkVersion 34
+
+  defaultConfig {
+    minSdkVersion 21
+    targetSdkVersion 34
+  }
+
+  sourceSets {
+    main {
+      jniLibs.srcDirs = ["src/main/jniLibs"]
+    }
+  }
+}
+
+repositories {
+  google()
+  mavenCentral()
+}
+
+dependencies {
+  implementation "com.facebook.react:react-native:+"
+}

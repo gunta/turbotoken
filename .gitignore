@@ -1,27 +1,140 @@
-# OS / editor
+# OS / editors
 .DS_Store
 .vscode/
+.idea/
+.vs/
+*.iml
+/.luarc.json
+.metals/
+.bloop/
+.bsp/
 
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+.hypothesis/
 .venv/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Node / Bun
+# Node / Bun / JS
 node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
 
 # Zig
 .zig-cache/
 zig-out/
+zig-pkg/
 
-# Build artifacts
+# Native build artifacts
+*.o
+*.obj
+*.a
+*.lib
 *.so
 *.dylib
 *.dll
 *.wasm
+*.dSYM/
+compile_commands.json
+
+# C / C++
+c/build/
+cpp/build/
+c/CMakeFiles/
+cpp/CMakeFiles/
+c/CMakeCache.txt
+cpp/CMakeCache.txt
+c/cmake_install.cmake
+cpp/cmake_install.cmake
+c/CTestTestfile.cmake
+cpp/CTestTestfile.cmake
+
+# C#
+csharp/**/bin/
+csharp/**/obj/
+csharp/**/TestResults/
+csharp/*.user
+csharp/*.suo
+csharp/*.userprefs
+csharp/*.csproj.user
+
+# Elixir / Erlang / Gleam
+elixir/_build/
+elixir/deps/
+elixir/.elixir_ls/
+elixir/erl_crash.dump
+gleam/build/
+gleam/.gleam/
+*.beam
+
+# Go
+go/bin/
+go/pkg/
+go/coverage.out
+go/*.test
+
+# Java / Kotlin / Gradle
+kotlin/**/.gradle/
+kotlin/**/build/
+java/**/target/
+react-native/android/.gradle/
+react-native/android/**/build/
+react-native/android/.cxx/
+
+# Flutter / Dart
+flutter/**/.dart_tool/
+flutter/**/build/
+flutter/**/.packages
+flutter/**/.flutter-plugins
+flutter/**/.flutter-plugins-dependencies
+flutter/**/.pub/
+
+# React Native / iOS
+react-native/lib/
+react-native/ios/build/
+react-native/ios/Pods/
+react-native/ios/*.xcworkspace/
+react-native/ios/DerivedData/
+react-native/android/local.properties
+*.xcuserstate
+**/*.xcuserdata/
+
+# Lua / Luarocks
+lua/.luarocks/
+lua/lua_modules/
+lua/*.rock
+
+# PHP / Composer
+php/vendor/
+php/.phpunit.result.cache
+
+# Ruby
+ruby/.bundle/
+ruby/vendor/bundle/
+ruby/pkg/
+ruby/coverage/
+ruby/.yardoc/
+ruby/.rspec_status
+
+# Rust
+rust/target/
+
+# Swift
+swift/.build/
+swift/.swiftpm/
+
+# Shared caches / generated outputs
 dist/
 .cache/
+.dmux/
 
 # Bench outputs
 bench/results/*.json
@@ -33,4 +146,3 @@ bench/wasm/moonbit/_build/
 bench/wasm/emscripten/*.wasm
 bench/fixtures/english-10mb.txt
 bench/fixtures/o200k_base.tiktoken
-.dmux/

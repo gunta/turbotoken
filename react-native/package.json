@@ -1,0 +1,63 @@
+{
+  "name": "react-native-turbotoken",
+  "version": "0.1.0",
+  "description": "React Native binding for turbotoken — the fastest BPE tokenizer",
+  "main": "lib/commonjs/index.js",
+  "module": "lib/module/index.js",
+  "types": "lib/typescript/index.d.ts",
+  "react-native": "src/index",
+  "source": "src/index",
+  "files": [
+    "src",
+    "lib",
+    "ios",
+    "android",
+    "turbotoken.podspec",
+    "!**/__tests__"
+  ],
+  "scripts": {
+    "build": "bob build",
+    "typescript": "tsc --noEmit",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "clean": "rm -rf lib"
+  },
+  "keywords": [
+    "react-native",
+    "tokenizer",
+    "bpe",
+    "tiktoken",
+    "turbotoken"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nickvr/turbotoken.git",
+    "directory": "react-native"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "react": ">=18.0.0",
+    "react-native": ">=0.72.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-native": "^0.72.0",
+    "react": "^18.2.0",
+    "react-native": "^0.73.0",
+    "react-native-builder-bob": "^0.23.0",
+    "typescript": "^5.3.0"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      "commonjs",
+      "module",
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  }
+}
