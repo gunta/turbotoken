@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { acquireBenchmarkLock, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, benchSpeedProfile, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU memory benchmark");
 acquireBenchmarkLock({ label: "bench-gpu-memory" });
 ensureFixtures();
 
 const python = pythonExecutable();
+const speedProfile = benchSpeedProfile();
 const runsRaw = process.env.TURBOTOKEN_GPU_MEMORY_RUNS?.trim();
 const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 5) : 5;
 
@@ -29,6 +30,7 @@ if (probeResult.exitCode !== 0 || probeStdout.length === 0) {
   writeJson(outputPath, {
     tool: "gpu-memory-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: probeStderr || "failed to probe gpu backend",
   });
@@ -43,6 +45,7 @@ try {
   writeJson(outputPath, {
     tool: "gpu-memory-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: "invalid JSON from gpu backend probe",
     raw: probeStdout,
@@ -55,6 +58,7 @@ if (probe.available !== true) {
   writeJson(outputPath, {
     tool: "gpu-memory-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: typeof probe.error === "string" ? probe.error : "gpu backend unavailable",
     probe,
@@ -261,12 +265,21 @@ if bpe_status["ready"]:
 
     if not skip_direct_kernel:
         # Direct bridge kernel workload for lower-bound device throughput.
+        native_direct_tokens=None
+        try:
+            fixture_1mb_text=fixture_1mb.decode("utf-8")
+            native_direct_tokens=enc.encode_ordinary(fixture_1mb_text)
+        except Exception:
+            native_direct_tokens=None
         samples=[]
         for _ in range(runs):
             out=bridge.encode_bpe_from_bytes(fixture_1mb)
             if out is None:
                 raise RuntimeError("metal encode_bpe_from_bytes failed")
             profile=_gpu.profile_last() or {}
+            matches_native=None
+            if native_direct_tokens is not None:
+                matches_native=(out == native_direct_tokens)
             samples.append({
                 "gpu_ns":int(profile.get("bpe_gpu_ns",0)),
                 "cpu_ns":int(profile.get("bpe_cpu_ns",0)),
@@ -276,12 +289,22 @@ if bpe_status["ready"]:
                 "memory_working_set_bytes":int(profile.get("memory_working_set_bytes",0)),
                 "memory_device_allocated_bytes":int(profile.get("memory_device_allocated_bytes",0)),
                 "memory_device_recommended_working_set_bytes":int(profile.get("memory_device_recommended_working_set_bytes",0)),
+                "matches_native":matches_native,
             })
-        rows.append(summarize(
+        direct_summary=summarize(
             "metal-bpe-direct-encode-1mb",
             {"input_bytes":len(fixture_1mb),"kind":"encode_bpe_from_bytes"},
             samples,
-        ))
+        )
+        if native_direct_tokens is not None:
+            direct_summary["matches_native"]=all(sample.get("matches_native") is True for sample in samples)
+            direct_summary["native_parity_failures"]=sum(
+                1 for sample in samples if sample.get("matches_native") is False
+            )
+        else:
+            direct_summary["matches_native"]=None
+            direct_summary["native_parity_failures"]=None
+        rows.append(direct_summary)
 
 print(json.dumps({
     "tool":"gpu-memory-bench",
@@ -313,6 +336,7 @@ if (runResult.exitCode !== 0) {
   writeJson(outputPath, {
     tool: "gpu-memory-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "failed",
     probe,
     stderr: new TextDecoder().decode(runResult.stderr).trim(),
@@ -329,6 +353,7 @@ try {
   writeJson(outputPath, {
     tool: "gpu-memory-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "failed",
     reason: "runner returned invalid JSON",
     raw: runStdout,
@@ -337,5 +362,8 @@ try {
   process.exit(1);
 }
 
-writeJson(outputPath, payload);
+writeJson(outputPath, {
+  ...payload,
+  speedProfile,
+});
 console.log(`Wrote GPU memory benchmark: ${outputPath}`);

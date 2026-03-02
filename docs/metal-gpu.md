@@ -12,11 +12,18 @@
   - default `encode_gpu(device="auto")` keeps exact CPU/native rank-BPE path
   - experimental chunked stitch path is opt-in via `encode_gpu(device="metal", strict_verify=False)` and now uses a Metal owner-mask kernel plus boundary-repair/exactness guards before native/Python fallbacks
   - byte-path auto-route helpers in `python/turbotoken/_gpu.py`
-- Not implemented yet:
-  - GPU BPE merge logic (BlockBPE-style chunk merge/stitching)
-  - fully on-GPU rank-table merge/stitch path (current merge path still uses CPU/native kernels)
+- Implemented (experimental, parity-gated):
+  - on-device BPE merge loop with rank-table lookup kernels (`find -> mark -> apply`)
+  - iterative active-index compaction on GPU (`tt_bpe_compact_active_indices`)
+  - optional on-GPU token emission from link state (`tt_bpe_emit_tokens_from_links`, opt-in via `TURBOTOKEN_METAL_BPE_GPU_EMIT_ENABLE=1`)
+- Implemented route guards (2026-03-02):
+  - full-piece GPU path now has a lower bound (`TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES`, default `4096`) so tiny regex pieces stay on CPU/native.
+  - `TURBOTOKEN_METAL_FORCE_ALL_PIECES=1` now has a sub-direct-size safety fallback to regular CPU encode unless `TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT=1`.
+- Still pending:
+  - reliable crossover wins versus CPU/native on real long-text workloads
+  - broader route promotion/auto-route policy changes (currently fallback-first)
 
-This backend should be treated as a high-throughput building block for the future full GPU path, not as final tiktoken-compatible GPU BPE.
+This backend should still be treated as experimental and fallback-first. It now has a true on-device merge loop, but route selection remains parity-guarded and conservative.
 
 ## Runtime Design
 
@@ -93,6 +100,8 @@ Interpretation:
   - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
   - direct safety matrix: `bench/results/bench-gpu-bpe-direct-1772344263726.json`
+  - latest routing-fix quick run: `bench/results/bench-gpu-crossover-1772427763887.json`
+  - latest direct A/B matrix: `bench/results/bench-gpu-bpe-direct-1772427787190.json`
 - Auto-route cache:
   - `~/.cache/turbotoken/metal/autoroute-v1.json` (schema version now `4`)
 - Profiling counters exported from C bridge and exposed through Python:
@@ -118,11 +127,24 @@ New BPE crossover rows in the same artifact show:
 - optional long mode (`10,485,760` chars) stays token-identical for both auto and forced-metal routes, but runtime remains CPU-like (`~28.1s` CPU baseline, `~28.2s` auto, `~28.1s` forced metal in latest run).
 - despite improved correctness, BPE auto-route remains pinned to native (`2^60` sentinel) because Metal stitch path still does not beat baseline crossover targets.
 
+2026-03-02 routing-fix note:
+- `encode_gpu(device="auto", strict_verify=False)` now exits early to regular CPU encode whenever whole-text autoroute is native, avoiding GPU-route bookkeeping overhead on non-Metal rows.
+- GPU range-batch fallback now preserves chunked native range batching (instead of per-piece Python fallback) when piece counts exceed batching limits.
+- `_gpu._get_route_thresholds()` now uses cached threshold resolution to avoid repeated disk cache reads in per-piece routing loops.
+
+2026-03-02 tiny-piece guard note:
+- `_encode_bpe_chunked_stitched_metal_many` now batches single-chunk exact ranges through native range encode instead of per-piece native calls.
+- tiny piece full-GPU route is now gated by `TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES` (default `4096`), reducing per-piece command-buffer overhead in force-all runs.
+- latest quick artifacts after this pass:
+  - `bench/results/bench-gpu-bpe-direct-1772432813845.json`
+  - `bench/results/bench-gpu-crossover-1772432841004.json`
+  show forced-metal normal-text returning to sub-millisecond parity-safe behavior on the tracked `262,144`-byte profile.
+
 ## Next Steps Toward Full GPU BPE
 
-1. Port piece-level BPE merge candidate generation to Metal chunk kernels.
-2. Replace prototype chunked stitch fallback with true on-GPU boundary merge/stitch.
-3. Recalibrate auto-route using full BPE workloads (not only byte-path primitives).
+1. Tune/benchmark the on-device merge loop for real crossover wins (normal-text long pieces + large batches).
+2. Reduce host synchronization overhead per submit and re-check route-level MB/s + latency deltas.
+3. Recalibrate auto-route using full BPE workloads and keep strict parity gates enabled.
 4. Benchmark crossover points (batch size, string length) vs NEON CPU path on M4 Max.
 
 ## Research-Backed Constraints (2026-02-25)

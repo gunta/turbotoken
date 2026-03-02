@@ -1,6 +1,6 @@
 # Benchmark Summary
 
-Generated: 2026-03-01T09:44:51.905Z
+Generated: 2026-03-01T10:38:44.499Z
 
 | Source JSON | Command | Mean (ms) |
 |-------------|---------|-----------|
@@ -30,6 +30,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-throughput-20260301-073432.json | count-100kb | 44.665 |
 | bench-throughput-20260301-093821.json | count-100kb | 45.359 |
 | bench-throughput-20260301-094152.json | count-100kb | 47.667 |
+| bench-throughput-20260301-103547.json | count-100kb | 45.190 |
 | bench-throughput-20260224-134234.json | count-10kb | 69.711 |
 | bench-throughput-20260224-145545.json | count-10kb | 141.273 |
 | bench-throughput-20260224-150056.json | count-10kb | 142.438 |
@@ -52,6 +53,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-throughput-20260301-073432.json | count-10kb | 41.477 |
 | bench-throughput-20260301-093821.json | count-10kb | 41.849 |
 | bench-throughput-20260301-094152.json | count-10kb | 39.466 |
+| bench-throughput-20260301-103547.json | count-10kb | 33.330 |
 | bench-throughput-20260224-134234.json | count-1kb | 67.363 |
 | bench-throughput-20260224-145545.json | count-1kb | 141.132 |
 | bench-throughput-20260224-150056.json | count-1kb | 147.297 |
@@ -74,6 +76,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-throughput-20260301-073432.json | count-1kb | 66.948 |
 | bench-throughput-20260301-093821.json | count-1kb | 67.031 |
 | bench-throughput-20260301-094152.json | count-1kb | 59.211 |
+| bench-throughput-20260301-103547.json | count-1kb | 61.372 |
 | bench-pair-cache-hash-20260225-175906.json | crc32-count-bpe-100kb | 1116.038 |
 | bench-pair-cache-hash-20260225-181644.json | crc32-count-bpe-100kb | 1114.907 |
 | bench-pair-cache-hash-20260225-182315.json | crc32-count-bpe-100kb | 1104.409 |
@@ -93,6 +96,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-pair-cache-hash-20260301-051159.json | crc32-count-bpe-100kb | 117.773 |
 | bench-pair-cache-hash-20260301-074132.json | crc32-count-bpe-100kb | 120.846 |
 | bench-pair-cache-hash-20260301-094239.json | crc32-count-bpe-100kb | 125.013 |
+| bench-pair-cache-hash-20260301-103636.json | crc32-count-bpe-100kb | 131.258 |
 | bench-pair-cache-hash-english-100kb-20260226-032822.json | crc32-count-english-100kb | 1143.130 |
 | bench-pair-cache-hash-english-1mb-20260226-032844.json | crc32-count-english-1mb | 4381.366 |
 | bench-pair-cache-hash-turbotoken-english-4mb-20260226-033104.json | crc32-count-turbotoken-english-4mb | 15094.288 |
@@ -117,6 +121,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-pair-cache-hash-20260301-051159.json | crc32-encode-bpe-100kb | 118.120 |
 | bench-pair-cache-hash-20260301-074132.json | crc32-encode-bpe-100kb | 134.225 |
 | bench-pair-cache-hash-20260301-094239.json | crc32-encode-bpe-100kb | 126.988 |
+| bench-pair-cache-hash-20260301-103636.json | crc32-encode-bpe-100kb | 118.552 |
 | bench-pair-cache-hash-english-100kb-20260226-032822.json | crc32-encode-english-100kb | 1450.507 |
 | bench-pair-cache-hash-english-1mb-20260226-032844.json | crc32-encode-english-1mb | 7831.130 |
 | bench-pair-cache-hash-turbotoken-english-4mb-20260226-033104.json | crc32-encode-turbotoken-english-4mb | 29745.852 |
@@ -145,6 +150,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-bigfile-20260301-073442.json | encode-1mb | 77.930 |
 | bench-bigfile-20260301-093831.json | encode-1mb | 78.322 |
 | bench-bigfile-20260301-094154.json | encode-1mb | 70.930 |
+| bench-bigfile-20260301-103549.json | encode-1mb | 71.120 |
 | bench-encoder-queue-20260225-180932.json | full-bucket-count-bpe-100kb | 1161.890 |
 | bench-encoder-queue-20260225-181051.json | full-bucket-count-bpe-100kb | 1112.598 |
 | bench-encoder-queue-20260225-190721.json | full-bucket-count-bpe-100kb | 2170.865 |
@@ -163,6 +169,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encoder-queue-20260301-051218.json | full-bucket-count-bpe-100kb | 122.337 |
 | bench-encoder-queue-20260301-074152.json | full-bucket-count-bpe-100kb | 128.016 |
 | bench-encoder-queue-20260301-094243.json | full-bucket-count-bpe-100kb | 167.592 |
+| bench-encoder-queue-20260301-103639.json | full-bucket-count-bpe-100kb | 124.514 |
 | bench-encoder-queue-20260225-180932.json | full-bucket-encode-bpe-100kb | 1428.697 |
 | bench-encoder-queue-20260225-181051.json | full-bucket-encode-bpe-100kb | 1465.191 |
 | bench-encoder-queue-20260225-190721.json | full-bucket-encode-bpe-100kb | 3548.556 |
@@ -181,6 +188,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encoder-queue-20260301-051218.json | full-bucket-encode-bpe-100kb | 117.965 |
 | bench-encoder-queue-20260301-074152.json | full-bucket-encode-bpe-100kb | 136.144 |
 | bench-encoder-queue-20260301-094243.json | full-bucket-encode-bpe-100kb | 126.700 |
+| bench-encoder-queue-20260301-103639.json | full-bucket-encode-bpe-100kb | 115.059 |
 | bench-encoder-queue-20260225-180932.json | hybrid-count-bpe-100kb | 1172.284 |
 | bench-encoder-queue-20260225-181051.json | hybrid-count-bpe-100kb | 1110.443 |
 | bench-encoder-queue-20260225-190721.json | hybrid-count-bpe-100kb | 1066.564 |
@@ -199,6 +207,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encoder-queue-20260301-051218.json | hybrid-count-bpe-100kb | 126.962 |
 | bench-encoder-queue-20260301-074152.json | hybrid-count-bpe-100kb | 136.841 |
 | bench-encoder-queue-20260301-094243.json | hybrid-count-bpe-100kb | 202.878 |
+| bench-encoder-queue-20260301-103639.json | hybrid-count-bpe-100kb | 120.087 |
 | bench-encoder-queue-20260225-180932.json | hybrid-encode-bpe-100kb | 1453.383 |
 | bench-encoder-queue-20260225-181051.json | hybrid-encode-bpe-100kb | 1478.102 |
 | bench-encoder-queue-20260225-190721.json | hybrid-encode-bpe-100kb | 1364.336 |
@@ -217,76 +226,106 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encoder-queue-20260301-051218.json | hybrid-encode-bpe-100kb | 128.534 |
 | bench-encoder-queue-20260301-074152.json | hybrid-encode-bpe-100kb | 159.240 |
 | bench-encoder-queue-20260301-094243.json | hybrid-encode-bpe-100kb | 132.308 |
+| bench-encoder-queue-20260301-103639.json | hybrid-encode-bpe-100kb | 127.593 |
 | bench-chat-helpers-20260227-173643.json | js-chat-count-gpt-tokenizer | 171.241 |
 | bench-chat-helpers-20260227-174446.json | js-chat-count-gpt-tokenizer | 156.411 |
 | bench-chat-helpers-20260301-051110.json | js-chat-count-gpt-tokenizer | 167.858 |
 | bench-chat-helpers-20260301-074039.json | js-chat-count-gpt-tokenizer | 201.806 |
 | bench-chat-helpers-20260301-094019.json | js-chat-count-gpt-tokenizer | 253.484 |
 | bench-chat-helpers-20260301-094228.json | js-chat-count-gpt-tokenizer | 223.213 |
+| bench-chat-helpers-20260301-103624.json | js-chat-count-gpt-tokenizer | 180.904 |
 | bench-chat-helpers-20260227-173643.json | js-chat-encode-gpt-tokenizer | 160.643 |
 | bench-chat-helpers-20260227-174446.json | js-chat-encode-gpt-tokenizer | 160.498 |
 | bench-chat-helpers-20260301-051110.json | js-chat-encode-gpt-tokenizer | 180.195 |
 | bench-chat-helpers-20260301-074039.json | js-chat-encode-gpt-tokenizer | 213.594 |
 | bench-chat-helpers-20260301-094019.json | js-chat-encode-gpt-tokenizer | 182.493 |
 | bench-chat-helpers-20260301-094228.json | js-chat-encode-gpt-tokenizer | 181.603 |
+| bench-chat-helpers-20260301-103624.json | js-chat-encode-gpt-tokenizer | 181.507 |
 | bench-chat-helpers-20260227-173643.json | js-chat-limit-gpt-tokenizer | 162.026 |
 | bench-chat-helpers-20260227-174446.json | js-chat-limit-gpt-tokenizer | 153.834 |
 | bench-chat-helpers-20260301-051110.json | js-chat-limit-gpt-tokenizer | 168.527 |
 | bench-chat-helpers-20260301-074039.json | js-chat-limit-gpt-tokenizer | 210.115 |
 | bench-chat-helpers-20260301-094019.json | js-chat-limit-gpt-tokenizer | 213.642 |
 | bench-chat-helpers-20260301-094228.json | js-chat-limit-gpt-tokenizer | 187.987 |
+| bench-chat-helpers-20260301-103624.json | js-chat-limit-gpt-tokenizer | 182.877 |
 | bench-competitors-python-count-20260227-170704.json | js-count-100kb-gpt-tokenizer | 175.865 |
 | bench-competitors-python-count-20260301-051010.json | js-count-100kb-gpt-tokenizer | 179.929 |
 | bench-competitors-python-count-20260301-073930.json | js-count-100kb-gpt-tokenizer | 202.152 |
 | bench-competitors-python-count-20260301-093950.json | js-count-100kb-gpt-tokenizer | 194.214 |
 | bench-competitors-python-count-20260301-094219.json | js-count-100kb-gpt-tokenizer | 178.580 |
+| bench-competitors-python-count-20260301-103047.json | js-count-100kb-gpt-tokenizer | 170.485 |
+| bench-competitors-python-count-20260301-103236.json | js-count-100kb-gpt-tokenizer | 189.883 |
+| bench-competitors-python-count-20260301-103615.json | js-count-100kb-gpt-tokenizer | 237.247 |
 | bench-competitors-python-count-20260227-170704.json | js-count-1kb-gpt-tokenizer | 169.199 |
 | bench-competitors-python-count-20260301-051010.json | js-count-1kb-gpt-tokenizer | 175.498 |
 | bench-competitors-python-count-20260301-073930.json | js-count-1kb-gpt-tokenizer | 194.276 |
 | bench-competitors-python-count-20260301-093950.json | js-count-1kb-gpt-tokenizer | 182.605 |
 | bench-competitors-python-count-20260301-094219.json | js-count-1kb-gpt-tokenizer | 168.259 |
+| bench-competitors-python-count-20260301-103047.json | js-count-1kb-gpt-tokenizer | 175.015 |
+| bench-competitors-python-count-20260301-103236.json | js-count-1kb-gpt-tokenizer | 189.675 |
+| bench-competitors-python-count-20260301-103615.json | js-count-1kb-gpt-tokenizer | 197.712 |
 | bench-competitors-python-count-20260227-170704.json | js-count-1mb-gpt-tokenizer | 182.570 |
 | bench-competitors-python-count-20260301-051010.json | js-count-1mb-gpt-tokenizer | 186.501 |
 | bench-competitors-python-count-20260301-073930.json | js-count-1mb-gpt-tokenizer | 229.285 |
+| bench-competitors-python-count-20260301-103236.json | js-count-1mb-gpt-tokenizer | 187.916 |
 | bench-competitors-python-decode-20260227-170602.json | js-decode-1000-tok-gpt-tokenizer | 175.433 |
 | bench-competitors-python-decode-20260301-050907.json | js-decode-1000-tok-gpt-tokenizer | 222.056 |
 | bench-competitors-python-decode-20260301-073824.json | js-decode-1000-tok-gpt-tokenizer | 200.848 |
 | bench-competitors-python-decode-20260301-093920.json | js-decode-1000-tok-gpt-tokenizer | 179.084 |
 | bench-competitors-python-decode-20260301-094211.json | js-decode-1000-tok-gpt-tokenizer | 182.040 |
+| bench-competitors-python-decode-20260301-103038.json | js-decode-1000-tok-gpt-tokenizer | 263.886 |
+| bench-competitors-python-decode-20260301-103224.json | js-decode-1000-tok-gpt-tokenizer | 178.136 |
+| bench-competitors-python-decode-20260301-103607.json | js-decode-1000-tok-gpt-tokenizer | 202.461 |
 | bench-competitors-python-decode-20260227-170602.json | js-decode-10000-tok-gpt-tokenizer | 173.851 |
 | bench-competitors-python-decode-20260301-050907.json | js-decode-10000-tok-gpt-tokenizer | 189.350 |
 | bench-competitors-python-decode-20260301-073824.json | js-decode-10000-tok-gpt-tokenizer | 202.293 |
 | bench-competitors-python-decode-20260301-093920.json | js-decode-10000-tok-gpt-tokenizer | 208.758 |
 | bench-competitors-python-decode-20260301-094211.json | js-decode-10000-tok-gpt-tokenizer | 176.997 |
+| bench-competitors-python-decode-20260301-103038.json | js-decode-10000-tok-gpt-tokenizer | 171.408 |
+| bench-competitors-python-decode-20260301-103224.json | js-decode-10000-tok-gpt-tokenizer | 205.975 |
+| bench-competitors-python-decode-20260301-103607.json | js-decode-10000-tok-gpt-tokenizer | 197.078 |
 | bench-competitors-python-decode-20260227-170602.json | js-decode-128000-tok-gpt-tokenizer | 179.084 |
 | bench-competitors-python-decode-20260301-050907.json | js-decode-128000-tok-gpt-tokenizer | 197.252 |
 | bench-competitors-python-decode-20260301-073824.json | js-decode-128000-tok-gpt-tokenizer | 242.810 |
+| bench-competitors-python-decode-20260301-103224.json | js-decode-128000-tok-gpt-tokenizer | 182.752 |
 | bench-competitors-python-encode-20260227-170426.json | js-encode-100kb-gpt-tokenizer | 170.352 |
 | bench-competitors-python-encode-20260301-050552.json | js-encode-100kb-gpt-tokenizer | 168.184 |
 | bench-competitors-python-encode-20260301-073502.json | js-encode-100kb-gpt-tokenizer | 174.994 |
 | bench-competitors-python-encode-20260301-093848.json | js-encode-100kb-gpt-tokenizer | 180.255 |
 | bench-competitors-python-encode-20260301-094159.json | js-encode-100kb-gpt-tokenizer | 190.240 |
+| bench-competitors-python-encode-20260301-103026.json | js-encode-100kb-gpt-tokenizer | 184.828 |
+| bench-competitors-python-encode-20260301-103137.json | js-encode-100kb-gpt-tokenizer | 179.221 |
+| bench-competitors-python-encode-20260301-103555.json | js-encode-100kb-gpt-tokenizer | 181.684 |
 | bench-competitors-python-encode-20260227-170426.json | js-encode-10kb-gpt-tokenizer | 169.088 |
 | bench-competitors-python-encode-20260301-050552.json | js-encode-10kb-gpt-tokenizer | 170.313 |
 | bench-competitors-python-encode-20260301-073502.json | js-encode-10kb-gpt-tokenizer | 174.732 |
+| bench-competitors-python-encode-20260301-103137.json | js-encode-10kb-gpt-tokenizer | 222.289 |
 | bench-competitors-python-encode-20260227-170426.json | js-encode-1kb-gpt-tokenizer | 164.772 |
 | bench-competitors-python-encode-20260301-050552.json | js-encode-1kb-gpt-tokenizer | 165.546 |
 | bench-competitors-python-encode-20260301-073502.json | js-encode-1kb-gpt-tokenizer | 182.824 |
 | bench-competitors-python-encode-20260301-093848.json | js-encode-1kb-gpt-tokenizer | 177.363 |
 | bench-competitors-python-encode-20260301-094159.json | js-encode-1kb-gpt-tokenizer | 227.749 |
+| bench-competitors-python-encode-20260301-103026.json | js-encode-1kb-gpt-tokenizer | 222.682 |
+| bench-competitors-python-encode-20260301-103137.json | js-encode-1kb-gpt-tokenizer | 208.783 |
+| bench-competitors-python-encode-20260301-103555.json | js-encode-1kb-gpt-tokenizer | 182.096 |
 | bench-competitors-python-encode-20260227-170426.json | js-encode-1mb-gpt-tokenizer | 185.735 |
 | bench-competitors-python-encode-20260301-050552.json | js-encode-1mb-gpt-tokenizer | 190.267 |
 | bench-competitors-python-encode-20260301-073502.json | js-encode-1mb-gpt-tokenizer | 194.867 |
+| bench-competitors-python-encode-20260301-103137.json | js-encode-1mb-gpt-tokenizer | 195.848 |
 | bench-startup-cold-20260227-170257.json | js-startup-gpt-tokenizer | 158.414 |
 | bench-startup-cold-20260301-050342.json | js-startup-gpt-tokenizer | 163.000 |
 | bench-startup-cold-20260301-073243.json | js-startup-gpt-tokenizer | 188.482 |
 | bench-startup-cold-20260301-093729.json | js-startup-gpt-tokenizer | 170.386 |
 | bench-startup-cold-20260301-094122.json | js-startup-gpt-tokenizer | 161.104 |
+| bench-startup-cold-20260301-103000.json | js-startup-gpt-tokenizer | 187.961 |
+| bench-startup-cold-20260301-103515.json | js-startup-gpt-tokenizer | 188.598 |
 | bench-startup-warm-20260227-170333.json | js-startup-gpt-tokenizer | 159.189 |
 | bench-startup-warm-20260301-050419.json | js-startup-gpt-tokenizer | 158.679 |
 | bench-startup-warm-20260301-073325.json | js-startup-gpt-tokenizer | 166.523 |
 | bench-startup-warm-20260301-093745.json | js-startup-gpt-tokenizer | 166.789 |
 | bench-startup-warm-20260301-094133.json | js-startup-gpt-tokenizer | 182.035 |
+| bench-startup-warm-20260301-103011.json | js-startup-gpt-tokenizer | 177.467 |
+| bench-startup-warm-20260301-103527.json | js-startup-gpt-tokenizer | 203.852 |
 | bench-wasm-raw-1772156938393.json | js-startup-textencoder-hello | 15.074 |
 | bench-wasm-raw-1772157220049.json | js-startup-textencoder-hello | 12.788 |
 | bench-wasm-raw-1772157318751.json | js-startup-textencoder-hello | 13.013 |
@@ -302,6 +341,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | js-startup-textencoder-hello | 13.411 |
 | bench-wasm-raw-1772351023080.json | js-startup-textencoder-hello | 15.572 |
 | bench-wasm-raw-1772358193868.json | js-startup-textencoder-hello | 16.135 |
+| bench-wasm-raw-1772361428059.json | js-startup-textencoder-hello | 11.135 |
 | bench-wasm-20260226-203751.json | js-textencoder-u32-100kb | 19.657 |
 | bench-wasm-20260226-204138.json | js-textencoder-u32-100kb | 17.058 |
 | bench-wasm-raw-1772156938393.json | js-textencoder-u32-100kb | 19.581 |
@@ -319,6 +359,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | js-textencoder-u32-100kb | 19.245 |
 | bench-wasm-raw-1772351023080.json | js-textencoder-u32-100kb | 20.321 |
 | bench-wasm-raw-1772358193868.json | js-textencoder-u32-100kb | 128.736 |
+| bench-wasm-raw-1772361428059.json | js-textencoder-u32-100kb | 16.954 |
 | bench-wasm-raw-1772156938393.json | js-textencoder-u32-1mb | 33.772 |
 | bench-wasm-raw-1772157220049.json | js-textencoder-u32-1mb | 34.634 |
 | bench-wasm-raw-1772157318751.json | js-textencoder-u32-1mb | 33.361 |
@@ -334,6 +375,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | js-textencoder-u32-1mb | 35.166 |
 | bench-wasm-raw-1772351023080.json | js-textencoder-u32-1mb | 36.121 |
 | bench-wasm-raw-1772358193868.json | js-textencoder-u32-1mb | 115.237 |
+| bench-wasm-raw-1772361428059.json | js-textencoder-u32-1mb | 34.629 |
 | bench-wasm-raw-1772277113058.json | node-wasm-encode-bpe-o200k-100kb | 161.648 |
 | bench-wasm-raw-1772280264811.json | node-wasm-encode-bpe-o200k-100kb | 157.977 |
 | bench-wasm-raw-1772280409963.json | node-wasm-encode-bpe-o200k-100kb | 157.920 |
@@ -342,6 +384,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-encode-bpe-o200k-100kb | 170.550 |
 | bench-wasm-raw-1772351023080.json | node-wasm-encode-bpe-o200k-100kb | 175.163 |
 | bench-wasm-raw-1772358193868.json | node-wasm-encode-bpe-o200k-100kb | 182.903 |
+| bench-wasm-raw-1772361428059.json | node-wasm-encode-bpe-o200k-100kb | 186.681 |
 | bench-wasm-raw-1772277113058.json | node-wasm-encode-bpe-o200k-1mb | 463.050 |
 | bench-wasm-raw-1772280264811.json | node-wasm-encode-bpe-o200k-1mb | 417.089 |
 | bench-wasm-raw-1772280409963.json | node-wasm-encode-bpe-o200k-1mb | 411.613 |
@@ -350,6 +393,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-encode-bpe-o200k-1mb | 483.339 |
 | bench-wasm-raw-1772351023080.json | node-wasm-encode-bpe-o200k-1mb | 475.038 |
 | bench-wasm-raw-1772358193868.json | node-wasm-encode-bpe-o200k-1mb | 465.886 |
+| bench-wasm-raw-1772361428059.json | node-wasm-encode-bpe-o200k-1mb | 509.958 |
 | bench-wasm-raw-1772277113058.json | node-wasm-encode-utf8-bytes-100kb | 79.816 |
 | bench-wasm-raw-1772280264811.json | node-wasm-encode-utf8-bytes-100kb | 72.281 |
 | bench-wasm-raw-1772280409963.json | node-wasm-encode-utf8-bytes-100kb | 72.763 |
@@ -358,6 +402,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-encode-utf8-bytes-100kb | 83.872 |
 | bench-wasm-raw-1772351023080.json | node-wasm-encode-utf8-bytes-100kb | 79.869 |
 | bench-wasm-raw-1772358193868.json | node-wasm-encode-utf8-bytes-100kb | 93.139 |
+| bench-wasm-raw-1772361428059.json | node-wasm-encode-utf8-bytes-100kb | 78.933 |
 | bench-wasm-raw-1772277113058.json | node-wasm-encode-utf8-bytes-1mb | 76.454 |
 | bench-wasm-raw-1772280264811.json | node-wasm-encode-utf8-bytes-1mb | 72.023 |
 | bench-wasm-raw-1772280409963.json | node-wasm-encode-utf8-bytes-1mb | 74.267 |
@@ -366,6 +411,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-encode-utf8-bytes-1mb | 81.822 |
 | bench-wasm-raw-1772351023080.json | node-wasm-encode-utf8-bytes-1mb | 83.426 |
 | bench-wasm-raw-1772358193868.json | node-wasm-encode-utf8-bytes-1mb | 100.272 |
+| bench-wasm-raw-1772361428059.json | node-wasm-encode-utf8-bytes-1mb | 84.435 |
 | bench-wasm-raw-1772277113058.json | node-wasm-startup-first-bpe-encode-hello | 145.605 |
 | bench-wasm-raw-1772280264811.json | node-wasm-startup-first-bpe-encode-hello | 144.863 |
 | bench-wasm-raw-1772280409963.json | node-wasm-startup-first-bpe-encode-hello | 140.415 |
@@ -374,6 +420,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-startup-first-bpe-encode-hello | 158.464 |
 | bench-wasm-raw-1772351023080.json | node-wasm-startup-first-bpe-encode-hello | 163.067 |
 | bench-wasm-raw-1772358193868.json | node-wasm-startup-first-bpe-encode-hello | 158.155 |
+| bench-wasm-raw-1772361428059.json | node-wasm-startup-first-bpe-encode-hello | 150.841 |
 | bench-wasm-raw-1772277113058.json | node-wasm-startup-first-encode-hello | 74.709 |
 | bench-wasm-raw-1772280264811.json | node-wasm-startup-first-encode-hello | 72.101 |
 | bench-wasm-raw-1772280409963.json | node-wasm-startup-first-encode-hello | 73.076 |
@@ -382,6 +429,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | node-wasm-startup-first-encode-hello | 82.494 |
 | bench-wasm-raw-1772351023080.json | node-wasm-startup-first-encode-hello | 81.200 |
 | bench-wasm-raw-1772358193868.json | node-wasm-startup-first-encode-hello | 97.970 |
+| bench-wasm-raw-1772361428059.json | node-wasm-startup-first-encode-hello | 83.099 |
 | bench-chat-helpers-20260227-173555.json | python-chat-count-turbotoken | 78.157 |
 | bench-chat-helpers-20260227-173643.json | python-chat-count-turbotoken | 72.339 |
 | bench-chat-helpers-20260227-174446.json | python-chat-count-turbotoken | 70.826 |
@@ -389,6 +437,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-chat-helpers-20260301-074039.json | python-chat-count-turbotoken | 83.464 |
 | bench-chat-helpers-20260301-094019.json | python-chat-count-turbotoken | 79.037 |
 | bench-chat-helpers-20260301-094228.json | python-chat-count-turbotoken | 109.484 |
+| bench-chat-helpers-20260301-103624.json | python-chat-count-turbotoken | 94.244 |
 | bench-chat-helpers-20260227-173555.json | python-chat-encode-turbotoken | 74.628 |
 | bench-chat-helpers-20260227-173643.json | python-chat-encode-turbotoken | 73.125 |
 | bench-chat-helpers-20260227-174446.json | python-chat-encode-turbotoken | 72.815 |
@@ -396,6 +445,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-chat-helpers-20260301-074039.json | python-chat-encode-turbotoken | 89.999 |
 | bench-chat-helpers-20260301-094019.json | python-chat-encode-turbotoken | 75.370 |
 | bench-chat-helpers-20260301-094228.json | python-chat-encode-turbotoken | 92.874 |
+| bench-chat-helpers-20260301-103624.json | python-chat-encode-turbotoken | 74.529 |
 | bench-chat-helpers-20260227-173555.json | python-chat-limit-turbotoken | 104.662 |
 | bench-chat-helpers-20260227-173643.json | python-chat-limit-turbotoken | 100.430 |
 | bench-chat-helpers-20260227-174446.json | python-chat-limit-turbotoken | 101.892 |
@@ -403,6 +453,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-chat-helpers-20260301-074039.json | python-chat-limit-turbotoken | 104.784 |
 | bench-chat-helpers-20260301-094019.json | python-chat-limit-turbotoken | 107.189 |
 | bench-chat-helpers-20260301-094228.json | python-chat-limit-turbotoken | 125.087 |
+| bench-chat-helpers-20260301-103624.json | python-chat-limit-turbotoken | 123.606 |
 | bench-competitors-python-count-20260225-190216.json | python-count-100kb-rs-bpe | 67.589 |
 | bench-competitors-python-count-20260226-002235.json | python-count-100kb-rs-bpe | 70.112 |
 | bench-competitors-python-count-20260226-005002.json | python-count-100kb-rs-bpe | 72.393 |
@@ -452,6 +503,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-100kb-rs-bpe | 84.532 |
 | bench-competitors-python-count-20260301-093950.json | python-count-100kb-rs-bpe | 83.765 |
 | bench-competitors-python-count-20260301-094219.json | python-count-100kb-rs-bpe | 74.825 |
+| bench-competitors-python-count-20260301-103047.json | python-count-100kb-rs-bpe | 79.361 |
+| bench-competitors-python-count-20260301-103236.json | python-count-100kb-rs-bpe | 78.208 |
+| bench-competitors-python-count-20260301-103615.json | python-count-100kb-rs-bpe | 99.555 |
 | bench-competitors-python-count-20260225-190216.json | python-count-100kb-tiktoken-via-len-encode | 188.339 |
 | bench-competitors-python-count-20260225-190512.json | python-count-100kb-tiktoken-via-len-encode | 198.688 |
 | bench-competitors-python-count-20260225-215051.json | python-count-100kb-tiktoken-via-len-encode | 204.920 |
@@ -505,6 +559,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-100kb-tiktoken-via-len-encode | 255.681 |
 | bench-competitors-python-count-20260301-093950.json | python-count-100kb-tiktoken-via-len-encode | 236.393 |
 | bench-competitors-python-count-20260301-094219.json | python-count-100kb-tiktoken-via-len-encode | 214.873 |
+| bench-competitors-python-count-20260301-103047.json | python-count-100kb-tiktoken-via-len-encode | 219.940 |
+| bench-competitors-python-count-20260301-103236.json | python-count-100kb-tiktoken-via-len-encode | 238.818 |
+| bench-competitors-python-count-20260301-103615.json | python-count-100kb-tiktoken-via-len-encode | 257.193 |
 | bench-competitors-python-count-20260225-215051.json | python-count-100kb-token-dagger-via-len-encode | 438.888 |
 | bench-competitors-python-count-20260225-215754.json | python-count-100kb-token-dagger-via-len-encode | 435.966 |
 | bench-competitors-python-count-20260226-000936.json | python-count-100kb-token-dagger-via-len-encode | 459.539 |
@@ -556,6 +613,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-100kb-token-dagger-via-len-encode | 565.852 |
 | bench-competitors-python-count-20260301-093950.json | python-count-100kb-token-dagger-via-len-encode | 541.658 |
 | bench-competitors-python-count-20260301-094219.json | python-count-100kb-token-dagger-via-len-encode | 607.863 |
+| bench-competitors-python-count-20260301-103047.json | python-count-100kb-token-dagger-via-len-encode | 570.903 |
+| bench-competitors-python-count-20260301-103236.json | python-count-100kb-token-dagger-via-len-encode | 530.152 |
+| bench-competitors-python-count-20260301-103615.json | python-count-100kb-token-dagger-via-len-encode | 566.879 |
 | bench-competitors-python-count-20260225-190216.json | python-count-100kb-turbotoken | 148.838 |
 | bench-competitors-python-count-20260225-190512.json | python-count-100kb-turbotoken | 159.883 |
 | bench-competitors-python-count-20260225-215051.json | python-count-100kb-turbotoken | 158.373 |
@@ -609,6 +669,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-100kb-turbotoken | 49.023 |
 | bench-competitors-python-count-20260301-093950.json | python-count-100kb-turbotoken | 44.928 |
 | bench-competitors-python-count-20260301-094219.json | python-count-100kb-turbotoken | 51.289 |
+| bench-competitors-python-count-20260301-103047.json | python-count-100kb-turbotoken | 55.429 |
+| bench-competitors-python-count-20260301-103236.json | python-count-100kb-turbotoken | 47.121 |
+| bench-competitors-python-count-20260301-103615.json | python-count-100kb-turbotoken | 50.876 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1kb-rs-bpe | 67.416 |
 | bench-competitors-python-count-20260226-002235.json | python-count-1kb-rs-bpe | 66.801 |
 | bench-competitors-python-count-20260226-005002.json | python-count-1kb-rs-bpe | 71.521 |
@@ -658,6 +721,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-1kb-rs-bpe | 84.835 |
 | bench-competitors-python-count-20260301-093950.json | python-count-1kb-rs-bpe | 79.109 |
 | bench-competitors-python-count-20260301-094219.json | python-count-1kb-rs-bpe | 72.797 |
+| bench-competitors-python-count-20260301-103047.json | python-count-1kb-rs-bpe | 69.255 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1kb-rs-bpe | 62.334 |
+| bench-competitors-python-count-20260301-103615.json | python-count-1kb-rs-bpe | 77.343 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1kb-tiktoken-via-len-encode | 183.428 |
 | bench-competitors-python-count-20260225-190512.json | python-count-1kb-tiktoken-via-len-encode | 188.484 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1kb-tiktoken-via-len-encode | 196.244 |
@@ -711,6 +777,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-1kb-tiktoken-via-len-encode | 275.048 |
 | bench-competitors-python-count-20260301-093950.json | python-count-1kb-tiktoken-via-len-encode | 234.801 |
 | bench-competitors-python-count-20260301-094219.json | python-count-1kb-tiktoken-via-len-encode | 225.401 |
+| bench-competitors-python-count-20260301-103047.json | python-count-1kb-tiktoken-via-len-encode | 238.884 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1kb-tiktoken-via-len-encode | 229.257 |
+| bench-competitors-python-count-20260301-103615.json | python-count-1kb-tiktoken-via-len-encode | 222.190 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1kb-token-dagger-via-len-encode | 442.782 |
 | bench-competitors-python-count-20260225-215754.json | python-count-1kb-token-dagger-via-len-encode | 437.621 |
 | bench-competitors-python-count-20260226-000936.json | python-count-1kb-token-dagger-via-len-encode | 455.721 |
@@ -762,6 +831,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-1kb-token-dagger-via-len-encode | 599.977 |
 | bench-competitors-python-count-20260301-093950.json | python-count-1kb-token-dagger-via-len-encode | 537.267 |
 | bench-competitors-python-count-20260301-094219.json | python-count-1kb-token-dagger-via-len-encode | 512.228 |
+| bench-competitors-python-count-20260301-103047.json | python-count-1kb-token-dagger-via-len-encode | 539.578 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1kb-token-dagger-via-len-encode | 511.751 |
+| bench-competitors-python-count-20260301-103615.json | python-count-1kb-token-dagger-via-len-encode | 515.853 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1kb-turbotoken | 139.786 |
 | bench-competitors-python-count-20260225-190512.json | python-count-1kb-turbotoken | 156.186 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1kb-turbotoken | 150.210 |
@@ -815,6 +887,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260301-073930.json | python-count-1kb-turbotoken | 78.550 |
 | bench-competitors-python-count-20260301-093950.json | python-count-1kb-turbotoken | 73.019 |
 | bench-competitors-python-count-20260301-094219.json | python-count-1kb-turbotoken | 58.169 |
+| bench-competitors-python-count-20260301-103047.json | python-count-1kb-turbotoken | 56.654 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1kb-turbotoken | 68.042 |
+| bench-competitors-python-count-20260301-103615.json | python-count-1kb-turbotoken | 69.929 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1mb-rs-bpe | 80.982 |
 | bench-competitors-python-count-20260226-002235.json | python-count-1mb-rs-bpe | 87.416 |
 | bench-competitors-python-count-20260226-005002.json | python-count-1mb-rs-bpe | 84.243 |
@@ -862,6 +937,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260227-170704.json | python-count-1mb-rs-bpe | 92.144 |
 | bench-competitors-python-count-20260301-051010.json | python-count-1mb-rs-bpe | 87.901 |
 | bench-competitors-python-count-20260301-073930.json | python-count-1mb-rs-bpe | 99.279 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1mb-rs-bpe | 95.410 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1mb-tiktoken-via-len-encode | 240.741 |
 | bench-competitors-python-count-20260225-190512.json | python-count-1mb-tiktoken-via-len-encode | 250.425 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1mb-tiktoken-via-len-encode | 260.469 |
@@ -913,6 +989,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260227-170704.json | python-count-1mb-tiktoken-via-len-encode | 290.899 |
 | bench-competitors-python-count-20260301-051010.json | python-count-1mb-tiktoken-via-len-encode | 279.286 |
 | bench-competitors-python-count-20260301-073930.json | python-count-1mb-tiktoken-via-len-encode | 331.254 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1mb-tiktoken-via-len-encode | 283.338 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1mb-token-dagger-via-len-encode | 449.564 |
 | bench-competitors-python-count-20260225-215754.json | python-count-1mb-token-dagger-via-len-encode | 454.909 |
 | bench-competitors-python-count-20260226-000936.json | python-count-1mb-token-dagger-via-len-encode | 454.264 |
@@ -962,6 +1039,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260227-170704.json | python-count-1mb-token-dagger-via-len-encode | 513.486 |
 | bench-competitors-python-count-20260301-051010.json | python-count-1mb-token-dagger-via-len-encode | 557.769 |
 | bench-competitors-python-count-20260301-073930.json | python-count-1mb-token-dagger-via-len-encode | 577.715 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1mb-token-dagger-via-len-encode | 522.049 |
 | bench-competitors-python-count-20260225-190216.json | python-count-1mb-turbotoken | 206.726 |
 | bench-competitors-python-count-20260225-190512.json | python-count-1mb-turbotoken | 216.337 |
 | bench-competitors-python-count-20260225-215051.json | python-count-1mb-turbotoken | 214.658 |
@@ -1013,6 +1091,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-count-20260227-170704.json | python-count-1mb-turbotoken | 81.209 |
 | bench-competitors-python-count-20260301-051010.json | python-count-1mb-turbotoken | 71.826 |
 | bench-competitors-python-count-20260301-073930.json | python-count-1mb-turbotoken | 80.704 |
+| bench-competitors-python-count-20260301-103236.json | python-count-1mb-turbotoken | 71.573 |
+| bench-competitors-python-count-20260301-103615.json | python-count-1mb-turbotoken | 83.785 |
 | bench-gpu-20260225-134921.json | python-cpu-count-nonzero-batch-4096x1kb | 239.350 |
 | bench-gpu-20260225-134947.json | python-cpu-count-nonzero-batch-4096x1kb | 777.771 |
 | bench-gpu-20260225-135221.json | python-cpu-count-nonzero-batch-4096x1kb | 840.033 |
@@ -1065,6 +1145,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-gpu-20260301-051533.json | python-cpu-count-nonzero-batch-4096x1kb | 768.922 |
 | bench-gpu-20260301-074504.json | python-cpu-count-nonzero-batch-4096x1kb | 753.417 |
 | bench-gpu-20260301-094337.json | python-cpu-count-nonzero-batch-4096x1kb | 217.834 |
+| bench-gpu-20260301-103728.json | python-cpu-count-nonzero-batch-4096x1kb | 233.782 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-1000-tok-rs-bpe | 75.381 |
 | bench-competitors-python-decode-20260226-002145.json | python-decode-1000-tok-rs-bpe | 76.229 |
 | bench-competitors-python-decode-20260226-004911.json | python-decode-1000-tok-rs-bpe | 79.880 |
@@ -1114,6 +1195,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-1000-tok-rs-bpe | 80.326 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-1000-tok-rs-bpe | 89.344 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-1000-tok-rs-bpe | 88.458 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-1000-tok-rs-bpe | 87.338 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-1000-tok-rs-bpe | 88.073 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-1000-tok-rs-bpe | 79.982 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-1000-tok-tiktoken | 182.543 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-1000-tok-tiktoken | 224.705 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-1000-tok-tiktoken | 197.571 |
@@ -1167,6 +1251,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-1000-tok-tiktoken | 238.049 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-1000-tok-tiktoken | 232.049 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-1000-tok-tiktoken | 230.085 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-1000-tok-tiktoken | 272.792 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-1000-tok-tiktoken | 258.721 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-1000-tok-tiktoken | 227.709 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-1000-tok-token-dagger | 438.856 |
 | bench-competitors-python-decode-20260225-215714.json | python-decode-1000-tok-token-dagger | 445.397 |
 | bench-competitors-python-decode-20260226-000856.json | python-decode-1000-tok-token-dagger | 459.663 |
@@ -1218,6 +1305,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-1000-tok-token-dagger | 532.899 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-1000-tok-token-dagger | 556.520 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-1000-tok-token-dagger | 547.348 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-1000-tok-token-dagger | 780.457 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-1000-tok-token-dagger | 550.124 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-1000-tok-token-dagger | 570.177 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-1000-tok-turbotoken | 183.378 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-1000-tok-turbotoken | 196.071 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-1000-tok-turbotoken | 198.603 |
@@ -1271,6 +1361,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-1000-tok-turbotoken | 65.325 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-1000-tok-turbotoken | 70.234 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-1000-tok-turbotoken | 62.003 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-1000-tok-turbotoken | 69.186 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-1000-tok-turbotoken | 61.485 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-1000-tok-turbotoken | 65.866 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-10000-tok-rs-bpe | 73.660 |
 | bench-competitors-python-decode-20260226-002145.json | python-decode-10000-tok-rs-bpe | 76.916 |
 | bench-competitors-python-decode-20260226-004911.json | python-decode-10000-tok-rs-bpe | 79.477 |
@@ -1320,6 +1413,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-10000-tok-rs-bpe | 81.103 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-10000-tok-rs-bpe | 84.481 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-10000-tok-rs-bpe | 86.220 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-10000-tok-rs-bpe | 93.665 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-10000-tok-rs-bpe | 90.243 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-10000-tok-rs-bpe | 88.016 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-10000-tok-tiktoken | 187.707 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-10000-tok-tiktoken | 230.253 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-10000-tok-tiktoken | 194.999 |
@@ -1373,6 +1469,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-10000-tok-tiktoken | 246.017 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-10000-tok-tiktoken | 235.299 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-10000-tok-tiktoken | 227.283 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-10000-tok-tiktoken | 276.949 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-10000-tok-tiktoken | 242.276 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-10000-tok-tiktoken | 245.382 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-10000-tok-token-dagger | 440.037 |
 | bench-competitors-python-decode-20260225-215714.json | python-decode-10000-tok-token-dagger | 439.643 |
 | bench-competitors-python-decode-20260226-000856.json | python-decode-10000-tok-token-dagger | 462.577 |
@@ -1424,6 +1523,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-10000-tok-token-dagger | 521.196 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-10000-tok-token-dagger | 533.264 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-10000-tok-token-dagger | 551.198 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-10000-tok-token-dagger | 528.299 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-10000-tok-token-dagger | 527.771 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-10000-tok-token-dagger | 636.189 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-10000-tok-turbotoken | 184.468 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-10000-tok-turbotoken | 194.022 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-10000-tok-turbotoken | 195.400 |
@@ -1477,6 +1579,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260301-073824.json | python-decode-10000-tok-turbotoken | 65.305 |
 | bench-competitors-python-decode-20260301-093920.json | python-decode-10000-tok-turbotoken | 69.559 |
 | bench-competitors-python-decode-20260301-094211.json | python-decode-10000-tok-turbotoken | 73.085 |
+| bench-competitors-python-decode-20260301-103038.json | python-decode-10000-tok-turbotoken | 85.585 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-10000-tok-turbotoken | 77.059 |
+| bench-competitors-python-decode-20260301-103607.json | python-decode-10000-tok-turbotoken | 87.008 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-128000-tok-rs-bpe | 76.893 |
 | bench-competitors-python-decode-20260226-002145.json | python-decode-128000-tok-rs-bpe | 78.860 |
 | bench-competitors-python-decode-20260226-004911.json | python-decode-128000-tok-rs-bpe | 79.699 |
@@ -1524,6 +1629,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260227-170602.json | python-decode-128000-tok-rs-bpe | 86.212 |
 | bench-competitors-python-decode-20260301-050907.json | python-decode-128000-tok-rs-bpe | 83.670 |
 | bench-competitors-python-decode-20260301-073824.json | python-decode-128000-tok-rs-bpe | 85.620 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-128000-tok-rs-bpe | 82.638 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-128000-tok-tiktoken | 186.475 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-128000-tok-tiktoken | 192.545 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-128000-tok-tiktoken | 200.898 |
@@ -1575,6 +1681,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260227-170602.json | python-decode-128000-tok-tiktoken | 223.639 |
 | bench-competitors-python-decode-20260301-050907.json | python-decode-128000-tok-tiktoken | 242.048 |
 | bench-competitors-python-decode-20260301-073824.json | python-decode-128000-tok-tiktoken | 240.465 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-128000-tok-tiktoken | 242.979 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-128000-tok-token-dagger | 450.268 |
 | bench-competitors-python-decode-20260225-215714.json | python-decode-128000-tok-token-dagger | 455.694 |
 | bench-competitors-python-decode-20260226-000856.json | python-decode-128000-tok-token-dagger | 467.461 |
@@ -1624,6 +1731,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260227-170602.json | python-decode-128000-tok-token-dagger | 513.586 |
 | bench-competitors-python-decode-20260301-050907.json | python-decode-128000-tok-token-dagger | 557.645 |
 | bench-competitors-python-decode-20260301-073824.json | python-decode-128000-tok-token-dagger | 643.372 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-128000-tok-token-dagger | 550.004 |
 | bench-competitors-python-decode-20260225-190145.json | python-decode-128000-tok-turbotoken | 189.598 |
 | bench-competitors-python-decode-20260225-190449.json | python-decode-128000-tok-turbotoken | 243.037 |
 | bench-competitors-python-decode-20260225-215012.json | python-decode-128000-tok-turbotoken | 207.363 |
@@ -1675,6 +1783,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-decode-20260227-170602.json | python-decode-128000-tok-turbotoken | 74.611 |
 | bench-competitors-python-decode-20260301-050907.json | python-decode-128000-tok-turbotoken | 76.647 |
 | bench-competitors-python-decode-20260301-073824.json | python-decode-128000-tok-turbotoken | 74.058 |
+| bench-competitors-python-decode-20260301-103224.json | python-decode-128000-tok-turbotoken | 83.959 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-100kb-rs-bpe | 69.952 |
 | bench-competitors-python-encode-20260226-002024.json | python-encode-100kb-rs-bpe | 71.430 |
 | bench-competitors-python-encode-20260226-004751.json | python-encode-100kb-rs-bpe | 71.853 |
@@ -1724,6 +1833,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-100kb-rs-bpe | 71.523 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-100kb-rs-bpe | 72.683 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-100kb-rs-bpe | 75.981 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-100kb-rs-bpe | 67.663 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-100kb-rs-bpe | 84.557 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-100kb-rs-bpe | 85.517 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-100kb-tiktoken | 189.091 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-100kb-tiktoken | 208.025 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-100kb-tiktoken | 202.323 |
@@ -1778,6 +1890,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-100kb-tiktoken | 234.968 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-100kb-tiktoken | 230.632 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-100kb-tiktoken | 228.773 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-100kb-tiktoken | 233.290 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-100kb-tiktoken | 242.094 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-100kb-tiktoken | 231.237 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-100kb-token-dagger | 440.772 |
 | bench-competitors-python-encode-20260225-215610.json | python-encode-100kb-token-dagger | 438.304 |
 | bench-competitors-python-encode-20260226-000748.json | python-encode-100kb-token-dagger | 456.587 |
@@ -1829,6 +1944,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-100kb-token-dagger | 525.345 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-100kb-token-dagger | 519.420 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-100kb-token-dagger | 557.704 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-100kb-token-dagger | 537.341 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-100kb-token-dagger | 524.536 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-100kb-token-dagger | 554.410 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-100kb-turbotoken | 141.882 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-100kb-turbotoken | 192.265 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-100kb-turbotoken | 235.465 |
@@ -1883,6 +2001,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-100kb-turbotoken | 43.152 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-100kb-turbotoken | 48.169 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-100kb-turbotoken | 59.521 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-100kb-turbotoken | 43.355 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-100kb-turbotoken | 51.969 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-100kb-turbotoken | 55.883 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-100kb-turbotoken-metal | 144.957 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-100kb-turbotoken-metal | 156.467 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-100kb-turbotoken-metal | 161.343 |
@@ -1937,6 +2058,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-100kb-turbotoken-metal | 877.303 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-100kb-turbotoken-metal | 976.924 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-100kb-turbotoken-metal | 1012.190 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-100kb-turbotoken-metal | 1005.783 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-100kb-turbotoken-metal | 1195.728 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-100kb-turbotoken-metal | 971.705 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-10kb-rs-bpe | 66.889 |
 | bench-competitors-python-encode-20260226-002024.json | python-encode-10kb-rs-bpe | 69.619 |
 | bench-competitors-python-encode-20260226-004751.json | python-encode-10kb-rs-bpe | 70.899 |
@@ -1985,6 +2109,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-10kb-rs-bpe | 71.772 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-10kb-rs-bpe | 71.010 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-10kb-rs-bpe | 69.360 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-10kb-rs-bpe | 75.142 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-10kb-tiktoken | 183.571 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-10kb-tiktoken | 200.094 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-10kb-tiktoken | 192.314 |
@@ -2037,6 +2162,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-10kb-tiktoken | 222.093 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-10kb-tiktoken | 214.739 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-10kb-tiktoken | 227.392 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-10kb-tiktoken | 249.756 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-10kb-token-dagger | 434.889 |
 | bench-competitors-python-encode-20260225-215610.json | python-encode-10kb-token-dagger | 424.066 |
 | bench-competitors-python-encode-20260226-000748.json | python-encode-10kb-token-dagger | 453.638 |
@@ -2087,6 +2213,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-10kb-token-dagger | 492.353 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-10kb-token-dagger | 505.579 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-10kb-token-dagger | 498.004 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-10kb-token-dagger | 597.239 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-10kb-turbotoken | 138.038 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-10kb-turbotoken | 215.377 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-10kb-turbotoken | 151.200 |
@@ -2139,6 +2266,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-10kb-turbotoken | 42.063 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-10kb-turbotoken | 40.817 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-10kb-turbotoken | 41.338 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-10kb-turbotoken | 50.119 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-10kb-turbotoken-metal | 138.146 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-10kb-turbotoken-metal | 206.236 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-10kb-turbotoken-metal | 151.578 |
@@ -2191,6 +2319,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-10kb-turbotoken-metal | 116.651 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-10kb-turbotoken-metal | 233.586 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-10kb-turbotoken-metal | 249.950 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-10kb-turbotoken-metal | 236.344 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1kb-rs-bpe | 66.316 |
 | bench-competitors-python-encode-20260226-002024.json | python-encode-1kb-rs-bpe | 68.013 |
 | bench-competitors-python-encode-20260226-004751.json | python-encode-1kb-rs-bpe | 68.724 |
@@ -2241,6 +2370,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1kb-rs-bpe | 70.993 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-1kb-rs-bpe | 85.542 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-1kb-rs-bpe | 90.306 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-1kb-rs-bpe | 124.008 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1kb-rs-bpe | 100.375 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1kb-rs-bpe | 114.018 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1kb-tiktoken | 183.693 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1kb-tiktoken | 236.986 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1kb-tiktoken | 193.173 |
@@ -2295,6 +2427,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1kb-tiktoken | 232.453 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-1kb-tiktoken | 233.719 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-1kb-tiktoken | 255.424 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-1kb-tiktoken | 323.940 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1kb-tiktoken | 236.542 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1kb-tiktoken | 246.701 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1kb-token-dagger | 429.739 |
 | bench-competitors-python-encode-20260225-215610.json | python-encode-1kb-token-dagger | 415.769 |
 | bench-competitors-python-encode-20260226-000748.json | python-encode-1kb-token-dagger | 455.204 |
@@ -2347,6 +2482,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1kb-token-dagger | 507.493 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-1kb-token-dagger | 542.003 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-1kb-token-dagger | 623.465 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-1kb-token-dagger | 633.791 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1kb-token-dagger | 622.178 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1kb-token-dagger | 536.170 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1kb-turbotoken | 141.496 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1kb-turbotoken | 169.260 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1kb-turbotoken | 153.186 |
@@ -2401,6 +2539,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1kb-turbotoken | 66.193 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-1kb-turbotoken | 70.079 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-1kb-turbotoken | 66.624 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-1kb-turbotoken | 85.907 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1kb-turbotoken | 75.859 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1kb-turbotoken | 63.839 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1kb-turbotoken-metal | 142.234 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1kb-turbotoken-metal | 152.845 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1kb-turbotoken-metal | 148.835 |
@@ -2455,6 +2596,9 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1kb-turbotoken-metal | 210.475 |
 | bench-competitors-python-encode-20260301-093848.json | python-encode-1kb-turbotoken-metal | 179.640 |
 | bench-competitors-python-encode-20260301-094159.json | python-encode-1kb-turbotoken-metal | 225.033 |
+| bench-competitors-python-encode-20260301-103026.json | python-encode-1kb-turbotoken-metal | 273.857 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1kb-turbotoken-metal | 175.968 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1kb-turbotoken-metal | 210.432 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1mb-rs-bpe | 85.716 |
 | bench-competitors-python-encode-20260226-002024.json | python-encode-1mb-rs-bpe | 88.296 |
 | bench-competitors-python-encode-20260226-004751.json | python-encode-1mb-rs-bpe | 90.250 |
@@ -2502,6 +2646,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-1mb-rs-bpe | 87.993 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-1mb-rs-bpe | 92.267 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1mb-rs-bpe | 88.974 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1mb-rs-bpe | 111.834 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1mb-tiktoken | 245.889 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1mb-tiktoken | 343.525 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1mb-tiktoken | 259.585 |
@@ -2553,6 +2698,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-1mb-tiktoken | 286.828 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-1mb-tiktoken | 284.716 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1mb-tiktoken | 287.389 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1mb-tiktoken | 298.432 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1mb-token-dagger | 453.889 |
 | bench-competitors-python-encode-20260225-215610.json | python-encode-1mb-token-dagger | 451.732 |
 | bench-competitors-python-encode-20260226-000748.json | python-encode-1mb-token-dagger | 504.773 |
@@ -2602,6 +2748,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-1mb-token-dagger | 506.429 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-1mb-token-dagger | 510.621 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1mb-token-dagger | 537.107 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1mb-token-dagger | 561.645 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1mb-turbotoken | 206.451 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1mb-turbotoken | 223.368 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1mb-turbotoken | 231.089 |
@@ -2653,6 +2800,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-1mb-turbotoken | 76.589 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-1mb-turbotoken | 77.299 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1mb-turbotoken | 74.520 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1mb-turbotoken | 117.468 |
+| bench-competitors-python-encode-20260301-103555.json | python-encode-1mb-turbotoken | 87.523 |
 | bench-competitors-python-encode-20260225-190050.json | python-encode-1mb-turbotoken-metal | 209.645 |
 | bench-competitors-python-encode-20260225-190404.json | python-encode-1mb-turbotoken-metal | 288.458 |
 | bench-competitors-python-encode-20260225-214905.json | python-encode-1mb-turbotoken-metal | 224.817 |
@@ -2704,6 +2853,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-competitors-python-encode-20260227-170426.json | python-encode-1mb-turbotoken-metal | 177.724 |
 | bench-competitors-python-encode-20260301-050552.json | python-encode-1mb-turbotoken-metal | 7171.112 |
 | bench-competitors-python-encode-20260301-073502.json | python-encode-1mb-turbotoken-metal | 7652.679 |
+| bench-competitors-python-encode-20260301-103137.json | python-encode-1mb-turbotoken-metal | 8837.115 |
 | bench-startup-20260224-134228.json | python-import-and-first-encode | 73.811 |
 | bench-startup-20260224-134324.json | python-import-and-first-encode | 67.519 |
 | bench-startup-20260224-145529.json | python-import-and-first-encode | 142.120 |
@@ -2741,6 +2891,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-cold-20260301-073243.json | python-startup-rs-bpe | 72.178 |
 | bench-startup-cold-20260301-093729.json | python-startup-rs-bpe | 71.747 |
 | bench-startup-cold-20260301-094122.json | python-startup-rs-bpe | 76.560 |
+| bench-startup-cold-20260301-103000.json | python-startup-rs-bpe | 90.961 |
+| bench-startup-cold-20260301-103515.json | python-startup-rs-bpe | 77.207 |
 | bench-startup-warm-20260226-075434.json | python-startup-rs-bpe | 67.085 |
 | bench-startup-warm-20260226-103547.json | python-startup-rs-bpe | 64.316 |
 | bench-startup-warm-20260226-104618.json | python-startup-rs-bpe | 62.904 |
@@ -2759,6 +2911,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-warm-20260301-073325.json | python-startup-rs-bpe | 71.011 |
 | bench-startup-warm-20260301-093745.json | python-startup-rs-bpe | 70.105 |
 | bench-startup-warm-20260301-094133.json | python-startup-rs-bpe | 66.467 |
+| bench-startup-warm-20260301-103011.json | python-startup-rs-bpe | 67.603 |
+| bench-startup-warm-20260301-103527.json | python-startup-rs-bpe | 68.918 |
 | bench-startup-cold-20260226-075404.json | python-startup-tiktoken | 203.751 |
 | bench-startup-cold-20260226-103516.json | python-startup-tiktoken | 198.487 |
 | bench-startup-cold-20260226-104547.json | python-startup-tiktoken | 206.094 |
@@ -2778,6 +2932,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-cold-20260301-073243.json | python-startup-tiktoken | 241.315 |
 | bench-startup-cold-20260301-093729.json | python-startup-tiktoken | 225.037 |
 | bench-startup-cold-20260301-094122.json | python-startup-tiktoken | 216.715 |
+| bench-startup-cold-20260301-103000.json | python-startup-tiktoken | 234.366 |
+| bench-startup-cold-20260301-103515.json | python-startup-tiktoken | 248.793 |
 | bench-startup-warm-20260226-075434.json | python-startup-tiktoken | 205.115 |
 | bench-startup-warm-20260226-103547.json | python-startup-tiktoken | 203.449 |
 | bench-startup-warm-20260226-104618.json | python-startup-tiktoken | 204.054 |
@@ -2796,6 +2952,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-warm-20260301-073325.json | python-startup-tiktoken | 227.031 |
 | bench-startup-warm-20260301-093745.json | python-startup-tiktoken | 220.748 |
 | bench-startup-warm-20260301-094133.json | python-startup-tiktoken | 228.990 |
+| bench-startup-warm-20260301-103011.json | python-startup-tiktoken | 218.857 |
+| bench-startup-warm-20260301-103527.json | python-startup-tiktoken | 233.214 |
 | bench-startup-cold-20260226-075404.json | python-startup-token-dagger | 452.093 |
 | bench-startup-cold-20260226-103516.json | python-startup-token-dagger | 470.890 |
 | bench-startup-cold-20260226-104547.json | python-startup-token-dagger | 480.016 |
@@ -2814,6 +2972,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-cold-20260301-073243.json | python-startup-token-dagger | 588.208 |
 | bench-startup-cold-20260301-093729.json | python-startup-token-dagger | 518.298 |
 | bench-startup-cold-20260301-094122.json | python-startup-token-dagger | 530.275 |
+| bench-startup-cold-20260301-103000.json | python-startup-token-dagger | 513.583 |
+| bench-startup-cold-20260301-103515.json | python-startup-token-dagger | 539.534 |
 | bench-startup-warm-20260226-075434.json | python-startup-token-dagger | 498.042 |
 | bench-startup-warm-20260226-103547.json | python-startup-token-dagger | 470.801 |
 | bench-startup-warm-20260226-104618.json | python-startup-token-dagger | 482.587 |
@@ -2832,6 +2992,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-warm-20260301-073325.json | python-startup-token-dagger | 543.962 |
 | bench-startup-warm-20260301-093745.json | python-startup-token-dagger | 510.097 |
 | bench-startup-warm-20260301-094133.json | python-startup-token-dagger | 586.496 |
+| bench-startup-warm-20260301-103011.json | python-startup-token-dagger | 559.227 |
+| bench-startup-warm-20260301-103527.json | python-startup-token-dagger | 593.426 |
 | bench-startup-cold-20260226-075404.json | python-startup-turbotoken | 54.956 |
 | bench-startup-cold-20260226-103516.json | python-startup-turbotoken | 55.697 |
 | bench-startup-cold-20260226-104547.json | python-startup-turbotoken | 61.497 |
@@ -2851,6 +3013,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-cold-20260301-073243.json | python-startup-turbotoken | 68.665 |
 | bench-startup-cold-20260301-093729.json | python-startup-turbotoken | 66.529 |
 | bench-startup-cold-20260301-094122.json | python-startup-turbotoken | 73.178 |
+| bench-startup-cold-20260301-103000.json | python-startup-turbotoken | 74.314 |
+| bench-startup-cold-20260301-103515.json | python-startup-turbotoken | 66.932 |
 | bench-startup-warm-20260226-075434.json | python-startup-turbotoken | 59.924 |
 | bench-startup-warm-20260226-103547.json | python-startup-turbotoken | 63.002 |
 | bench-startup-warm-20260226-104618.json | python-startup-turbotoken | 65.282 |
@@ -2869,6 +3033,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-warm-20260301-073325.json | python-startup-turbotoken | 75.955 |
 | bench-startup-warm-20260301-093745.json | python-startup-turbotoken | 66.809 |
 | bench-startup-warm-20260301-094133.json | python-startup-turbotoken | 67.495 |
+| bench-startup-warm-20260301-103011.json | python-startup-turbotoken | 68.458 |
+| bench-startup-warm-20260301-103527.json | python-startup-turbotoken | 74.746 |
 | bench-startup-cold-20260226-075404.json | python-startup-turbotoken-cli | 90.573 |
 | bench-startup-cold-20260226-103516.json | python-startup-turbotoken-cli | 84.325 |
 | bench-startup-cold-20260226-104547.json | python-startup-turbotoken-cli | 94.502 |
@@ -2888,6 +3054,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-cold-20260301-073243.json | python-startup-turbotoken-cli | 118.123 |
 | bench-startup-cold-20260301-093729.json | python-startup-turbotoken-cli | 102.054 |
 | bench-startup-cold-20260301-094122.json | python-startup-turbotoken-cli | 108.743 |
+| bench-startup-cold-20260301-103000.json | python-startup-turbotoken-cli | 113.157 |
+| bench-startup-cold-20260301-103515.json | python-startup-turbotoken-cli | 109.500 |
 | bench-startup-warm-20260226-075434.json | python-startup-turbotoken-cli | 85.790 |
 | bench-startup-warm-20260226-103547.json | python-startup-turbotoken-cli | 93.729 |
 | bench-startup-warm-20260226-104618.json | python-startup-turbotoken-cli | 91.598 |
@@ -2906,6 +3074,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-startup-warm-20260301-073325.json | python-startup-turbotoken-cli | 111.606 |
 | bench-startup-warm-20260301-093745.json | python-startup-turbotoken-cli | 100.794 |
 | bench-startup-warm-20260301-094133.json | python-startup-turbotoken-cli | 99.608 |
+| bench-startup-warm-20260301-103011.json | python-startup-turbotoken-cli | 102.024 |
+| bench-startup-warm-20260301-103527.json | python-startup-turbotoken-cli | 109.878 |
 | bench-training-python-20260225-221448.json | python-train-english-100kb-minbpe | 677.970 |
 | bench-training-python-20260225-221613.json | python-train-english-100kb-minbpe | 698.184 |
 | bench-training-python-20260225-221739.json | python-train-english-100kb-minbpe | 682.445 |
@@ -2957,6 +3127,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-training-python-20260301-051131.json | python-train-english-100kb-minbpe-v320 | 721.457 |
 | bench-training-python-20260301-074102.json | python-train-english-100kb-minbpe-v320 | 816.960 |
 | bench-training-python-20260301-094233.json | python-train-english-100kb-minbpe-v320 | 724.303 |
+| bench-training-python-20260301-103055.json | python-train-english-100kb-minbpe-v320 | 736.046 |
+| bench-training-python-20260301-103629.json | python-train-english-100kb-minbpe-v320 | 765.675 |
 | bench-training-python-20260225-221448.json | python-train-english-100kb-rustbpe | 56.245 |
 | bench-training-python-20260225-221613.json | python-train-english-100kb-rustbpe | 54.734 |
 | bench-training-python-20260225-221739.json | python-train-english-100kb-rustbpe | 52.464 |
@@ -3008,6 +3180,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-training-python-20260301-051131.json | python-train-english-100kb-rustbpe-v320 | 55.868 |
 | bench-training-python-20260301-074102.json | python-train-english-100kb-rustbpe-v320 | 63.813 |
 | bench-training-python-20260301-094233.json | python-train-english-100kb-rustbpe-v320 | 62.384 |
+| bench-training-python-20260301-103055.json | python-train-english-100kb-rustbpe-v320 | 59.297 |
+| bench-training-python-20260301-103629.json | python-train-english-100kb-rustbpe-v320 | 98.000 |
 | bench-training-python-20260225-221403.json | python-train-english-100kb-turbotoken | 90.578 |
 | bench-training-python-20260225-221448.json | python-train-english-100kb-turbotoken | 89.007 |
 | bench-training-python-20260225-221613.json | python-train-english-100kb-turbotoken | 86.885 |
@@ -3059,6 +3233,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-training-python-20260301-051131.json | python-train-english-100kb-turbotoken-native-v320 | 50.842 |
 | bench-training-python-20260301-074102.json | python-train-english-100kb-turbotoken-native-v320 | 52.627 |
 | bench-training-python-20260301-094233.json | python-train-english-100kb-turbotoken-native-v320 | 42.630 |
+| bench-training-python-20260301-103055.json | python-train-english-100kb-turbotoken-native-v320 | 44.476 |
+| bench-training-python-20260301-103629.json | python-train-english-100kb-turbotoken-native-v320 | 52.859 |
 | bench-training-python-20260225-223310.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 99.284 |
 | bench-training-python-20260225-223411.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 101.062 |
 | bench-training-python-20260225-223519.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 96.164 |
@@ -3102,6 +3278,8 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-training-python-20260301-051131.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 49.670 |
 | bench-training-python-20260301-074102.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 52.643 |
 | bench-training-python-20260301-094233.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 50.258 |
+| bench-training-python-20260301-103055.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 47.110 |
+| bench-training-python-20260301-103629.json | python-train-english-100kb-turbotoken-py-fallback-v320 | 52.013 |
 | bench-training-python-20260225-222233.json | python-train-english-100kb-turbotoken-v320 | 91.904 |
 | bench-training-python-20260225-222253.json | python-train-english-1mb-minbpe-v320 | 6690.892 |
 | bench-training-python-20260225-223545.json | python-train-english-1mb-minbpe-v320 | 6678.601 |
@@ -3180,6 +3358,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-pair-cache-hash-20260301-051159.json | rapidhash-count-bpe-100kb | 119.170 |
 | bench-pair-cache-hash-20260301-074132.json | rapidhash-count-bpe-100kb | 137.992 |
 | bench-pair-cache-hash-20260301-094239.json | rapidhash-count-bpe-100kb | 113.992 |
+| bench-pair-cache-hash-20260301-103636.json | rapidhash-count-bpe-100kb | 118.230 |
 | bench-pair-cache-hash-english-100kb-20260226-032822.json | rapidhash-count-english-100kb | 1284.533 |
 | bench-pair-cache-hash-english-1mb-20260226-032844.json | rapidhash-count-english-1mb | 4394.786 |
 | bench-pair-cache-hash-turbotoken-english-4mb-20260226-033104.json | rapidhash-count-turbotoken-english-4mb | 15402.658 |
@@ -3203,6 +3382,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-pair-cache-hash-20260301-051159.json | rapidhash-encode-bpe-100kb | 120.296 |
 | bench-pair-cache-hash-20260301-074132.json | rapidhash-encode-bpe-100kb | 142.754 |
 | bench-pair-cache-hash-20260301-094239.json | rapidhash-encode-bpe-100kb | 114.581 |
+| bench-pair-cache-hash-20260301-103636.json | rapidhash-encode-bpe-100kb | 116.335 |
 | bench-pair-cache-hash-english-100kb-20260226-032822.json | rapidhash-encode-english-100kb | 1471.128 |
 | bench-pair-cache-hash-english-1mb-20260226-032844.json | rapidhash-encode-english-1mb | 7943.871 |
 | bench-pair-cache-hash-turbotoken-english-4mb-20260226-033104.json | rapidhash-encode-turbotoken-english-4mb | 29791.947 |
@@ -3230,6 +3410,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-parallel-20260301-073446.json | threadpool-count-512-items | 209.649 |
 | bench-parallel-20260301-093835.json | threadpool-count-512-items | 211.441 |
 | bench-parallel-20260301-094155.json | threadpool-count-512-items | 210.890 |
+| bench-parallel-20260301-103550.json | threadpool-count-512-items | 212.249 |
 | bench-encoding-matrix-1772093253.json | tiktoken-cl100k-100kb | 133.125 |
 | bench-comparison-20260224-145621.json | tiktoken-encode-100kb | 194.052 |
 | bench-comparison-20260224-150133.json | tiktoken-encode-100kb | 195.845 |
@@ -3283,6 +3464,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-comparison-20260301-073451.json | tiktoken-encode-100kb | 238.975 |
 | bench-comparison-20260301-093840.json | tiktoken-encode-100kb | 229.993 |
 | bench-comparison-20260301-094157.json | tiktoken-encode-100kb | 223.184 |
+| bench-comparison-20260301-103552.json | tiktoken-encode-100kb | 277.067 |
 | bench-encoder-queue-20260225-180932.json | tiktoken-encode-100kb | 275.200 |
 | bench-encoder-queue-20260225-181051.json | tiktoken-encode-100kb | 209.981 |
 | bench-encoder-queue-20260225-190721.json | tiktoken-encode-100kb | 195.748 |
@@ -3301,6 +3483,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encoder-queue-20260301-051218.json | tiktoken-encode-100kb | 251.164 |
 | bench-encoder-queue-20260301-074152.json | tiktoken-encode-100kb | 241.669 |
 | bench-encoder-queue-20260301-094243.json | tiktoken-encode-100kb | 251.770 |
+| bench-encoder-queue-20260301-103639.json | tiktoken-encode-100kb | 228.078 |
 | bench-pair-cache-hash-20260225-175906.json | tiktoken-encode-100kb | 214.545 |
 | bench-pair-cache-hash-20260225-181644.json | tiktoken-encode-100kb | 214.648 |
 | bench-pair-cache-hash-20260225-182315.json | tiktoken-encode-100kb | 208.923 |
@@ -3320,6 +3503,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-pair-cache-hash-20260301-051159.json | tiktoken-encode-100kb | 219.914 |
 | bench-pair-cache-hash-20260301-074132.json | tiktoken-encode-100kb | 240.641 |
 | bench-pair-cache-hash-20260301-094239.json | tiktoken-encode-100kb | 279.816 |
+| bench-pair-cache-hash-20260301-103636.json | tiktoken-encode-100kb | 238.577 |
 | bench-scalar-fallback-20260225-092405.json | tiktoken-encode-100kb | 213.511 |
 | bench-scalar-fallback-20260225-092607.json | tiktoken-encode-100kb | 210.883 |
 | bench-scalar-fallback-20260225-104746.json | tiktoken-encode-100kb | 217.243 |
@@ -3378,6 +3562,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-scalar-fallback-20260301-051148.json | tiktoken-encode-100kb | 225.130 |
 | bench-scalar-fallback-20260301-074120.json | tiktoken-encode-100kb | 230.245 |
 | bench-scalar-fallback-20260301-094237.json | tiktoken-encode-100kb | 222.447 |
+| bench-scalar-fallback-20260301-103633.json | tiktoken-encode-100kb | 239.067 |
 | bench-encoding-matrix-1772093253.json | tiktoken-o200k-100kb | 200.556 |
 | bench-encoding-matrix-1772093253.json | tiktoken-p50k-100kb | 103.791 |
 | bench-encoding-matrix-1772093253.json | tiktoken-r50k-100kb | 104.863 |
@@ -3419,6 +3604,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-english-1mb-auto | 271.171 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-english-1mb-auto | 286.145 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-english-1mb-auto | 274.515 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-english-1mb-auto | 277.568 |
 | bench-boundary-classifier-20260225-181856.json | turbotoken-boundary-class-english-1mb-neon | 1621.520 |
 | bench-boundary-classifier-20260225-190945.json | turbotoken-boundary-class-english-1mb-neon | 1547.854 |
 | bench-boundary-classifier-20260226-001453.json | turbotoken-boundary-class-english-1mb-neon | 1574.666 |
@@ -3436,6 +3622,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-english-1mb-neon | 276.419 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-english-1mb-neon | 278.673 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-english-1mb-neon | 322.165 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-english-1mb-neon | 342.823 |
 | bench-boundary-classifier-20260225-181603.json | turbotoken-boundary-class-english-1mb-scalar | 2940.441 |
 | bench-boundary-classifier-20260225-181856.json | turbotoken-boundary-class-english-1mb-scalar | 2979.268 |
 | bench-boundary-classifier-20260225-190945.json | turbotoken-boundary-class-english-1mb-scalar | 2874.456 |
@@ -3454,6 +3641,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-english-1mb-scalar | 787.631 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-english-1mb-scalar | 789.929 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-english-1mb-scalar | 783.085 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-english-1mb-scalar | 826.978 |
 | bench-boundary-classifier-20260225-181603.json | turbotoken-boundary-class-unicode-1mb-auto | 1659.967 |
 | bench-boundary-classifier-20260225-181856.json | turbotoken-boundary-class-unicode-1mb-auto | 1667.252 |
 | bench-boundary-classifier-20260225-190945.json | turbotoken-boundary-class-unicode-1mb-auto | 1623.139 |
@@ -3472,6 +3660,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-unicode-1mb-auto | 310.073 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-unicode-1mb-auto | 314.373 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-unicode-1mb-auto | 320.082 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-unicode-1mb-auto | 334.416 |
 | bench-boundary-classifier-20260225-181856.json | turbotoken-boundary-class-unicode-1mb-neon | 1665.388 |
 | bench-boundary-classifier-20260225-190945.json | turbotoken-boundary-class-unicode-1mb-neon | 1584.514 |
 | bench-boundary-classifier-20260226-001453.json | turbotoken-boundary-class-unicode-1mb-neon | 1638.319 |
@@ -3489,6 +3678,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-unicode-1mb-neon | 305.636 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-unicode-1mb-neon | 306.387 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-unicode-1mb-neon | 341.433 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-unicode-1mb-neon | 339.269 |
 | bench-boundary-classifier-20260225-181603.json | turbotoken-boundary-class-unicode-1mb-scalar | 3750.726 |
 | bench-boundary-classifier-20260225-181856.json | turbotoken-boundary-class-unicode-1mb-scalar | 3773.213 |
 | bench-boundary-classifier-20260225-190945.json | turbotoken-boundary-class-unicode-1mb-scalar | 3614.175 |
@@ -3507,6 +3697,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-boundary-classifier-20260301-051305.json | turbotoken-boundary-class-unicode-1mb-scalar | 804.799 |
 | bench-boundary-classifier-20260301-074240.json | turbotoken-boundary-class-unicode-1mb-scalar | 814.494 |
 | bench-boundary-classifier-20260301-094253.json | turbotoken-boundary-class-unicode-1mb-scalar | 833.336 |
+| bench-boundary-classifier-20260301-103648.json | turbotoken-boundary-class-unicode-1mb-scalar | 1106.704 |
 | bench-encoding-matrix-1772093253.json | turbotoken-cl100k-100kb | 40.570 |
 | bench-count-20260224-133540.json | turbotoken-count-100kb | 67.442 |
 | bench-count-20260224-134037.json | turbotoken-count-100kb | 75.923 |
@@ -3554,6 +3745,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-count-20260301-073418.json | turbotoken-count-100kb | 45.497 |
 | bench-count-20260301-093807.json | turbotoken-count-100kb | 44.039 |
 | bench-count-20260301-094147.json | turbotoken-count-100kb | 48.602 |
+| bench-count-20260301-103542.json | turbotoken-count-100kb | 61.325 |
 | bench-decode-20260224-134232.json | turbotoken-decode-100kb-equivalent | 71.872 |
 | bench-decode-20260224-145541.json | turbotoken-decode-100kb-equivalent | 180.135 |
 | bench-decode-20260224-150052.json | turbotoken-decode-100kb-equivalent | 180.473 |
@@ -3577,6 +3769,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-decode-20260301-073427.json | turbotoken-decode-100kb-equivalent | 59.551 |
 | bench-decode-20260301-093816.json | turbotoken-decode-100kb-equivalent | 58.911 |
 | bench-decode-20260301-094150.json | turbotoken-decode-100kb-equivalent | 54.456 |
+| bench-decode-20260301-103545.json | turbotoken-decode-100kb-equivalent | 52.302 |
 | bench-comparison-20260224-134239.json | turbotoken-encode-100kb | 68.813 |
 | bench-comparison-20260224-145621.json | turbotoken-encode-100kb | 150.394 |
 | bench-comparison-20260224-150133.json | turbotoken-encode-100kb | 145.608 |
@@ -3630,6 +3823,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-comparison-20260301-073451.json | turbotoken-encode-100kb | 64.767 |
 | bench-comparison-20260301-093840.json | turbotoken-encode-100kb | 47.806 |
 | bench-comparison-20260301-094157.json | turbotoken-encode-100kb | 42.857 |
+| bench-comparison-20260301-103552.json | turbotoken-encode-100kb | 41.042 |
 | bench-encode-20260224-134231.json | turbotoken-encode-100kb | 67.422 |
 | bench-encode-20260224-134329.json | turbotoken-encode-100kb | 70.317 |
 | bench-encode-20260224-145537.json | turbotoken-encode-100kb | 147.337 |
@@ -3668,6 +3862,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-encode-20260301-073424.json | turbotoken-encode-100kb | 43.894 |
 | bench-encode-20260301-093812.json | turbotoken-encode-100kb | 43.791 |
 | bench-encode-20260301-094149.json | turbotoken-encode-100kb | 67.280 |
+| bench-encode-20260301-103544.json | turbotoken-encode-100kb | 39.961 |
 | bench-gpu-20260226-101912.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 3496.983 |
 | bench-gpu-20260226-102045.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 165.632 |
 | bench-gpu-20260226-102754.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 168.648 |
@@ -3687,6 +3882,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-gpu-20260301-051533.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 182.747 |
 | bench-gpu-20260301-074504.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 178.480 |
 | bench-gpu-20260301-094337.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 155.141 |
+| bench-gpu-20260301-103728.json | turbotoken-hybrid-neon-metal-encode-utf8-bytes-1mb | 150.348 |
 | bench-gpu-20260225-134714.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 196.348 |
 | bench-gpu-20260225-134921.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 197.184 |
 | bench-gpu-20260225-134947.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 285.979 |
@@ -3740,6 +3936,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-gpu-20260301-051533.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 254.312 |
 | bench-gpu-20260301-074504.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 267.917 |
 | bench-gpu-20260301-094337.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 193.068 |
+| bench-gpu-20260301-103728.json | turbotoken-metal-count-nonzero-batch-4096x1kb | 203.884 |
 | bench-gpu-20260225-134714.json | turbotoken-metal-encode-utf8-bytes-1mb | 190.165 |
 | bench-gpu-20260225-134921.json | turbotoken-metal-encode-utf8-bytes-1mb | 174.176 |
 | bench-gpu-20260225-134947.json | turbotoken-metal-encode-utf8-bytes-1mb | 180.828 |
@@ -3793,6 +3990,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-gpu-20260301-051533.json | turbotoken-metal-encode-utf8-bytes-1mb | 185.668 |
 | bench-gpu-20260301-074504.json | turbotoken-metal-encode-utf8-bytes-1mb | 186.247 |
 | bench-gpu-20260301-094337.json | turbotoken-metal-encode-utf8-bytes-1mb | 155.166 |
+| bench-gpu-20260301-103728.json | turbotoken-metal-encode-utf8-bytes-1mb | 170.251 |
 | bench-scalar-fallback-20260225-092405.json | turbotoken-native-count-bpe-100kb | 1097.321 |
 | bench-scalar-fallback-20260225-092607.json | turbotoken-native-count-bpe-100kb | 558.111 |
 | bench-scalar-fallback-20260225-104746.json | turbotoken-native-count-bpe-100kb | 575.976 |
@@ -3851,6 +4049,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-scalar-fallback-20260301-051148.json | turbotoken-native-count-bpe-100kb | 95.661 |
 | bench-scalar-fallback-20260301-074120.json | turbotoken-native-count-bpe-100kb | 106.706 |
 | bench-scalar-fallback-20260301-094237.json | turbotoken-native-count-bpe-100kb | 91.656 |
+| bench-scalar-fallback-20260301-103633.json | turbotoken-native-count-bpe-100kb | 104.578 |
 | bench-native-pretokenizer-20260225-134405.json | turbotoken-native-count-non-ascii-1mb-auto | 133.556 |
 | bench-native-pretokenizer-20260225-163219.json | turbotoken-native-count-non-ascii-1mb-auto | 127.044 |
 | bench-native-pretokenizer-20260225-134405.json | turbotoken-native-count-non-ascii-1mb-dotprod | 153.345 |
@@ -3889,6 +4088,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-english-1mb-auto | 96.804 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-english-1mb-auto | 103.452 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-english-1mb-auto | 134.340 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-english-1mb-auto | 96.154 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-english-1mb-auto | 120.303 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-english-1mb-auto | 125.360 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 135.582 |
@@ -3920,6 +4120,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 108.027 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 113.914 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 102.927 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 114.282 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 136.502 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-english-1mb-dotprod | 135.891 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-english-1mb-neon | 118.474 |
@@ -3951,6 +4152,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-english-1mb-neon | 95.871 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-english-1mb-neon | 98.760 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-english-1mb-neon | 106.748 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-english-1mb-neon | 112.318 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-english-1mb-neon | 120.830 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-english-1mb-neon | 123.004 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 425.571 |
@@ -3982,6 +4184,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 170.886 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 190.326 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 214.153 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 172.454 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 424.180 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-english-1mb-scalar | 418.710 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-english-1mb-sme | 129.066 |
@@ -4019,6 +4222,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 95.258 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 98.899 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 89.927 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 96.673 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 122.319 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-unicode-1mb-auto | 125.401 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 133.384 |
@@ -4050,6 +4254,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 108.262 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 110.759 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 112.582 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 118.261 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 132.864 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-unicode-1mb-dotprod | 137.174 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 119.140 |
@@ -4081,6 +4286,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 96.146 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 98.768 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 98.287 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 96.411 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 122.268 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-unicode-1mb-neon | 124.921 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 426.990 |
@@ -4112,6 +4318,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-pretokenizer-20260301-051237.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 168.603 |
 | bench-native-pretokenizer-20260301-074212.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 175.739 |
 | bench-native-pretokenizer-20260301-094248.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 179.243 |
+| bench-native-pretokenizer-20260301-103643.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 173.137 |
 | bench-native-pretokenizer-sme-auto-20260225-165325.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 422.028 |
 | bench-native-pretokenizer-sme-auto-20260225-174915.json | turbotoken-native-count-non-ascii-unicode-1mb-scalar | 417.425 |
 | bench-native-pretokenizer-20260225-163850.json | turbotoken-native-count-non-ascii-unicode-1mb-sme | 128.379 |
@@ -4160,6 +4367,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-byte-path-20260301-051343.json | turbotoken-native-decode-utf8-bytes-1mb-neon | 74.576 |
 | bench-native-byte-path-20260301-074319.json | turbotoken-native-decode-utf8-bytes-1mb-neon | 79.486 |
 | bench-native-byte-path-20260301-094304.json | turbotoken-native-decode-utf8-bytes-1mb-neon | 116.108 |
+| bench-native-byte-path-20260301-103659.json | turbotoken-native-decode-utf8-bytes-1mb-neon | 108.623 |
 | bench-native-byte-path-20260225-125643.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 453.684 |
 | bench-native-byte-path-20260225-130308.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 450.173 |
 | bench-native-byte-path-20260225-130333.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 462.926 |
@@ -4198,6 +4406,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-byte-path-20260301-051343.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 107.730 |
 | bench-native-byte-path-20260301-074319.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 114.331 |
 | bench-native-byte-path-20260301-094304.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 143.666 |
+| bench-native-byte-path-20260301-103659.json | turbotoken-native-decode-utf8-bytes-1mb-scalar | 123.307 |
 | bench-scalar-fallback-20260225-092405.json | turbotoken-native-encode-bpe-100kb | 2034.954 |
 | bench-scalar-fallback-20260225-092607.json | turbotoken-native-encode-bpe-100kb | 704.848 |
 | bench-scalar-fallback-20260225-104746.json | turbotoken-native-encode-bpe-100kb | 707.583 |
@@ -4256,6 +4465,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-scalar-fallback-20260301-051148.json | turbotoken-native-encode-bpe-100kb | 94.280 |
 | bench-scalar-fallback-20260301-074120.json | turbotoken-native-encode-bpe-100kb | 92.743 |
 | bench-scalar-fallback-20260301-094237.json | turbotoken-native-encode-bpe-100kb | 104.408 |
+| bench-scalar-fallback-20260301-103633.json | turbotoken-native-encode-bpe-100kb | 122.126 |
 | bench-native-byte-path-20260225-124703.json | turbotoken-native-encode-utf8-bytes-1mb | 95.231 |
 | bench-native-byte-path-20260225-124729.json | turbotoken-native-encode-utf8-bytes-1mb | 96.488 |
 | bench-native-byte-path-20260225-125626.json | turbotoken-native-encode-utf8-bytes-1mb-neon | 101.694 |
@@ -4297,6 +4507,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-byte-path-20260301-051343.json | turbotoken-native-encode-utf8-bytes-1mb-neon | 78.767 |
 | bench-native-byte-path-20260301-074319.json | turbotoken-native-encode-utf8-bytes-1mb-neon | 80.948 |
 | bench-native-byte-path-20260301-094304.json | turbotoken-native-encode-utf8-bytes-1mb-neon | 87.868 |
+| bench-native-byte-path-20260301-103659.json | turbotoken-native-encode-utf8-bytes-1mb-neon | 79.034 |
 | bench-native-byte-path-20260225-125643.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 429.640 |
 | bench-native-byte-path-20260225-130308.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 417.651 |
 | bench-native-byte-path-20260225-130333.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 415.858 |
@@ -4335,6 +4546,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-native-byte-path-20260301-051343.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 104.420 |
 | bench-native-byte-path-20260301-074319.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 110.471 |
 | bench-native-byte-path-20260301-094304.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 141.838 |
+| bench-native-byte-path-20260301-103659.json | turbotoken-native-encode-utf8-bytes-1mb-scalar | 150.456 |
 | bench-gpu-20260225-134714.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 113.681 |
 | bench-gpu-20260225-134921.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 100.880 |
 | bench-gpu-20260225-134947.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 101.309 |
@@ -4388,6 +4600,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-gpu-20260301-051533.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 81.660 |
 | bench-gpu-20260301-074504.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 77.344 |
 | bench-gpu-20260301-094337.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 76.015 |
+| bench-gpu-20260301-103728.json | turbotoken-native-neon-encode-utf8-bytes-1mb | 75.060 |
 | bench-encoding-matrix-1772093253.json | turbotoken-o200k-100kb | 39.502 |
 | bench-encoding-matrix-1772093253.json | turbotoken-p50k-100kb | 55.763 |
 | bench-encoding-matrix-1772093253.json | turbotoken-r50k-100kb | 56.795 |
@@ -4405,6 +4618,10 @@ Generated: 2026-03-01T09:44:51.905Z
 | ci-gates-refresh-1772342611135.json | unknown | n/a |
 | ci-gates-refresh-1772351231237.json | unknown | n/a |
 | ci-gates-refresh-1772351231237.json | unknown | n/a |
+| ci-gates-refresh-1772361186377.json | unknown | n/a |
+| ci-gates-refresh-1772361186377.json | unknown | n/a |
+| ci-gates-refresh-1772361200990.json | unknown | n/a |
+| ci-gates-refresh-1772361200990.json | unknown | n/a |
 | bench-wasm-raw-1772157220049.json | wasm-encode-bpe-o200k-100kb | 111.999 |
 | bench-wasm-raw-1772157318751.json | wasm-encode-bpe-o200k-100kb | 115.692 |
 | bench-wasm-raw-1772198668876.json | wasm-encode-bpe-o200k-100kb | 119.545 |
@@ -4419,6 +4636,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-encode-bpe-o200k-100kb | 117.092 |
 | bench-wasm-raw-1772351023080.json | wasm-encode-bpe-o200k-100kb | 128.034 |
 | bench-wasm-raw-1772358193868.json | wasm-encode-bpe-o200k-100kb | 149.423 |
+| bench-wasm-raw-1772361428059.json | wasm-encode-bpe-o200k-100kb | 131.830 |
 | bench-wasm-raw-1772157220049.json | wasm-encode-bpe-o200k-1mb | 588.852 |
 | bench-wasm-raw-1772157318751.json | wasm-encode-bpe-o200k-1mb | 681.273 |
 | bench-wasm-raw-1772198668876.json | wasm-encode-bpe-o200k-1mb | 752.104 |
@@ -4433,6 +4651,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-encode-bpe-o200k-1mb | 693.277 |
 | bench-wasm-raw-1772351023080.json | wasm-encode-bpe-o200k-1mb | 751.573 |
 | bench-wasm-raw-1772358193868.json | wasm-encode-bpe-o200k-1mb | 834.884 |
+| bench-wasm-raw-1772361428059.json | wasm-encode-bpe-o200k-1mb | 729.039 |
 | bench-wasm-20260226-203751.json | wasm-encode-utf8-bytes-100kb | 21.854 |
 | bench-wasm-20260226-204138.json | wasm-encode-utf8-bytes-100kb | 17.145 |
 | bench-wasm-raw-1772156938393.json | wasm-encode-utf8-bytes-100kb | 21.902 |
@@ -4450,6 +4669,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-encode-utf8-bytes-100kb | 25.939 |
 | bench-wasm-raw-1772351023080.json | wasm-encode-utf8-bytes-100kb | 26.384 |
 | bench-wasm-raw-1772358193868.json | wasm-encode-utf8-bytes-100kb | 79.559 |
+| bench-wasm-raw-1772361428059.json | wasm-encode-utf8-bytes-100kb | 21.506 |
 | bench-wasm-raw-1772156938393.json | wasm-encode-utf8-bytes-1mb | 25.966 |
 | bench-wasm-raw-1772157220049.json | wasm-encode-utf8-bytes-1mb | 22.387 |
 | bench-wasm-raw-1772157318751.json | wasm-encode-utf8-bytes-1mb | 24.020 |
@@ -4465,6 +4685,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-encode-utf8-bytes-1mb | 43.077 |
 | bench-wasm-raw-1772351023080.json | wasm-encode-utf8-bytes-1mb | 43.195 |
 | bench-wasm-raw-1772358193868.json | wasm-encode-utf8-bytes-1mb | 316.097 |
+| bench-wasm-raw-1772361428059.json | wasm-encode-utf8-bytes-1mb | 44.032 |
 | bench-wasm-raw-1772157220049.json | wasm-startup-first-bpe-encode-hello | 84.877 |
 | bench-wasm-raw-1772157318751.json | wasm-startup-first-bpe-encode-hello | 81.921 |
 | bench-wasm-raw-1772198668876.json | wasm-startup-first-bpe-encode-hello | 85.801 |
@@ -4479,6 +4700,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-startup-first-bpe-encode-hello | 90.435 |
 | bench-wasm-raw-1772351023080.json | wasm-startup-first-bpe-encode-hello | 92.470 |
 | bench-wasm-raw-1772358193868.json | wasm-startup-first-bpe-encode-hello | 104.392 |
+| bench-wasm-raw-1772361428059.json | wasm-startup-first-bpe-encode-hello | 97.781 |
 | bench-wasm-raw-1772156938393.json | wasm-startup-first-encode-hello | 20.070 |
 | bench-wasm-raw-1772157220049.json | wasm-startup-first-encode-hello | 17.345 |
 | bench-wasm-raw-1772157318751.json | wasm-startup-first-encode-hello | 17.822 |
@@ -4494,6 +4716,7 @@ Generated: 2026-03-01T09:44:51.905Z
 | bench-wasm-raw-1772342053519.json | wasm-startup-first-encode-hello | 18.121 |
 | bench-wasm-raw-1772351023080.json | wasm-startup-first-encode-hello | 21.374 |
 | bench-wasm-raw-1772358193868.json | wasm-startup-first-encode-hello | 20.076 |
+| bench-wasm-raw-1772361428059.json | wasm-startup-first-encode-hello | 16.366 |
 | bench-pair-cache-hash-20260225-175906.json | wyhash-count-bpe-100kb | 1119.034 |
 | bench-pair-cache-hash-20260225-181644.json | wyhash-count-bpe-100kb | 1131.486 |
 | bench-pair-cache-hash-20260225-175906.json | wyhash-encode-bpe-100kb | 1447.454 |

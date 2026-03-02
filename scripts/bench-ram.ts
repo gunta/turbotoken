@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { acquireBenchmarkLock, pythonExecutable, resolvePath, runShell, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, benchSpeedProfile, pythonExecutable, resolvePath, runShell, section, writeJson } from "./_lib";
 import { ensureFixtures } from "./_fixtures";
 
 interface MemoryCommand {
@@ -61,9 +61,8 @@ ensureFixtures();
 section("Memory benchmark");
 acquireBenchmarkLock({ label: "bench-ram" });
 const python = pythonExecutable();
-const fastMode = ["1", "true", "yes", "on"].includes(
-  (process.env.TURBOTOKEN_BENCH_FAST ?? "").trim().toLowerCase(),
-);
+const speedProfile = benchSpeedProfile();
+const fastMode = speedProfile === "fast";
 const runsRaw = process.env.TURBOTOKEN_RAM_RUNS?.trim();
 const runs = runsRaw
   ? Math.max(1, Number.parseInt(runsRaw, 10) || 5)
@@ -184,6 +183,7 @@ writeJson(outputPath, {
   tool: "/usr/bin/time",
   generatedAt: new Date().toISOString(),
   platform: process.platform,
+  speedProfile,
   runsPerCommand: runs,
   availability,
   fastMode,

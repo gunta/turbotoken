@@ -69,6 +69,7 @@ bun run test
 bun run bench
 bun run bench:queue
 bun run bench:lock:status
+TURBOTOKEN_RALPH_LOOP_ENABLE=1 bun run ralph:loop
 bun run sync:upstream
 ```
 
@@ -82,6 +83,13 @@ Notes:
 - Queue runs emit `bench/results/bench-queue-*.json` with per-step timing/exit status.
 - Use `bun run bench:lock:status` / `bun run bench:lock:wait` to inspect or wait for lock release before starting local benchmark jobs.
 - Only bypass the local lock (`TURBOTOKEN_BENCH_LOCK_DISABLE=1`) on explicitly isolated hosts/runners where no local contention exists.
+- CI benchmark governance defaults to `full` artifacts; use `--artifact-speed=fast` (or `TURBOTOKEN_CI_ARTIFACT_SPEED=fast`) for local fast-profile gate checks.
+- Ralph loop is temporarily disabled by default. Opt in explicitly with `TURBOTOKEN_RALPH_LOOP_ENABLE=1`.
+- Use `TURBOTOKEN_RALPH_LOOP_ENABLE=1 bun run ralph:loop` for a resumable long-run orchestration loop (state: `bench/results/ralph-loop-state.json`, report: `bench/charts/ralph-loop.md`).
+- Ralph defaults are focused on roadmap blocker work (`training,metal,wasm,x86,governance`) and run expensive sweeps on cadence:
+  - full governance every `N` cycles (`--full-governance-every`, default quick=`3`, full=`2`)
+  - competitor sweeps every `N` cycles (`--competitors-every`, default quick=`4`, full=`3`)
+- For multi-hour runs, prefer `TURBOTOKEN_RALPH_LOOP_ENABLE=1 bun run ralph:loop:quick` (6h fast profile, 30s inter-cycle sleep) or explicit flags (e.g. `TURBOTOKEN_RALPH_LOOP_ENABLE=1 bun run scripts/ralph-loop.ts --hours=8 --phases=training,metal,wasm,x86,governance`).
 
 ## 7. Engineering Rules for Agents
 

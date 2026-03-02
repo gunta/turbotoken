@@ -21,6 +21,10 @@
    - `bun run bench:queue` / `bun run bench` default to a fast profile (`TURBOTOKEN_BENCH_SPEED=fast`) for shorter iteration cycles.
    - Use `bun run bench:queue:full` (or `bun run bench:full`) for full-fidelity runs.
    - Queue runner emits `bench/results/bench-queue-*.json` with per-step timing + exit codes.
+   - latest measured queue runtime:
+     - full baseline: `850.638s` (`bench/results/bench-queue-1772351213303.json`)
+     - fast profile: `209.795s` (`bench/results/bench-queue-1772361524545.json`)
+     - reduction: `~75.34%` (`~4.05x` faster)
    - CUDA rows are opt-in via `bun run bench:cuda`
    - Paid Modal CUDA runs are opt-in via `bun run bench:modal:cuda`
 2. **Hyperfine run count is profile-aware**
@@ -41,13 +45,19 @@
 ### CI Governance
 - `scripts/ci-benchmark.ts` is the benchmark gate runner used by CI (`bun run bench:ci`).
 - CUDA is intentionally **off by default** in governance paths; enable only on demand with explicit CUDA scripts (`bench:cuda`, `bench:modal:cuda`).
+- Artifact speed-profile selection is explicit:
+  - `--artifact-speed=full|fast|any` (or `TURBOTOKEN_CI_ARTIFACT_SPEED`) controls which benchmark artifacts are eligible for gate evaluation.
+  - Default is `full`, so untagged/fast artifacts are ignored unless explicitly requested.
+  - Benchmark artifacts now stamp `speedProfile` so fast/full governance separation is reproducible.
 - Hard gate thresholds live in `bench/ci-gates.json` and currently cover:
   - startup cold (`hello` first encode)
   - encode/count 1MB latency
   - encode/count 1MB throughput (MiB/s)
   - training latency (native 100KB fixture)
+  - training competitor governance (100KB `rustbpe`/`minbpe` row presence and native-vs-competitor ratio ceilings on profiled CPU runners)
   - peak RSS for 1MB encode
   - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
+  - Metal direct 1MB parity (`metal-bpe-direct-encode-1mb.matches_native == true`) on profiled Metal runners
   - Metal direct-route A/B safety (`bench-gpu-bpe-direct`) for both low-entropy and normal-text BPE profiles
 - Relative regression gates are also enabled in `bench/ci-gates.json` (`relative.enabled=true`) so CI enforces bounded drift against baselines for the same metric set (latency, throughput, RSS, GPU memory).
 - Runner-specific profiles are now supported via `scripts/ci-benchmark.ts --profile=...`:
@@ -60,16 +70,23 @@
   - Python: `3.14` (`check-latest: true`)
   - Zig: `0.15.2`
   - Bun install: `bun install --frozen-lockfile`
+  - CI gate jobs explicitly set `TURBOTOKEN_BENCH_SPEED=full` and `TURBOTOKEN_CI_ARTIFACT_SPEED=full` so uploaded artifacts are full-profile by construction.
+  - CPU benchmark job installs `rustbpe` and clones `minbpe` to `/tmp/minbpe` so training competitor governance rows stay populated.
+  - CI uploads both `bench/results/*.json` and `bench/results/*.meta.json` artifacts for downstream selection/debug visibility.
   - Metal gate run env: `TURBOTOKEN_GPU_CROSSOVER_QUICK=1`, `TURBOTOKEN_GPU_MEMORY_RUNS=1`, `TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144`
 - Baseline refresh tooling:
   - `bun run bench:ci:refresh-baselines` refreshes profile relative baselines from the latest successful per-profile CI benchmark artifacts.
+  - `--speed=full|fast|any` (or `TURBOTOKEN_CI_ARTIFACT_SPEED`) selects which artifact speed profile is allowed during refresh.
   - host guard is enabled by default (profile host must match artifact host); use `--allow-host-mismatch` only for explicit local experimentation.
   - benchmark workflow also runs a non-mutating refresh dry-run job and uploads the summary artifact for operator review.
 - Local governance commands:
   - CPU gates (Linux profile): `bun run scripts/ci-benchmark.ts --mode=cpu --profile=linux-x86_64-cpu`
+  - CPU gates against fast artifacts: `bun run scripts/ci-benchmark.ts --mode=cpu --profile=linux-x86_64-cpu --artifact-speed=fast`
   - Metal gates (quick profile on free runner envelope): `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal`
+  - Metal gates against fast artifacts: `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal --artifact-speed=fast`
   - Direct-route A/B profile matrix: `bun run scripts/bench-gpu-bpe-direct.ts`
   - Single crossover profile run: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=normal-text bun run scripts/bench-gpu-crossover.ts`
+  - fast competitors mode keeps mandatory `python-encode-1mb-turbotoken` / `python-count-1mb-turbotoken` rows so CI 1MB gates remain measurable.
 - Packaging smoke checks are now CI-wired:
   - wheels workflow installs the host wheel into an isolated venv and verifies import + native bridge load.
   - wasm workflow packs npm tarball, installs it into a temp project, and validates installed WASM roundtrip.
@@ -94,6 +111,110 @@ Local benchmark host details (from `sysctl` / `uname`):
 - ISA features detected: NEON/AdvSIMD, FP16, DotProd, BF16, I8MM, SHA3/AES/PMULL, LSE/LSE2, SME/SME2 (current hot path uses AdvSIMD/NEON instructions)
 
 > Additional machines will be added as we benchmark on Graviton, x86, RISC-V, etc.
+
+---
+
+## Latest Update (2026-03-02, governance + parity gates)
+
+Recent artifacts:
+- GPU governance:
+  - `bench/results/bench-gpu-memory-1772381615970.json`
+  - `bench/results/bench-gpu-crossover-1772381619318.json`
+  - `bench/results/bench-gpu-bpe-direct-1772381625356.json`
+  - `bench/results/bench-gpu-overlap-1772381674893.json`
+  - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772381683528-47089.json`
+- CPU governance:
+  - `bench/results/bench-startup-cold-20260301-160606.json`
+  - `bench/results/bench-competitors-python-encode-20260301-160732.json`
+  - `bench/results/bench-competitors-python-count-20260301-161149.json`
+  - `bench/results/bench-training-python-20260301-164154.json`
+  - `bench/results/bench-ram-1772381595388.json`
+  - `bench/results/ci-benchmark-cpu-linux-x86_64-cpu-1772383338921-50436.json`
+
+Measured outcomes:
+- GPU direct 1MB parity gate is now populated and passing:
+  - `metal-bpe-direct-encode-1mb`: `~60.66 MiB/s`, `matches_native=true`, `max_device_allocated_mib=48.45`.
+- GPU governance profile (`macos-arm64-metal`) passes with the new hard parity requirement enabled:
+  - `bestBpeDirectMiBPerSec=60.66`, `direct1mbMatchesNative=true`.
+- CPU governance profile (`linux-x86_64-cpu`) passes with new training competitor checks enabled:
+  - native training: `44.72 ms`
+  - `rustbpe`: `74.12 ms`
+  - `minbpe`: `794.90 ms`
+  - native-vs-rustbpe ratio: `0.603` (gate cap: `1.25`)
+- Metal hard floor is now stricter for profiled runners: `minBpeDirectEncodeMiBPerSec=40` with direct parity still required.
+
+---
+
+## Latest Update (2026-03-02, Metal auto-route regression fix)
+
+Recent artifacts:
+- `bench/results/bench-gpu-crossover-1772427763887.json`
+- `bench/results/bench-gpu-bpe-direct-1772427787190.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772427994134-37216.json`
+- `bench/results/bench-scorecard-1772428019154.json`
+
+What changed in code:
+- `python/turbotoken/core.py`
+  - `encode_gpu(device="auto", strict_verify=False)` now early-exits to the regular CPU encode path when whole-text autoroute is native.
+  - GPU range-batch fallback now keeps native range batching (chunked by range-count limit) instead of dropping to per-piece Python BPE.
+- `python/turbotoken/_gpu.py`
+  - route-threshold resolution is now in-memory cached by env/profile tuple to avoid repeated route-cache file reads in per-piece loops.
+
+Measured outcomes (quick profile, `normal-text`, 262,144 bytes):
+- crossover (`bench-gpu-crossover-1772427763887.json`):
+  - CPU baseline: `0.668 ms` (`~374.27 MiB/s`)
+  - auto route: `0.755 ms` (`~331.24 MiB/s`)
+  - forced Metal route: `2408.36 ms` (`~0.104 MiB/s`)
+  - parity: `auto_matches_baseline=true`, `metal_matches_baseline=true`
+- direct A/B matrix (`bench-gpu-bpe-direct-1772427787190.json`):
+  - `normal-text` headline:
+    - direct disabled: `2397.51 ms` (`~0.104 MiB/s`)
+    - direct enabled: `2338.47 ms` (`~0.107 MiB/s`)
+    - slowdown: `-2.46%`, parity true in both states
+  - `low-entropy` stress profile:
+    - slowdown: `+18.46%`, throughput ratio: `0.844x`, parity true in both states
+
+Governance:
+- GPU gates continue to pass after the routing fix (`failures: []` in `ci-benchmark-gpu-macos-arm64-metal-1772427994134-37216.json`).
+
+---
+
+## Latest Update (2026-03-02, tiny-piece force-route guard + batching)
+
+Recent artifacts:
+- `bench/results/bench-gpu-bpe-direct-1772432813845.json`
+- `bench/results/bench-gpu-crossover-1772432841004.json`
+- `bench/results/bench-gpu-memory-1772432853486.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772432870280-96001.json`
+- `bench/results/bench-scorecard-1772432887151.json`
+
+What changed in code:
+- `python/turbotoken/_gpu.py`
+  - added full-piece GPU lower bound (`TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES`, default `4096`) so tiny regex pieces avoid per-piece GPU dispatch overhead.
+  - single-chunk exact pieces in Metal-many path are now batched through native range encode instead of per-piece native calls.
+  - Metal bridge wrappers now use one-shot output buffers for `encode_utf8_bytes` and `encode_bpe_from_bytes` (no probe call).
+- `python/turbotoken/core.py`
+  - added force-all safety guard for sub-direct-size texts:
+    - when `TURBOTOKEN_METAL_FORCE_ALL_PIECES=1` and text is below direct route minimum, route falls back to regular CPU encode unless `TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT=1`.
+
+Measured outcomes:
+- direct A/B matrix (`bench-gpu-bpe-direct-1772432813845.json`, 262,144 bytes):
+  - `normal-text`:
+    - direct disabled: `0.667 ms` (`~374.74 MiB/s`)
+    - direct enabled: `0.710 ms` (`~352.01 MiB/s`)
+    - parity true in both states
+  - `low-entropy`:
+    - direct disabled: `0.476 ms` (`~525.24 MiB/s`)
+    - direct enabled: `0.500 ms` (`~499.91 MiB/s`)
+    - parity true in both states
+- crossover quick (`bench-gpu-crossover-1772432841004.json`, `normal-text` 262,144 bytes):
+  - CPU: `0.704 ms`
+  - auto: `0.699 ms`
+  - forced metal: `0.772 ms`
+  - parity true (`auto_matches_baseline=true`, `metal_matches_baseline=true`)
+
+Governance:
+- GPU gates still pass after this pass (`ci-benchmark-gpu-macos-arm64-metal-1772432870280-96001.json`).
 
 ---
 
@@ -133,6 +254,94 @@ Decision:
   - low-entropy guard enabled by default (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`)
   - Metal BPE default round batching increased (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT` default `8`, was `1`)
 - CI now enforces direct A/B safety gates via `bench/ci-gates.json` + `scripts/ci-benchmark.ts` for both text profiles (with CUDA still off by default).
+
+Latest direct-route tuning pass (find+min fused + adaptive round batching):
+- artifacts:
+  - `bench/results/bench-gpu-memory-1772363356661.json` (pre-pass reference)
+  - `bench/results/bench-gpu-memory-1772367624313.json` (post-pass)
+  - `bench/results/bench-gpu-bpe-direct-1772363279739.json` (pre-pass reference)
+  - `bench/results/bench-gpu-bpe-direct-1772367628817.json` (post-pass)
+- measured deltas:
+  - direct kernel memory row (`metal-bpe-direct-encode-1mb`): `~32.21 -> ~40.77 MiB/s` (`~26.6%` uplift in this run)
+  - normal-text direct A/B enabled row (`bench-gpu-bpe-direct`): `~0.09252 -> ~0.09485 MiB/s` (`~2.5%` uplift in this run)
+  - normal-text route-level median GPU throughput (enabled): `~551.07 -> ~641.85 MiB/s`
+- parity/governance:
+  - strict full-profile GPU governance check passed after this pass:
+    - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772367702055-96954.json`
+
+Latest direct-route stability pass (active-compaction guard + on-GPU counter reset):
+- artifacts:
+  - `bench/results/bench-gpu-crossover-1772368569131.json` (default compaction off)
+  - `bench/results/bench-gpu-crossover-1772368584996.json` (forced compaction on, experimental)
+  - `bench/results/bench-gpu-bpe-direct-1772368616934.json`
+  - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772368666492-45051.json`
+- measured outcome:
+  - normal-text direct A/B parity restored in both toggle states (`matchesBaseline=true` for disabled/enabled).
+  - normal-text A/B timing is near-neutral in this run:
+    - disabled: `2499.19 ms`
+    - enabled: `2513.09 ms`
+    - slowdown: `~0.56%` (`throughputRatio ~0.994x`)
+  - low-entropy safety profile remains parity-correct with expected guard-driven behavior:
+    - slowdown: `~10.85%` (`throughputRatio ~0.902x`)
+  - forced active-compaction mode remained experimental in that run; forced-on parity drift was observed there (`metal_matches_baseline=false`).
+  - rounds-per-submit sweep supports the current adaptive default (`32` for medium inputs, `16` for large):
+    - 262KB normal-text (`bench-gpu-crossover`, quick): `8 -> 4276.99 ms`, `16 -> 3018.98 ms`, `32 -> 2477.65 ms`, `64 -> 2625.46 ms` (all parity true; `32` best on this size).
+    - 1MB direct row (`bench-gpu-memory`): `16 -> 23.99 ms` (`41.69 MiB/s`) vs `32 -> 27.74 ms` (`36.05 MiB/s`) in this run (`16` better on large size).
+- governance:
+  - strict full-profile GPU governance check passed:
+    - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772368951153-62341.json`
+
+Latest active-compaction prefix+stride pass (parity-safe + adaptive default):
+- artifacts:
+  - compaction off baseline (quick crossover): `bench/results/bench-gpu-crossover-1772376217672.json`
+  - compaction stride sweep (forced on, quick crossover):
+    - `bench/results/bench-gpu-crossover-1772376135995.json` (stride 1)
+    - `bench/results/bench-gpu-crossover-1772376155260.json` (stride 2)
+    - `bench/results/bench-gpu-crossover-1772376173089.json` (stride 4)
+    - `bench/results/bench-gpu-crossover-1772376190626.json` (stride 8)
+  - direct 1MB explicit off/on memory rows:
+    - `bench/results/bench-gpu-memory-1772376313905.json` (compaction off)
+    - `bench/results/bench-gpu-memory-1772376326853.json` (compaction on + stride 4)
+  - latest GPU governance pass:
+    - `bench/results/bench-gpu-bpe-direct-1772376545989.json`
+    - `bench/results/bench-gpu-memory-1772376523625.json`
+    - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772376597296-28059.json`
+- measured outcome:
+  - forced compaction parity drift is fixed (`metal_matches_baseline=true` across forced-on quick crossover rows in this pass).
+  - compaction stride tuning at 262KB normal-text (forced on):
+    - stride 1: `3108.79 ms`
+    - stride 2: `2897.99 ms`
+    - stride 4: `2749.02 ms` (best forced-on stride in this run)
+    - stride 8: `2805.62 ms`
+    - compaction-off baseline on same profile: `2590.13 ms` (still faster at 262KB).
+  - direct 1MB row improved strongly with compaction:
+    - off: `23.87 ms` (`41.90 MiB/s`)
+    - on (stride 4): `16.09 ms` (`62.16 MiB/s`)
+    - uplift: `~48.4%` throughput in this run.
+  - default behavior is now adaptive:
+    - compaction off for smaller direct pieces (e.g., 262KB)
+    - compaction on for larger direct pieces (>=512KB)
+  - latest governed GPU memory artifact reflects this uplift:
+    - `bestBpeDirectMiBPerSec: 61.21` with gates passing.
+
+Latest specialized no-branch kernel pass (full vs active pipelines):
+- artifacts:
+  - quick crossover off/on:
+    - `bench/results/bench-gpu-crossover-1772377009841.json` (compaction off)
+    - `bench/results/bench-gpu-crossover-1772377026006.json` (compaction on + stride 4)
+  - 1MB direct memory off/on:
+    - `bench/results/bench-gpu-memory-1772377057702.json` (compaction off)
+    - `bench/results/bench-gpu-memory-1772377071513.json` (compaction on + stride 4)
+  - governed pass:
+    - `bench/results/bench-gpu-bpe-direct-1772377092299.json`
+    - `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772377142876-55625.json`
+- measured outcome:
+  - specialized full-grid path improved the 262KB quick row:
+    - compaction-off quick crossover: `2396.04 ms` (`0.1043 MiB/s`, parity true)
+  - large direct row keeps strong compaction win:
+    - off: `25.63 ms` (`39.02 MiB/s`)
+    - on (stride 4): `16.17 ms` (`61.85 MiB/s`)
+  - governance remains green with the new kernels (`failures: []`).
 
 WASM scorecard rows:
 - latest scorecard now includes runtime-split rows:
@@ -484,7 +693,7 @@ Threading A/B artifact:
 
 | Corpus | turbotoken (Python backend) | turbotoken (Zig native backend prototype) | rustbpe | minbpe |
 |---|---:|---:|---:|---:|
-| english-100kb | 49.1 ms (1.99 MiB/s) | 49.4 ms (1.98 MiB/s) | 55.7 ms (1.75 MiB/s) | 703.2 ms (0.14 MiB/s) |
+| english-100kb | 55.9 ms (1.75 MiB/s) | 44.7 ms (2.18 MiB/s) | 74.1 ms (1.32 MiB/s) | 794.9 ms (0.12 MiB/s) |
 
 Notes:
 - `turbotoken` training API is now available via `train_mergeable_ranks_from_iterator(...)` and `train_encoding_from_iterator(...)`.
@@ -496,12 +705,12 @@ Notes:
   - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1` enables native ASCII O200K range splitting before chunk counting
   - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1` enables direct native ASCII O200K `text -> train` path for single-text list inputs
   - `TURBOTOKEN_NATIVE_TRAIN_THREADS=<n>` overrides native trainer shard worker count (default auto)
-  - both remain opt-in because current benchmark rows above did not improve with these toggles enabled
+  - when `TURBOTOKEN_TRAINING_BACKEND=native` and these env vars are unset, both now default to enabled; set them to `0/false/no` to explicitly disable.
   - latest direct-path artifacts:
-    - `bench/results/bench-training-python-20260225-233812.json` (100kb)
-    - `bench/results/bench-training-python-20260225-234514.json` (1mb)
+    - `bench/results/bench-training-python-20260301-164154.json` (100kb)
+- native benchmark row (`python-train-...-turbotoken-native-v320`) currently uses a thin direct C-ABI call (`turbotoken_train_bpe_ascii_o200k`) via Python `ctypes` to measure core native trainer throughput with minimal wrapper overhead.
 - `minbpe` was benchmarked from local source checkout (`/tmp/minbpe`) because it is not published on PyPI.
-- In this pass, both turbotoken training backends lead `rustbpe` on the measured 100KB corpus.
+- In this pass, both turbotoken rows lead `rustbpe` on the measured 100KB fixture; native core row leads by a clear margin.
 
 ### JavaScript/WASM Tokenizers (encode, o200k_base)
 
@@ -510,9 +719,12 @@ Notes:
 | tiktoken (npm, WASM) | PENDING | PENDING | PENDING | Node.js | PENDING | `npm install tiktoken` |
 | gpt-tokenizer | 164.8 ms | 169.1 ms | 170.4 ms | Bun | N/A (pure JS) | `bun add --dev gpt-tokenizer` |
 | wasm-tokenizer | PENDING | PENDING | PENDING | Node.js | PENDING | `npm install wasm-tokenizer` |
-| turbotoken (Zig WASM scalar) | PENDING | PENDING | PENDING | Node.js | PENDING | Phase 3 |
-| turbotoken (Zig WASM SIMD) | PENDING | PENDING | PENDING | Node.js | PENDING | Phase 3 |
+| turbotoken (Zig WASM, Bun host) | PENDING | PENDING | 115.7 ms | Bun | 1,642,265 B (`zig-out/bin/turbotoken.wasm`) | `bun run scripts/bench-wasm.ts` (`wasm-encode-bpe-o200k-100kb`) |
+| turbotoken (Zig WASM, Node host) | PENDING | PENDING | 176.4 ms | Node.js | 1,642,265 B (`zig-out/bin/turbotoken.wasm`) | `bun run scripts/bench-wasm.ts` (`node-wasm-encode-bpe-o200k-100kb`) |
 | turbotoken (N-API native) | PENDING | PENDING | PENDING | Node.js | N/A | Phase 3 |
+
+WASM artifact reference:
+- `bench/results/bench-wasm-1772421489508.json`
 
 ### Startup Latency (time to first encode of "hello")
 

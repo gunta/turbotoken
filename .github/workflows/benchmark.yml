@@ -35,6 +35,9 @@ jobs:
           python -m pip install -U pip uv
           uv venv .venv
           uv pip install --python .venv/bin/python -e .[dev]
+          uv pip install --python .venv/bin/python rustbpe
+          rm -rf /tmp/minbpe
+          git clone --depth 1 https://github.com/karpathy/minbpe.git /tmp/minbpe
           bun install --frozen-lockfile
 
       - name: Build native library
@@ -43,6 +46,8 @@ jobs:
       - name: Run benchmark governance gates (CPU)
         env:
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+          TURBOTOKEN_BENCH_SPEED: "full"
+          TURBOTOKEN_CI_ARTIFACT_SPEED: "full"
         run: bun run scripts/ci-benchmark.ts --mode=cpu --profile=linux-x86_64-cpu
 
       - name: Upload benchmark artifacts
@@ -50,7 +55,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-cpu-results
-          path: bench/results/*.json
+          path: |
+            bench/results/*.json
+            bench/results/*.meta.json
 
   benchmark-metal-gates:
     name: Metal Regression Gates
@@ -88,6 +95,8 @@ jobs:
       - name: Run benchmark governance gates (Metal)
         env:
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+          TURBOTOKEN_BENCH_SPEED: "full"
+          TURBOTOKEN_CI_ARTIFACT_SPEED: "full"
           TURBOTOKEN_GPU_CROSSOVER_QUICK: "1"
           TURBOTOKEN_GPU_MEMORY_RUNS: "1"
           TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: "262144"
@@ -98,7 +107,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bench-metal-results
-          path: bench/results/*.json
+          path: |
+            bench/results/*.json
+            bench/results/*.meta.json
 
   benchmark-baseline-refresh-dry-run:
     name: Baseline Refresh Dry Run
@@ -126,7 +137,9 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run baseline refresh dry-run
-        run: bun run scripts/refresh-ci-gates-baselines.ts --dry-run
+        env:
+          TURBOTOKEN_CI_ARTIFACT_SPEED: "full"
+        run: bun run scripts/refresh-ci-gates-baselines.ts --dry-run --speed=full
 
       - name: Upload baseline refresh summary
         if: always()

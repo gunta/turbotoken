@@ -243,16 +243,34 @@ def _try_native_direct_ascii_o200k_train(
     if not isinstance(texts, (list, tuple)):
         return None
 
-    encoded = bytearray()
-    offsets: list[int] = [0]
-    for text in texts:
+    if len(texts) == 0:
+        return {}
+
+    if len(texts) == 1:
+        text = texts[0]
         if not isinstance(text, str):
             return None
-        encoded.extend(text.encode("utf-8"))
-        offsets.append(len(encoded))
+        if len(text) == 0:
+            return {}
+        if not text.isascii():
+            return None
+        encoded_bytes = text.encode("utf-8")
+        offsets = [0, len(encoded_bytes)]
+    else:
+        encoded = bytearray()
+        offsets = [0]
+        for text in texts:
+            if not isinstance(text, str):
+                return None
+            if len(text) > 0 and not text.isascii():
+                return None
+            if text:
+                encoded.extend(text.encode("utf-8"))
+            offsets.append(len(encoded))
 
-    if len(encoded) == 0:
-        return {}
+        if len(encoded) == 0:
+            return {}
+        encoded_bytes = bytes(encoded)
 
     from ._native import get_native_bridge
 
@@ -261,7 +279,7 @@ def _try_native_direct_ascii_o200k_train(
         return None
 
     merges = bridge.train_bpe_ascii_o200k_multi(
-        bytes(encoded),
+        encoded_bytes,
         offsets,
         vocab_size=vocab_size,
         min_frequency=min_frequency,
@@ -292,16 +310,21 @@ def train_mergeable_ranks_from_iterator(
     use_native = route == "native" and not disable_native
     if route not in {"auto", "native", "python"}:
         use_native = False
-    enable_native_pretokenize = os.environ.get("TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    enable_native_direct_ascii = os.environ.get("TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    enable_native_pretokenize_raw = os.environ.get("TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE", "").strip().lower()
+    if enable_native_pretokenize_raw in {"1", "true", "yes"}:
+        enable_native_pretokenize = True
+    elif enable_native_pretokenize_raw in {"0", "false", "no"}:
+        enable_native_pretokenize = False
+    else:
+        enable_native_pretokenize = use_native
+
+    enable_native_direct_ascii_raw = os.environ.get("TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII", "").strip().lower()
+    if enable_native_direct_ascii_raw in {"1", "true", "yes"}:
+        enable_native_direct_ascii = True
+    elif enable_native_direct_ascii_raw in {"0", "false", "no"}:
+        enable_native_direct_ascii = False
+    else:
+        enable_native_direct_ascii = use_native
     force_native_training = os.environ.get("TURBOTOKEN_NATIVE_TRAINING_FORCE", "").strip().lower() in {
         "1",
         "true",

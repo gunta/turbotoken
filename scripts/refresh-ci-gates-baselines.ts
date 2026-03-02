@@ -96,6 +96,43 @@ function parseProfiles(argv: string[]): string[] {
     .filter((item) => item.length > 0);
 }
 
+function normalizeSpeedProfile(raw: string | null): "fast" | "full" | null {
+  if (!raw) {
+    return null;
+  }
+  const lowered = raw.trim().toLowerCase();
+  if (lowered === "fast" || lowered === "quick") {
+    return "fast";
+  }
+  if (lowered === "full") {
+    return "full";
+  }
+  if (lowered === "any" || lowered === "*") {
+    return null;
+  }
+  throw new Error(`invalid speed profile ${JSON.stringify(raw)} (expected full|fast|any)`);
+}
+
+function parseSpeedProfile(argv: string[]): "fast" | "full" | null {
+  const raw = parseStringArg(argv, "--speed") ?? (process.env.TURBOTOKEN_CI_ARTIFACT_SPEED ?? "full");
+  return normalizeSpeedProfile(raw);
+}
+
+function artifactSummarySpeed(payload: JsonMap): "fast" | "full" | null {
+  const selection = payload["artifactSelection"];
+  if (isRecord(selection)) {
+    const raw = selection["speedProfile"];
+    if (typeof raw === "string") {
+      return normalizeSpeedProfile(raw);
+    }
+  }
+  const legacy = payload["speedProfile"];
+  if (typeof legacy === "string") {
+    return normalizeSpeedProfile(legacy);
+  }
+  return null;
+}
+
 function profileFromLegacyFilename(name: string): string | null {
   const match = /^ci-benchmark-(all|cpu|gpu)-(.+)-\d+-\d+\.json$/.exec(name);
   if (!match) {
@@ -253,6 +290,7 @@ const dryRun = argv.includes("--dry-run");
 const allowHostMismatch = argv.includes("--allow-host-mismatch");
 const gatesPath = parseStringArg(argv, "--gates") ?? resolvePath("bench", "ci-gates.json");
 const resultsDir = parseStringArg(argv, "--results-dir") ?? resolvePath("bench", "results");
+const speedProfile = parseSpeedProfile(argv);
 const requestedProfiles = parseProfiles(argv);
 
 const gates = JSON.parse(readFileSync(gatesPath, "utf8")) as GatesConfig;
@@ -302,6 +340,12 @@ for (const profileName of targetProfiles) {
     }
     if (!isSuccessfulArtifact(payload)) {
       continue;
+    }
+    if (speedProfile != null) {
+      const observedSpeed = artifactSummarySpeed(payload);
+      if (observedSpeed !== speedProfile) {
+        continue;
+      }
     }
     if (!matchesHost(profile.host, payload, allowHostMismatch)) {
       continue;
@@ -364,6 +408,7 @@ if (!dryRun && updateCount > 0) {
 const summaryPath = resolvePath("bench", "results", `ci-gates-refresh-${Date.now()}.json`);
 writeJson(summaryPath, {
   generatedAt: new Date().toISOString(),
+  speedProfile: speedProfile ?? "any",
   gatesPath,
   resultsDir,
   dryRun,

@@ -124,17 +124,20 @@ fn chooseTrainingWorkerCount(word_count: usize, total_bytes: usize) usize {
     if (comptime builtin.single_threaded or builtin.os.tag == .freestanding) {
         return 1;
     }
-    if (word_count < training_parallel_min_words or total_bytes < training_parallel_min_bytes) {
-        return 1;
-    }
 
     const cpu_count = std.Thread.getCpuCount() catch 1;
     const capped_cpu = @max(@as(usize, 1), cpu_count);
-    const target = if (trainingThreadOverride()) |override|
-        @max(@as(usize, 1), @min(override, capped_cpu))
-    else
-        capped_cpu;
-    return @max(@as(usize, 1), @min(target, word_count));
+    if (trainingThreadOverride()) |override| {
+        // Explicit thread override is treated as an operator directive and bypasses
+        // the default size thresholds, while still respecting CPU/word bounds.
+        const target = @max(@as(usize, 1), @min(override, capped_cpu));
+        return @max(@as(usize, 1), @min(target, word_count));
+    }
+
+    if (word_count < training_parallel_min_words or total_bytes < training_parallel_min_bytes) {
+        return 1;
+    }
+    return @max(@as(usize, 1), @min(capped_cpu, word_count));
 }
 
 fn buildInitialPairStateSequential(

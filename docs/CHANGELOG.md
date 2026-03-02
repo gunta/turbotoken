@@ -11,7 +11,23 @@
 ### Added
 - x86_64 runtime dispatch backend in Zig (`src/arch/x86_64.zig`) for UTF-8 byte encode/decode/count paths with AVX-512 -> AVX2 -> SSE4.2 -> scalar selection.
 - wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
+- CI benchmark governance additions:
+  - explicit Metal direct 1MB parity gate (`gpu direct 1mb parity`) sourced from `bench-gpu-memory` direct row.
+  - training competitor governance gates for 100KB rows (`rustbpe`/`minbpe` presence + native-vs-competitor ratio ceilings).
+- CPU benchmark workflow now installs `rustbpe` and clones `minbpe` (`/tmp/minbpe`) so training competitor gates run with stable row availability.
+- `scripts/bench-training.ts` native row now benchmarks the direct C ABI training core (`turbotoken_train_bpe_ascii_o200k`) through a thin Python `ctypes` wrapper.
 - `scripts/bench-gpu-bpe-direct.ts` for explicit Metal direct-route A/B comparisons (direct toggle on/off) with crossover + GPU-memory artifact capture.
+- Metal direct BPE path now includes an optional on-device final output emission path (`tt_bpe_emit_tokens_from_links`) behind `TURBOTOKEN_METAL_BPE_GPU_EMIT_ENABLE=1`, while keeping the previous host reconstruction path as the default for stable throughput.
+- CI governance hardening:
+  - `scripts/ci-benchmark.ts` now defaults `--no-run` gate checks to `artifact-speed=full` unless explicitly overridden.
+  - `scripts/ralph-loop.ts` now pins all `*-gates-norun` tasks to `--artifact-speed=full` and sets `TURBOTOKEN_CI_ARTIFACT_SPEED=full` by default.
+- Roadmap/docs truth pass:
+  - `docs/PROGRESS.md` now reflects implemented WASM SIMD work and x86 runtime dispatch progress.
+  - `docs/metal-gpu.md` now documents the current on-device merge/compaction/emit status.
+  - `docs/BENCHMARKS.md` now includes measured turbotoken WASM BPE rows (Bun/Node hosts) from recent artifacts.
+- `scripts/ralph-loop.ts` long-run orchestrator for roadmap execution loops with resumable state (`bench/results/ralph-loop-state.json`) and live markdown report (`bench/charts/ralph-loop.md`).
+  - defaults now prioritize blocker phases (`training, metal, wasm, x86, governance`) and cadence expensive sweeps (`--full-governance-every`, `--competitors-every`).
+  - execution is now temporarily disabled by default and requires explicit opt-in via `TURBOTOKEN_RALPH_LOOP_ENABLE=1`.
 - `scripts/bench-gpu-bpe-direct.ts` now runs a profile matrix (`low-entropy`, `normal-text`) and records per-profile direct safety comparisons (slowdown/throughput/parity/route-kind).
 - Metal force-route correctness/perf plumbing:
   - `Encoding.encode_gpu(...)` now treats `TURBOTOKEN_METAL_FORCE_ALL_PIECES=1` as a true force path (bypasses chunk-size gate and range-batch minimum-piece gate).
@@ -29,6 +45,12 @@
   - `runBench` now supports profile scaling via `TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE` and `TURBOTOKEN_BENCH_FAST=1`.
   - `bench-competitors` fast mode trims fixture/token-size matrix for iteration cycles.
   - fast-mode defaults added for WASM (`minRuns` / memory runs), GPU byte-path inner iterations, and RAM benchmark run count.
+- CI artifact speed governance:
+  - `scripts/ci-benchmark.ts` now supports strict artifact filtering via `--artifact-speed=full|fast|any` (`TURBOTOKEN_CI_ARTIFACT_SPEED`, default `full`).
+  - `scripts/refresh-ci-gates-baselines.ts` now supports `--speed=full|fast|any` with the same profile semantics.
+  - benchmark artifacts now carry `speedProfile` metadata across manual JSON emitters (`bench-ram`, `bench-gpu-memory`, `bench-gpu-overlap`, `bench-gpu-bpe-direct`) to make full/fast selection deterministic.
+  - `bench-competitors` fast mode now preserves mandatory 1MB turbotoken encode/count rows so CI 1MB gates stay populated.
+  - benchmark workflow jobs now set `TURBOTOKEN_BENCH_SPEED=full` + `TURBOTOKEN_CI_ARTIFACT_SPEED=full` explicitly and upload both `*.json` and `*.meta.json` benchmark artifacts.
 - Route-level Metal GPU memory benchmark row (`metal-bpe-route-encode-gpu`) with route-kind tagging (`direct` vs `stitched`) in `scripts/bench-gpu-memory.ts`.
 - WASM benchmark output now includes explicit Node runtime rows and browser placeholder rows in `scripts/bench-wasm.ts`; scorecard now tracks Node/Browser row groups.
 - Project planning and documentation
@@ -117,9 +139,34 @@
 - `hypothesis` added to Python `dev` dependencies so upstream property-based compatibility tests are reproducible locally
 
 ### Changed
+- Metal tiny-piece routing safeguards + batching:
+  - full-piece GPU path now has a lower bound (`TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES`, default `4096`) so tiny regex pieces avoid per-piece GPU dispatch overhead.
+  - force-all mode now has a sub-direct-size safety fallback to regular CPU encode unless `TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT=1`.
+  - single-chunk exact pieces in Metal-many path now use native range batching instead of per-piece native encode calls.
+- Metal bridge Python wrappers now use one-shot output buffers for `encode_utf8_bytes(...)` and `encode_bpe_from_bytes(...)` (no separate probe call).
+- `python/turbotoken/core.py` GPU routing fallback behavior:
+  - `encode_gpu(device="auto", strict_verify=False)` now returns the regular CPU encode path immediately when whole-text autoroute resolves to native.
+  - GPU range-batch overflow fallback now keeps native range batching in chunks instead of dropping to per-piece Python BPE.
+- `python/turbotoken/_gpu.py` route-threshold lookup now caches resolved thresholds by env/profile tuple, removing repeated per-piece route-cache file reads in hot loops.
+- Metal direct-route default minimum bytes increased to `786_432` (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) so default direct dispatch focuses on larger texts where throughput is consistently better.
+- Profiled Metal gate floor raised to `40 MiB/s` for direct 1MB throughput (`macos-arm64-metal.minBpeDirectEncodeMiBPerSec`), with parity gate still mandatory.
+- Refreshed relative CI baselines from latest full-profile passing artifacts (`scripts/refresh-ci-gates-baselines.ts --speed=full ...`), including updated Metal direct throughput/memory baselines and CPU profile baselines.
+- `train_mergeable_ranks_from_iterator(...)` now defaults native pretokenize/direct-ASCII toggles to enabled when `TURBOTOKEN_TRAINING_BACKEND=native` (unless explicitly overridden to `0/false/no`).
+- Native-direct ASCII trainer fast path now has a single-text fast branch and early non-ASCII rejection to avoid unnecessary native bridge attempts.
+- `scripts/bench-training.ts` native command now forces true native training path (`TURBOTOKEN_NATIVE_TRAINING_FORCE=1`) with direct-ASCII/native-pretokenize toggles enabled.
+- Native trainer thread override (`TURBOTOKEN_NATIVE_TRAIN_THREADS`) now bypasses default size thresholds, allowing explicit parallelization directives on smaller corpora.
 - Metal direct BPE route (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`) is now **opt-in by default** after A/B benchmarks showed a large regression on the tracked quick-profile workload; stitched/native fallback remains default-safe.
 - Metal direct BPE route now has a default low-entropy safety guard (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`) to avoid pathological repetitive-input regressions.
-- Metal direct BPE host loop now batches multiple rounds per command submission by default (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT=8`, configurable up to 32) to reduce round-submission overhead.
+- Metal direct BPE host loop now batches multiple rounds per command submission by default (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`, configurable up to 64) to reduce round-submission overhead.
+- Metal direct BPE round batching now uses an input-size-aware default (`16` rounds/submit for very large buffers, `32` for smaller buffers; still overrideable via `TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`) to reduce command-submission overhead on medium pieces without over-dispatching tail rounds on 1MB direct rows.
+- Metal candidate kernel removed redundant per-thread safety branches in the direct BPE hot path (`tt_bpe_find_candidates`) after host-side rank-table validation guarantees.
+- Metal direct BPE loop now fuses candidate discovery and global min-rank reduction into a single kernel pass (find+min), removing one full-grid dispatch per BPE round in the direct route.
+- Metal active-index compaction now supports explicit env control (`TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_ENABLE`) and uses an adaptive default (enabled for large direct inputs, disabled for smaller inputs).
+- Metal active-index compaction now supports stride control (`TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE`, default `4`) so compaction can run every N rounds instead of every round.
+- Metal compaction kernel now uses block-prefix packing (one atomic append per threadgroup) instead of per-token atomic appends to reduce atomic contention in direct BPE loops.
+- Metal direct BPE now uses specialized no-branch compute pipelines for find/mark/apply phases (`*_full` vs `*_active`) instead of a single kernel with runtime mode branching, reducing per-dispatch overhead on the default full-grid path.
+- Fixed a direct-route correctness regression in multi-round command submissions by moving `next_active_count` resets from host writes into the on-GPU reset kernel (`tt_bpe_reset_counters`), avoiding pre-dispatch counter clobbering.
+- Metal direct BPE kernels now have a fast full-grid path (no active-index indirection) when compaction is disabled, restoring default-route throughput while preserving strict parity.
 - GPU crossover benchmark supports quick mode (`TURBOTOKEN_GPU_CROSSOVER_QUICK=1`) with reduced workload sizes/loops for faster A/B iteration.
 - Scorecard artifact selection now uses file modification time (instead of lexicographic filename ordering) to pick latest benchmark outputs reliably.
 - Scorecard now ingests `bench-gpu-bpe-direct` artifacts and ignores `bench-wasm-raw` exports when selecting canonical WASM benchmark inputs.

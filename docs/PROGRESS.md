@@ -11,8 +11,8 @@
 |-------|------|--------|----------|--------|--------|
 | 1 | ARM64 NEON + Python | `IN PROGRESS` | 18/19 | Weeks 1-3 | -- |
 | 2 | Apple Metal GPU | `IN PROGRESS` | 3/5 | Weeks 4-5 | -- |
-| 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 1/10 | Weeks 6-7 | -- |
-| 4 | x86_64 AVX2/AVX-512 | `NOT STARTED` | 0/5 | Weeks 8-9 | -- |
+| 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 4/10 | Weeks 6-7 | -- |
+| 4 | x86_64 AVX2/AVX-512 | `IN PROGRESS` | 1/5 | Weeks 8-9 | -- |
 | 5 | NVIDIA CUDA | `NOT STARTED` | 0/4 | Weeks 10-11 | -- |
 | 6 | RISC-V Vector (RVV) | `NOT STARTED` | 0/4 | Weeks 12-13 | -- |
 | 7+ | Language Bindings | `NOT STARTED` | 0/5 | Weeks 14+ | -- |
@@ -85,7 +85,7 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
 | 2.1 | Metal 4 compute shader for batch pre-tokenization | `DONE` | Replaced placeholder kernels with `tt_encode_u8_to_u32` and `tt_count_nonzero_segments`, plus Objective-C Metal host bridge (`gpu/metal/metal_bridge.m`) with pipeline + buffer caching; latest tuning pass (`metal-byte-path-v4`) increased encode bytes/thread (`512`), added unrolled `uchar4 -> uint4` vector widening stores, switched count hot loop to 8x unrolled accumulation with single-simdgroup fast path, and updated host dispatch heuristics |
-| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `IN PROGRESS` | Added experimental chunked BPE stitch prototype, native batch/range/chunked C ABI helpers for rank-based stitching (`turbotoken_encode_bpe_batch_from_ranks`, `..._ranges_...`, `..._chunked_stitched_...`), and a Metal owner-mask stitch kernel (`tt_chunk_owner_flags`); true on-GPU merge kernels still pending. Latest research pass (2026-02-25) prioritized a three-kernel loop for min-rank selection, non-overlap ownership, and prefix-sum compaction (see `docs/metal-gpu.md` + `docs/RESEARCH.md`). |
+| 2.2 | Metal compute shader for batch BPE merge (BlockBPE-style) | `IN PROGRESS` | Added a true on-device merge loop (`find -> mark -> apply`) with iterative active-index compaction and optional on-GPU token emission (`TURBOTOKEN_METAL_BPE_GPU_EMIT_ENABLE=1`) in `gpu/metal/metal_bridge.m`, plus rank-table lookup kernels and parity fallbacks. Remaining work is route wins/crossover tuning and broader workload validation before default routing. |
 | 2.3 | `encode_gpu()` / `count_gpu()` Python methods | `DONE` | Added public experimental `Encoding.encode_gpu()` / `count_gpu()`, auto-route calibration v4 cache (encode/count/BPE thresholds), and route split where `device=\"auto\"` stays exact/native unless calibrated metal thresholds are met while `device=\"metal\"` opts into experimental chunked stitch mode |
 | 2.4 | Hyperfine benchmarks: Metal vs NEON CPU vs tiktoken | `DONE` | `scripts/bench-gpu.ts` runs real Metal/NEON byte-path benchmarks (latest: `bench/results/bench-gpu-20260227-150010.json`, including native-bridge hybrid row); added crossover matrix bench (`scripts/bench-gpu-crossover.ts`) with auto-route + profiling output (latest standard: `bench/results/bench-gpu-crossover-1772204438191.json`, now with populated BPE rows and `bpe_use_metal_min_piece_bytes=1048576` from calibration); added GPU memory telemetry bench (`scripts/bench-gpu-memory.ts`) with per-op Metal memory rows plus derived MiB/s throughput columns (latest: `bench/results/bench-gpu-memory-1772204436247.json`); added CUDA memory benchmark harness (`scripts/bench-gpu-memory-cuda.ts`) with graceful skip artifact on non-NVIDIA hosts (latest local skip: `bench/results/bench-gpu-memory-cuda-1772176779926.json`), plus measured remote Modal B200 CUDA rows (`bench/results/bench-modal-cuda-1772191604329.json`; embedded CUDA medians: `0.827 ms` encode-1MiB @ `1208.7 MiB/s`, `0.674 ms` count-4MiB @ `5934.6 MiB/s`) |
 | 2.5 | Blog post: Metal GPU tokenization | `TODO` | `docs/metal-gpu.md` |
@@ -97,11 +97,11 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
 | 3.1 | Add `wasm32-freestanding` target to `build.zig` | `DONE` | Added explicit wasm32-freestanding cross-target build step |
-| 3.2 | WASM-specific optimizations in `src/arch/wasm.zig` | `TODO` | Scalar + WASM SIMD |
-| 3.3 | Explore WASM SIMD via Zig `@Vector(16, u8)` on wasm32 | `TODO` | 128-bit SIMD in browser |
+| 3.2 | WASM-specific optimizations in `src/arch/wasm.zig` | `DONE` | Added wasm SIMD-aware byte-path helpers (`countNonAscii`, `encodeU8ToU32`, `validateAndDecodeU32ToU8`) with scalar fallback in `src/arch/wasm.zig` |
+| 3.3 | Explore WASM SIMD via Zig `@Vector(16, u8)` on wasm32 | `DONE` | First-pass SIMD implementation landed via Zig vector paths and gated `simd128` runtime feature checks |
 | 3.4 | Target: <150KB WASM binary (ReleaseSmall + wasm-opt) | `TODO` | Zero runtime overhead |
-| 3.5 | JS/TS wrapper: `js/wasm-loader.ts` with ES module export | `TODO` | |
-| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `TODO` | `package.json` |
+| 3.5 | JS/TS wrapper: `js/wasm-loader.ts` with ES module export | `DONE` | `js/src/wasm-loader.ts` now exposes an ESM loader/bridge with BPE + training exports |
+| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `IN PROGRESS` | npm packaging/verify/smoke scripts are wired (`prepack`, `scripts/verify-npm-package.ts`, `scripts/smoke-npm-install.ts`); broader auto-load/runtime matrix is still in progress |
 | 3.7 | Browser benchmark page | `TODO` | vs tiktoken.js, gpt-tokenizer, wasm-tokenizer |
 | 3.8 | MoonBit WASM comparison build (for docs only) | `TODO` | Document in `WASM-EXPLORATION.md` |
 | 3.9 | Binary size + perf comparison (all WASM approaches) | `TODO` | Zig vs MoonBit vs Emscripten |
@@ -113,10 +113,10 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 4.1 | AVX2 pre-tokenizer via Zig `@Vector(32, u8)` + hand-written `.S` | `TODO` | `src/arch/x86_64.zig` + `asm/x86_64/*.S` |
-| 4.2 | AVX-512BW pre-tokenizer (`vpermb`, 64 bytes/cycle) | `TODO` | Where available |
-| 4.3 | AVX2 decoder (`vmovdqu` + streaming stores) | `TODO` | |
-| 4.4 | Runtime CPU feature detection (AVX-512 -> AVX2 -> SSE4.2 -> scalar) | `TODO` | |
+| 4.1 | AVX2 pre-tokenizer via Zig `@Vector(32, u8)` + hand-written `.S` | `IN PROGRESS` | Zig vectorized x86 path is wired in `src/arch/x86_64.zig`; hand-written `.S` specialization is still pending |
+| 4.2 | AVX-512BW pre-tokenizer (`vpermb`, 64 bytes/cycle) | `IN PROGRESS` | AVX-512 feature-gated vector path exists; BW-specific instruction tuning remains pending |
+| 4.3 | AVX2 decoder (`vmovdqu` + streaming stores) | `IN PROGRESS` | x86 vectorized decode/validate path is present in `src/arch/x86_64.zig`; lower-level asm tuning remains pending |
+| 4.4 | Runtime CPU feature detection (AVX-512 -> AVX2 -> SSE4.2 -> scalar) | `DONE` | Runtime dispatch order is wired in `src/arch/x86_64.zig` with helper feature probes and kernel selectors |
 | 4.5 | Hyperfine benchmarks on Intel Xeon + AMD Ryzen | `TODO` | |
 
 ---

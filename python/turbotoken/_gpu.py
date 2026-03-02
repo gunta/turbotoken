@@ -195,6 +195,16 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     return max(minimum, value)
 
 
+def _parse_int_floor(raw: str, default: int, *, minimum: int = 1) -> int:
+    if not raw:
+        return default
+    try:
+        value = int(raw, 10)
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
 def _env_flag(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name, "").strip().lower()
     if raw in {"1", "true", "yes", "on"}:
@@ -209,7 +219,8 @@ def _metal_bpe_direct_enabled() -> bool:
 
 
 def _metal_bpe_direct_min_bytes() -> int:
-    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES", 32_768, minimum=1)
+    # Keep direct-on-GPU route focused on large texts where it wins reliably.
+    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES", 786_432, minimum=1)
 
 
 def _metal_bpe_direct_max_bytes() -> int:
@@ -218,6 +229,15 @@ def _metal_bpe_direct_max_bytes() -> int:
 
 def _metal_bpe_direct_low_entropy_guard_enabled() -> bool:
     return _env_flag("TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD", default=True)
+
+
+def _metal_bpe_full_min_bytes() -> int:
+    # Full-piece GPU route is expensive for tiny regex pieces; keep it for larger pieces.
+    return _env_int("TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES", 4096, minimum=1)
+
+
+def _metal_bpe_full_max_bytes() -> int:
+    return _env_int("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", 16384, minimum=1)
 
 
 def _is_low_entropy_direct_input(data: bytes) -> bool:
@@ -708,14 +728,8 @@ class MetalBridge:
             return []
 
         in_buf = self._ffi.from_buffer("const unsigned char[]", data)
-        needed = int(self._lib.turbotoken_metal_encode_utf8_bytes(in_buf, len(data), self._ffi.NULL, 0))
-        if needed < 0:
-            return None
-        if needed == 0:
-            return []
-
-        out = self._ffi.new("uint32_t[]", needed)
-        written = int(self._lib.turbotoken_metal_encode_utf8_bytes(in_buf, len(data), out, needed))
+        out = self._ffi.new("uint32_t[]", len(data))
+        written = int(self._lib.turbotoken_metal_encode_utf8_bytes(in_buf, len(data), out, len(data)))
         if written < 0:
             return None
         return _unpack_u32(self._ffi, out, written)
@@ -931,26 +945,14 @@ class MetalBridge:
             return []
 
         in_buf = self._ffi.from_buffer("const unsigned char[]", data)
-        needed = int(
-            self._lib.turbotoken_metal_bpe_encode_from_bytes(
-                in_buf,
-                len(data),
-                self._ffi.NULL,
-                0,
-            )
-        )
-        if needed < 0:
-            return None
-        if needed == 0:
-            return []
-
-        out = self._ffi.new("uint32_t[]", needed)
+        # BPE output token count is bounded by input bytes, so one call is enough.
+        out = self._ffi.new("uint32_t[]", len(data))
         written = int(
             self._lib.turbotoken_metal_bpe_encode_from_bytes(
                 in_buf,
                 len(data),
                 out,
-                needed,
+                len(data),
             )
         )
         if written < 0:
@@ -1291,11 +1293,18 @@ def calibrate_autoroute(*, force: bool = False) -> dict[str, Any]:
         payload["bpe_use_metal_min_piece_bytes"] = first_bpe_win
 
     _write_route_cache(payload)
+    _resolve_route_thresholds_cached.cache_clear()
     return payload
 
 
-def _get_route_thresholds() -> tuple[int, int, int]:
-    if os.environ.get("TURBOTOKEN_METAL_AUTOROUTE_DISABLE", "").strip().lower() in {"1", "true", "yes"}:
+@lru_cache(maxsize=32)
+def _resolve_route_thresholds_cached(
+    autoroute_disable: str,
+    encode_floor_raw: str,
+    count_floor_raw: str,
+    bpe_floor_raw: str,
+) -> tuple[int, int, int]:
+    if autoroute_disable in {"1", "true", "yes"}:
         return 1 << 60, 1 << 60, 1 << 60
 
     cached = _load_route_cache()
@@ -1307,14 +1316,27 @@ def _get_route_thresholds() -> tuple[int, int, int]:
     bpe_threshold = int(cached.get("bpe_use_metal_min_piece_bytes", 1 << 60))
 
     # Default policy keeps Metal routes focused on large crossover workloads.
-    encode_floor = _env_int("TURBOTOKEN_METAL_ENCODE_MIN_BYTES", 1 << 60, minimum=1)
-    count_floor = _env_int("TURBOTOKEN_METAL_COUNT_MIN_TOTAL_BYTES", 1 << 60, minimum=1)
-    bpe_floor = _env_int("TURBOTOKEN_METAL_BPE_MIN_BYTES", 1_048_576, minimum=1)
+    encode_floor = _parse_int_floor(encode_floor_raw, 1 << 60, minimum=1)
+    count_floor = _parse_int_floor(count_floor_raw, 1 << 60, minimum=1)
+    bpe_floor = _parse_int_floor(bpe_floor_raw, 1_048_576, minimum=1)
 
     encode_threshold = max(encode_threshold, encode_floor)
     count_threshold = max(count_threshold, count_floor)
     bpe_threshold = max(bpe_threshold, bpe_floor)
     return encode_threshold, count_threshold, bpe_threshold
+
+
+def _get_route_thresholds() -> tuple[int, int, int]:
+    autoroute_disable = os.environ.get("TURBOTOKEN_METAL_AUTOROUTE_DISABLE", "").strip().lower()
+    encode_floor_raw = os.environ.get("TURBOTOKEN_METAL_ENCODE_MIN_BYTES", "").strip()
+    count_floor_raw = os.environ.get("TURBOTOKEN_METAL_COUNT_MIN_TOTAL_BYTES", "").strip()
+    bpe_floor_raw = os.environ.get("TURBOTOKEN_METAL_BPE_MIN_BYTES", "").strip()
+    return _resolve_route_thresholds_cached(
+        autoroute_disable,
+        encode_floor_raw,
+        count_floor_raw,
+        bpe_floor_raw,
+    )
 
 
 def encode_utf8_bytes_auto(data: bytes) -> tuple[list[int] | None, str]:
@@ -1490,10 +1512,13 @@ def _encode_bpe_chunked_stitched_metal(
     if direct_tokens is not None:
         return direct_tokens
 
-    full_piece_max_bytes = int(
-        os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384")
-    )
-    if len(data) <= full_piece_max_bytes and _ensure_metal_bpe_rank_table(rank_payload):
+    full_piece_min_bytes = _metal_bpe_full_min_bytes()
+    full_piece_max_bytes = _metal_bpe_full_max_bytes()
+    if (
+        len(data) >= full_piece_min_bytes
+        and len(data) <= full_piece_max_bytes
+        and _ensure_metal_bpe_rank_table(rank_payload)
+    ):
         gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
         if gpu_tokens is not None:
             total_bytes = _token_total_bytes(gpu_tokens, token_lens)
@@ -1701,7 +1726,8 @@ def _encode_bpe_chunked_stitched_metal_many(
         return []
 
     token_lens = _rank_token_lens_from_payload(rank_payload)
-    full_piece_max_bytes = int(os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384"))
+    full_piece_min_bytes = _metal_bpe_full_min_bytes()
+    full_piece_max_bytes = _metal_bpe_full_max_bytes()
     full_piece_gpu_ready = _ensure_metal_bpe_rank_table(rank_payload)
     native_layout_enabled = os.environ.get("TURBOTOKEN_GPU_NATIVE_LAYOUT_ENABLE", "").strip().lower() in {
         "1",
@@ -1710,6 +1736,8 @@ def _encode_bpe_chunked_stitched_metal_many(
     }
 
     per_piece: list[list[int] | None] = [None] * len(ranges)
+    exact_piece_indices: list[int] = []
+    exact_piece_ranges: list[tuple[int, int]] = []
     long_piece_indices: list[int] = []
     long_piece_ranges: list[tuple[int, int]] = []
     long_piece_num_chunks: list[int] = []
@@ -1730,7 +1758,7 @@ def _encode_bpe_chunked_stitched_metal_many(
                         per_piece[piece_idx] = gpu_tokens
                         continue
 
-        if piece_len <= full_piece_max_bytes and full_piece_gpu_ready:
+        if piece_len >= full_piece_min_bytes and piece_len <= full_piece_max_bytes and full_piece_gpu_ready:
             gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
             if gpu_tokens is not None:
                 gpu_total = _token_total_bytes(gpu_tokens, token_lens)
@@ -1740,16 +1768,26 @@ def _encode_bpe_chunked_stitched_metal_many(
 
         num_chunks = (piece_len + chunk_bytes - 1) // chunk_bytes
         if num_chunks <= 1:
-            exact = native_bridge.encode_bpe_from_ranks(rank_payload, piece_bytes)
-            if exact is None:
-                return None
-            per_piece[piece_idx] = exact
+            exact_piece_indices.append(piece_idx)
+            exact_piece_ranges.append((piece_start, piece_end))
             continue
 
         long_piece_indices.append(piece_idx)
         long_piece_ranges.append((piece_start, piece_end))
         long_piece_num_chunks.append(num_chunks)
         long_piece_lengths[piece_idx] = piece_len
+
+    if exact_piece_ranges:
+        exact_pieces = _encode_bpe_ranges_exact_pieces(
+            native_bridge,
+            rank_payload,
+            data,
+            exact_piece_ranges,
+        )
+        if exact_pieces is None or len(exact_pieces) != len(exact_piece_ranges):
+            return None
+        for exact_idx, piece_idx in enumerate(exact_piece_indices):
+            per_piece[piece_idx] = exact_pieces[exact_idx]
 
     if not long_piece_indices:
         if any(piece_tokens is None for piece_tokens in per_piece):
@@ -2041,8 +2079,13 @@ def encode_bpe_chunked_stitched(
             if direct is not None:
                 return direct
 
-            full_piece_max_bytes = int(os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "16384"))
-            if len(data) <= full_piece_max_bytes and _ensure_metal_bpe_rank_table(rank_payload):
+            full_piece_min_bytes = _metal_bpe_full_min_bytes()
+            full_piece_max_bytes = _metal_bpe_full_max_bytes()
+            if (
+                len(data) >= full_piece_min_bytes
+                and len(data) <= full_piece_max_bytes
+                and _ensure_metal_bpe_rank_table(rank_payload)
+            ):
                 metal_bridge = get_metal_bridge()
                 if metal_bridge.available:
                     gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)

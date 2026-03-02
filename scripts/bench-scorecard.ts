@@ -14,6 +14,8 @@ interface CompetitorRow {
 interface GpuBpeDirectProfileRow {
   key: string;
   textKind: string;
+  lane: string | null;
+  inputBytes: number | null;
   disabledMetalMs: number | null;
   enabledMetalMs: number | null;
   disabledMetalMiBPerSec: number | null;
@@ -192,6 +194,8 @@ function parseGpuBpeDirectProfileRow(key: string, value: unknown): GpuBpeDirectP
   return {
     key,
     textKind,
+    lane: typeof value["lane"] === "string" ? String(value["lane"]) : null,
+    inputBytes: toNumber(value["inputBytes"]),
     disabledMetalMs: toNumber(comparison["disabledMetalMs"]),
     enabledMetalMs: toNumber(comparison["enabledMetalMs"]),
     disabledMetalMiBPerSec: toNumber(comparison["disabledMetalMiBPerSec"]),
@@ -552,6 +556,18 @@ const gpuBpeDirectStress =
   gpuBpeDirectProfiles.find((row) => row.textKind === "low-entropy") ??
   gpuBpeDirectProfiles.find((row) => row.key === "lowEntropy") ??
   null;
+const gpuBpeDirectLongHeadline =
+  gpuBpeDirectProfiles.find((row) => row.key === "normalTextLong") ??
+  gpuBpeDirectProfiles.find((row) => row.textKind === "normal-text" && row.lane === "long") ??
+  null;
+const gpuBpeDirectLongStress =
+  gpuBpeDirectProfiles.find((row) => row.key === "lowEntropyLong") ??
+  gpuBpeDirectProfiles.find((row) => row.textKind === "low-entropy" && row.lane === "long") ??
+  null;
+const longHeadlineRouteThroughputRatio = ratio(
+  gpuBpeDirectLongHeadline?.disabledRouteMedianGpuMiBPerSec ?? null,
+  gpuBpeDirectLongHeadline?.enabledRouteMedianGpuMiBPerSec ?? null,
+);
 const headlineRouteThroughputRatio = ratio(
   gpuBpeDirectHeadline?.disabledRouteMedianGpuMiBPerSec ?? null,
   gpuBpeDirectHeadline?.enabledRouteMedianGpuMiBPerSec ?? null,
@@ -597,6 +613,8 @@ const payload: JsonMap = {
     gpuBpeDirectProfiles,
     gpuBpeDirectHeadline,
     gpuBpeDirectStress,
+    gpuBpeDirectLongHeadline,
+    gpuBpeDirectLongStress,
   },
 };
 
@@ -675,6 +693,36 @@ const markdownRows = [
   `- stress profile: ${gpuBpeDirectStress?.textKind ?? "n/a"}`,
   `- stress slowdown: ${gpuBpeDirectStress?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectStress.slowdownPct, 2)}%`}`,
   `- stress throughput ratio (enabled/disabled): ${gpuBpeDirectStress?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectStress.throughputRatio, 3)}x`}`,
+  `- long-lane headline key: ${gpuBpeDirectLongHeadline?.key ?? "n/a"}`,
+  `- long-lane bytes: ${gpuBpeDirectLongHeadline?.inputBytes == null ? "n/a" : `${Math.round(gpuBpeDirectLongHeadline.inputBytes).toLocaleString()}`}`,
+  `- long-lane disabled: ${
+    gpuBpeDirectLongHeadline?.disabledMetalMs == null
+      ? "n/a"
+      : `${round(gpuBpeDirectLongHeadline.disabledMetalMs, 2)} ms (${gpuBpeDirectLongHeadline.disabledMetalMiBPerSec == null ? "MiB/s n/a" : `${round(gpuBpeDirectLongHeadline.disabledMetalMiBPerSec, 3)} MiB/s`})`
+  }`,
+  `- long-lane enabled: ${
+    gpuBpeDirectLongHeadline?.enabledMetalMs == null
+      ? "n/a"
+      : `${round(gpuBpeDirectLongHeadline.enabledMetalMs, 2)} ms (${gpuBpeDirectLongHeadline.enabledMetalMiBPerSec == null ? "MiB/s n/a" : `${round(gpuBpeDirectLongHeadline.enabledMetalMiBPerSec, 3)} MiB/s`})`
+  }`,
+  `- long-lane slowdown: ${gpuBpeDirectLongHeadline?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectLongHeadline.slowdownPct, 2)}%`}`,
+  `- long-lane throughput ratio (enabled/disabled): ${gpuBpeDirectLongHeadline?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectLongHeadline.throughputRatio, 3)}x`}`,
+  `- long-lane route disabled (GPU-only): ${
+    gpuBpeDirectLongHeadline?.disabledRouteMedianGpuMiBPerSec == null
+      ? "n/a"
+      : `${round(gpuBpeDirectLongHeadline.disabledRouteMedianGpuMiBPerSec, 3)} MiB/s`
+  }`,
+  `- long-lane route enabled (GPU-only): ${
+    gpuBpeDirectLongHeadline?.enabledRouteMedianGpuMiBPerSec == null
+      ? "n/a"
+      : `${round(gpuBpeDirectLongHeadline.enabledRouteMedianGpuMiBPerSec, 3)} MiB/s`
+  }`,
+  `- long-lane route throughput ratio (enabled/disabled): ${
+    longHeadlineRouteThroughputRatio == null ? "n/a" : `${round(longHeadlineRouteThroughputRatio, 3)}x`
+  }`,
+  `- long-lane stress key: ${gpuBpeDirectLongStress?.key ?? "n/a"}`,
+  `- long-lane stress slowdown: ${gpuBpeDirectLongStress?.slowdownPct == null ? "n/a" : `${round(gpuBpeDirectLongStress.slowdownPct, 2)}%`}`,
+  `- long-lane stress throughput ratio (enabled/disabled): ${gpuBpeDirectLongStress?.throughputRatio == null ? "n/a" : `${round(gpuBpeDirectLongStress.throughputRatio, 3)}x`}`,
   ``,
   `## Winners`,
   `- encode 100KB: ${winner(encode100kbRows)?.name ?? "n/a"}`,

@@ -9,8 +9,8 @@ SIMD backends, and a compatibility-focused Python API.
 
 - Early implementation, actively under development.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
-- Native Zig CPU acceleration is available for key byte-path primitives; broader backend work (AVX/GPU full BPE) is still in progress.
-- Apple Metal backend is now wired as an experimental UTF-8 byte-path accelerator (full GPU BPE merge path is still pending).
+- Native Zig CPU acceleration is available for key byte-path primitives, with x86 runtime dispatch (AVX-512/AVX2/SSE4.2/scalar) now wired in `src/arch/x86_64.zig`.
+- Apple Metal backend now includes an experimental on-device BPE merge loop (`find -> mark -> apply` + active compaction + GPU emit), but remains parity-guarded/experimental and is not the default route.
 - Modal NVIDIA remote benchmark runner is available via `scripts/modal/bench_cuda_modal.py` for CUDA-hosted baseline runs (`B200` default; also supports `B200+`/`H200`/`H100`/`A100`/`L40S` on Modal). Paid Modal CUDA runs are explicit opt-in (`--confirm-paid`).
 - First-pass Python training APIs are available (`train_mergeable_ranks_from_iterator`, `train_encoding_from_iterator`) for custom regex+BPE vocab training (CPU path only).
 - Public parity checks currently pass for `o200k_base`, `cl100k_base`, `p50k_base`, `r50k_base`

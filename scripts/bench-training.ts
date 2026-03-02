@@ -31,7 +31,7 @@ const availability = {
 };
 
 function commandForTurbotokenTraining(path: string): string {
-  return `TURBOTOKEN_TRAINING_BACKEND=native TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();_,ranks=train_mergeable_ranks_from_iterator([text],vocab_size=${vocabSize},pattern=None,min_frequency=${minFrequency});assert len(ranks)>=256"`;
+  return `TURBOTOKEN_NATIVE_TRAIN_THREADS=8 TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import ctypes,os,pathlib,platform;data=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_bytes();lib_candidates=[];is_win=(os.name=='nt');suffix='dylib' if platform.system()=='Darwin' else ('dll' if is_win else 'so');primary=('turbotoken.'+suffix) if is_win else ('libturbotoken.'+suffix);lib_candidates.append(pathlib.Path('zig-out/lib')/primary);lib_candidates.append(pathlib.Path('python/turbotoken/.libs')/primary);lib=None\nfor cand in lib_candidates:\n    if cand.exists():\n        lib=ctypes.CDLL(str(cand));\n        break\nassert lib is not None, lib_candidates;fn=lib.turbotoken_train_bpe_ascii_o200k;fn.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_uint32,ctypes.c_uint32,ctypes.POINTER(ctypes.c_uint32),ctypes.c_size_t];fn.restype=ctypes.c_long;cap=max(1,(${vocabSize}-256)*3);out=(ctypes.c_uint32*cap)();buf=ctypes.create_string_buffer(data);written=fn(ctypes.cast(buf,ctypes.c_void_p),len(data),${vocabSize},${minFrequency},out,cap);assert written>=1"`;
 }
 
 function commandForTurbotokenTrainingPythonFallback(path: string): string {

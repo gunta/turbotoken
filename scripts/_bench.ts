@@ -3,6 +3,8 @@ import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import {
+  benchFastMode,
+  benchSpeedProfile,
   dateTag,
   ensureDir,
   resolvePath,
@@ -101,11 +103,6 @@ function resolveHyperfineCommand(): string | null {
   return null;
 }
 
-function envFlag(name: string): boolean {
-  const raw = (process.env[name] ?? "").trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
 function benchRunScale(): number {
   const raw = (process.env.TURBOTOKEN_BENCH_HYPERFINE_RUN_SCALE ?? "").trim();
   if (raw.length > 0) {
@@ -114,7 +111,7 @@ function benchRunScale(): number {
       return parsed;
     }
   }
-  if (envFlag("TURBOTOKEN_BENCH_FAST")) {
+  if (benchFastMode()) {
     return 0.25;
   }
   return 1;
@@ -128,7 +125,7 @@ function benchMaxRuns(minRuns: number): number | null {
       return Math.max(minRuns, parsed);
     }
   }
-  if (envFlag("TURBOTOKEN_BENCH_FAST")) {
+  if (benchFastMode()) {
     return minRuns;
   }
   return null;
@@ -136,6 +133,7 @@ function benchMaxRuns(minRuns: number): number | null {
 
 export function runBench(options: BenchOptions): number {
   return withBenchmarkLock(options.name, () => {
+    const speedProfile = benchSpeedProfile();
     const configuredWarmup = options.warmup ?? 3;
     const configuredMinRuns = options.minRuns ?? 10;
     const runScale = benchRunScale();
@@ -184,15 +182,17 @@ export function runBench(options: BenchOptions): number {
           const metaPath = resolve(resultsDir, `${taggedName}.meta.json`);
           writeJson(metaPath, {
             ...options.metadata,
+            speedProfile,
             benchmarkTuning: {
+              speedProfile,
               runScale,
-            configuredWarmup,
-            configuredMinRuns,
-            effectiveWarmup: warmup,
-            effectiveMinRuns: minRuns,
-            effectiveMaxRuns: maxRuns,
-          },
-        });
+              configuredWarmup,
+              configuredMinRuns,
+              effectiveWarmup: warmup,
+              effectiveMinRuns: minRuns,
+              effectiveMaxRuns: maxRuns,
+            },
+          });
         }
         console.log(`Wrote Hyperfine JSON: ${jsonPath}`);
         return 0;
@@ -210,7 +210,9 @@ export function runBench(options: BenchOptions): number {
       name: options.name,
       metadata: {
         ...(options.metadata ?? {}),
+        speedProfile,
         benchmarkTuning: {
+          speedProfile,
           runScale,
           configuredWarmup,
           configuredMinRuns,

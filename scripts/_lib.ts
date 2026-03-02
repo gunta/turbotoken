@@ -23,6 +23,8 @@ export interface RunResult {
   stderr: string;
 }
 
+export type BenchSpeedProfile = "fast" | "full";
+
 interface BenchLockOwner {
   token: string;
   pid: number;
@@ -61,11 +63,30 @@ const activeBenchLocks = new Map<string, string>();
 let benchLockExitHookInstalled = false;
 
 function lockEnabled(): boolean {
-  const raw = (process.env[BENCH_LOCK_DISABLE_ENV] ?? "").trim().toLowerCase();
-  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") {
+  if (envFlag(BENCH_LOCK_DISABLE_ENV)) {
     return false;
   }
   return true;
+}
+
+export function envFlag(name: string): boolean {
+  const raw = (process.env[name] ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+export function benchSpeedProfile(): BenchSpeedProfile {
+  const raw = (process.env.TURBOTOKEN_BENCH_SPEED ?? "").trim().toLowerCase();
+  if (raw === "fast" || raw === "quick") {
+    return "fast";
+  }
+  if (raw === "full") {
+    return "full";
+  }
+  return envFlag("TURBOTOKEN_BENCH_FAST") ? "fast" : "full";
+}
+
+export function benchFastMode(): boolean {
+  return benchSpeedProfile() === "fast";
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {

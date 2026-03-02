@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import { readdirSync } from "node:fs";
@@ -16,6 +16,9 @@ interface CpuGates {
   encode1mbMaxMs: number;
   count1mbMaxMs: number;
   training100kbNativeMaxMs: number;
+  requireTrainingCompetitorRows?: boolean;
+  training100kbNativeMaxRustbpeRatio?: number;
+  training100kbNativeMaxMinbpeRatio?: number;
   peakRssEncode1mbMaxMb: number;
   encode1mbMinMiBPerSec: number;
   count1mbMinMiBPerSec: number;
@@ -25,6 +28,7 @@ interface GpuGates {
   maxDeviceAllocatedMiB: number;
   minBpeDirectEncodeMiBPerSec: number;
   requireGpuMemoryRows: boolean;
+  requireDirect1mbParity?: boolean;
   directAbSafety?: DirectAbSafetyGates;
 }
 
@@ -175,8 +179,91 @@ function parseProfileName(argv: string[]): string | null {
   return env.length > 0 ? env : null;
 }
 
-function latestResultPath(prefix: string, options: { excludes?: string[] } = {}): string | null {
+function normalizeSpeedProfile(raw: string | null): "fast" | "full" | null {
+  if (!raw) {
+    return null;
+  }
+  const lowered = raw.trim().toLowerCase();
+  if (lowered === "fast" || lowered === "quick") {
+    return "fast";
+  }
+  if (lowered === "full") {
+    return "full";
+  }
+  if (lowered === "any" || lowered === "*") {
+    return null;
+  }
+  throw new Error(`invalid artifact speed profile ${JSON.stringify(raw)} (expected full|fast|any)`);
+}
+
+function parseArtifactSpeedProfile(argv: string[], noRun: boolean): "fast" | "full" | null {
+  const arg = argv.find((item) => item.startsWith("--artifact-speed="));
+  if (arg) {
+    return normalizeSpeedProfile(arg.slice("--artifact-speed=".length));
+  }
+  if (noRun) {
+    // Gate-only checks should default to full-fidelity artifacts unless explicitly overridden.
+    return "full";
+  }
+  const env = process.env.TURBOTOKEN_CI_ARTIFACT_SPEED ?? "full";
+  return normalizeSpeedProfile(env);
+}
+
+function artifactMetaPath(path: string): string {
+  if (path.endsWith(".json")) {
+    return `${path.slice(0, -5)}.meta.json`;
+  }
+  return `${path}.meta.json`;
+}
+
+function artifactSpeedProfile(path: string, payload: JsonMap | null): "fast" | "full" | null {
+  const fromPayload = normalizeSpeedProfile(
+    typeof payload?.["speedProfile"] === "string" ? String(payload["speedProfile"]) : null,
+  );
+  if (fromPayload != null) {
+    return fromPayload;
+  }
+
+  const benchmark = payload?.["benchmark"];
+  if (isRecord(benchmark)) {
+    const fromBenchmark = normalizeSpeedProfile(
+      typeof benchmark["speedProfile"] === "string" ? String(benchmark["speedProfile"]) : null,
+    );
+    if (fromBenchmark != null) {
+      return fromBenchmark;
+    }
+  }
+
+  const metaPath = artifactMetaPath(path);
+  if (!existsSync(metaPath)) {
+    return null;
+  }
+  try {
+    const meta = JSON.parse(readFileSync(metaPath, "utf8")) as JsonMap;
+    const fromMeta = normalizeSpeedProfile(
+      typeof meta["speedProfile"] === "string" ? String(meta["speedProfile"]) : null,
+    );
+    if (fromMeta != null) {
+      return fromMeta;
+    }
+    const tuning = meta["benchmarkTuning"];
+    if (isRecord(tuning)) {
+      return normalizeSpeedProfile(
+        typeof tuning["speedProfile"] === "string" ? String(tuning["speedProfile"]) : null,
+      );
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function latestResultPath(
+  prefix: string,
+  options: { excludes?: string[]; speedProfile?: "fast" | "full" | null } = {},
+): string | null {
   const excludes = options.excludes ?? [];
+  const desiredSpeed = options.speedProfile ?? null;
   const resultsDir = resolvePath("bench", "results");
   const names = readdirSync(resultsDir)
     .filter(
@@ -186,11 +273,20 @@ function latestResultPath(prefix: string, options: { excludes?: string[] } = {})
         !name.endsWith(".meta.json") &&
         excludes.every((needle) => !name.includes(needle)),
     )
-    .sort();
-  if (names.length === 0) {
-    return null;
+    .sort()
+    .reverse();
+  for (const name of names) {
+    const path = join(resultsDir, name);
+    const payload = loadJson(path);
+    if (desiredSpeed != null) {
+      const observed = artifactSpeedProfile(path, payload);
+      if (observed !== desiredSpeed) {
+        continue;
+      }
+    }
+    return path;
   }
-  return join(resultsDir, names[names.length - 1]);
+  return null;
 }
 
 function loadJson(path: string | null): JsonMap | null {
@@ -207,9 +303,10 @@ function loadJson(path: string | null): JsonMap | null {
 function latestResultPathMatching(
   prefix: string,
   matcher: (payload: JsonMap) => boolean,
-  options: { excludes?: string[] } = {},
+  options: { excludes?: string[]; speedProfile?: "fast" | "full" | null } = {},
 ): string | null {
   const excludes = options.excludes ?? [];
+  const desiredSpeed = options.speedProfile ?? null;
   const resultsDir = resolvePath("bench", "results");
   const names = readdirSync(resultsDir)
     .filter(
@@ -224,7 +321,16 @@ function latestResultPathMatching(
   for (const name of names) {
     const path = join(resultsDir, name);
     const payload = loadJson(path);
-    if (payload && matcher(payload)) {
+    if (payload) {
+      if (desiredSpeed != null) {
+        const observed = artifactSpeedProfile(path, payload);
+        if (observed !== desiredSpeed) {
+          continue;
+        }
+      }
+      if (!matcher(payload)) {
+        continue;
+      }
       return path;
     }
   }
@@ -281,6 +387,32 @@ function findTrainingMeanMs(payload: JsonMap | null): number | null {
   return null;
 }
 
+function findTrainingCompetitorMeanMs(payload: JsonMap | null, competitor: "rustbpe" | "minbpe"): number | null {
+  if (!payload) {
+    return null;
+  }
+  const results = payload["results"];
+  if (!Array.isArray(results)) {
+    return null;
+  }
+  const strictNeedle = `-english-100kb-${competitor}-v`;
+  const looseNeedle = `-${competitor}-v`;
+  for (const row of results) {
+    if (!isRecord(row)) {
+      continue;
+    }
+    const name = String(row["command"] ?? row["commandName"] ?? "");
+    if (!name.includes(strictNeedle) && !name.includes(looseNeedle)) {
+      continue;
+    }
+    const meanSeconds = toNumber(row["mean"]) ?? toNumber(row["meanSeconds"]);
+    if (meanSeconds != null) {
+      return meanSeconds * 1000;
+    }
+  }
+  return null;
+}
+
 function parseRamMedianMb(payload: JsonMap | null, rowName: string): number | null {
   if (!payload) {
     return null;
@@ -306,12 +438,14 @@ function parseGpuMemory(payload: JsonMap | null): {
   skippedReason: string | null;
   maxDeviceAllocatedMiB: number | null;
   bestBpeDirectMiBPerSec: number | null;
+  direct1mbMatchesNative: boolean | null;
 } {
   if (!payload) {
     return {
       skippedReason: "missing payload",
       maxDeviceAllocatedMiB: null,
       bestBpeDirectMiBPerSec: null,
+      direct1mbMatchesNative: null,
     };
   }
 
@@ -321,6 +455,7 @@ function parseGpuMemory(payload: JsonMap | null): {
       skippedReason: String(payload["reason"] ?? payload["status"] ?? "gpu benchmark skipped"),
       maxDeviceAllocatedMiB: null,
       bestBpeDirectMiBPerSec: null,
+      direct1mbMatchesNative: null,
     };
   }
 
@@ -330,11 +465,13 @@ function parseGpuMemory(payload: JsonMap | null): {
       skippedReason: "rows missing",
       maxDeviceAllocatedMiB: null,
       bestBpeDirectMiBPerSec: null,
+      direct1mbMatchesNative: null,
     };
   }
 
   let maxDeviceAllocatedMiB: number | null = null;
   let bestBpeDirectMiBPerSec: number | null = null;
+  let direct1mbMatchesNative: boolean | null = null;
 
   for (const row of rows) {
     if (!isRecord(row)) {
@@ -349,6 +486,9 @@ function parseGpuMemory(payload: JsonMap | null): {
     const throughput = toNumber(row["median_gpu_mib_per_s"]);
     if (name === "metal-bpe-direct-encode-1mb" && throughput != null) {
       bestBpeDirectMiBPerSec = throughput;
+      if (typeof row["matches_native"] === "boolean") {
+        direct1mbMatchesNative = row["matches_native"] as boolean;
+      }
     }
   }
 
@@ -356,6 +496,7 @@ function parseGpuMemory(payload: JsonMap | null): {
     skippedReason: null,
     maxDeviceAllocatedMiB,
     bestBpeDirectMiBPerSec,
+    direct1mbMatchesNative,
   };
 }
 
@@ -654,7 +795,7 @@ function applyProfile(base: GateConfig, profileName: string | null): {
   return { effective, selectedProfile: profileName };
 }
 
-function runScripts(mode: Mode): void {
+function runScripts(mode: Mode, benchmarkSpeed: "fast" | "full" | null): void {
   const cpuScripts = [
     "scripts/generate-fixture.ts",
     "scripts/bench-startup.ts",
@@ -682,7 +823,12 @@ function runScripts(mode: Mode): void {
 
   for (const script of scripts) {
     section(`CI benchmark: ${script}`);
-    const result = runCommand("bun", ["run", script], { allowFailure: true });
+    const benchEnv: Record<string, string> = {};
+    if (benchmarkSpeed != null) {
+      benchEnv.TURBOTOKEN_BENCH_SPEED = benchmarkSpeed;
+      benchEnv.TURBOTOKEN_BENCH_FAST = benchmarkSpeed === "fast" ? "1" : "0";
+    }
+    const result = runCommand("bun", ["run", script], { allowFailure: true, env: benchEnv });
     if (result.stdout.trim().length > 0) {
       console.log(result.stdout.trim());
     }
@@ -699,6 +845,7 @@ const mode = parseMode(process.argv.slice(2));
 const gatesPath = parseGatesPath(process.argv.slice(2));
 const profileName = parseProfileName(process.argv.slice(2));
 const noRun = process.argv.includes("--no-run");
+const artifactSpeed = parseArtifactSpeedProfile(process.argv.slice(2), noRun);
 const includeCuda = ["1", "true", "yes", "on"].includes(
   (process.env.TURBOTOKEN_BENCH_INCLUDE_CUDA ?? "").trim().toLowerCase(),
 );
@@ -708,7 +855,7 @@ if (includeCuda) {
 }
 
 if (!noRun) {
-  runScripts(mode);
+  runScripts(mode, artifactSpeed);
 }
 
 const parsedGates = JSON.parse(readFileSync(gatesPath, "utf8")) as GateConfig;
@@ -719,16 +866,19 @@ const { effective: gates, selectedProfile } = applyProfile(parsedGates, profileN
 const relativeEnabled = gates.relative?.enabled === true;
 
 const artifacts = {
-  startupCold: latestResultPath("bench-startup-cold"),
-  competitorsEncode: latestResultPath("bench-competitors-python-encode"),
-  competitorsCount: latestResultPath("bench-competitors-python-count"),
-  training: latestResultPath("bench-training-python"),
-  ram: latestResultPath("bench-ram"),
+  startupCold: latestResultPath("bench-startup-cold", { speedProfile: artifactSpeed }),
+  competitorsEncode: latestResultPath("bench-competitors-python-encode", { speedProfile: artifactSpeed }),
+  competitorsCount: latestResultPath("bench-competitors-python-count", { speedProfile: artifactSpeed }),
+  training: latestResultPath("bench-training-python", { speedProfile: artifactSpeed }),
+  ram: latestResultPath("bench-ram", { speedProfile: artifactSpeed }),
   gpuMemory:
-    latestResultPathMatching("bench-gpu-memory", hasDirectGpuMemoryRow, { excludes: ["-cuda-"] }) ??
-    latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"] }),
-  gpuBpeDirect: latestResultPath("bench-gpu-bpe-direct"),
-  gpuOverlap: latestResultPath("bench-gpu-overlap"),
+    latestResultPathMatching("bench-gpu-memory", hasDirectGpuMemoryRow, {
+      excludes: ["-cuda-"],
+      speedProfile: artifactSpeed,
+    }) ??
+    latestResultPath("bench-gpu-memory", { excludes: ["-cuda-"], speedProfile: artifactSpeed }),
+  gpuBpeDirect: latestResultPath("bench-gpu-bpe-direct", { speedProfile: artifactSpeed }),
+  gpuOverlap: latestResultPath("bench-gpu-overlap", { speedProfile: artifactSpeed }),
 };
 
 const startupCold = loadJson(artifacts.startupCold);
@@ -739,10 +889,31 @@ const ram = loadJson(artifacts.ram);
 const gpuMemory = loadJson(artifacts.gpuMemory);
 const gpuBpeDirect = loadJson(artifacts.gpuBpeDirect);
 
+const artifactSpeeds = {
+  startupCold: artifactSpeedProfile(artifacts.startupCold ?? "", startupCold),
+  competitorsEncode: artifactSpeedProfile(artifacts.competitorsEncode ?? "", competitorsEncode),
+  competitorsCount: artifactSpeedProfile(artifacts.competitorsCount ?? "", competitorsCount),
+  training: artifactSpeedProfile(artifacts.training ?? "", training),
+  ram: artifactSpeedProfile(artifacts.ram ?? "", ram),
+  gpuMemory: artifactSpeedProfile(artifacts.gpuMemory ?? "", gpuMemory),
+  gpuBpeDirect: artifactSpeedProfile(artifacts.gpuBpeDirect ?? "", gpuBpeDirect),
+  gpuOverlap: artifactSpeedProfile(artifacts.gpuOverlap ?? "", loadJson(artifacts.gpuOverlap)),
+};
+
 const startupColdMs = commandMeanMs(startupCold, "python-startup-turbotoken");
 const encode1mbMs = commandMeanMs(competitorsEncode, "python-encode-1mb-turbotoken");
 const count1mbMs = commandMeanMs(competitorsCount, "python-count-1mb-turbotoken");
 const training100kbNativeMs = findTrainingMeanMs(training);
+const training100kbRustbpeMs = findTrainingCompetitorMeanMs(training, "rustbpe");
+const training100kbMinbpeMs = findTrainingCompetitorMeanMs(training, "minbpe");
+const training100kbNativeVsRustbpeRatio =
+  training100kbNativeMs != null && training100kbRustbpeMs != null && training100kbRustbpeMs > 0
+    ? training100kbNativeMs / training100kbRustbpeMs
+    : null;
+const training100kbNativeVsMinbpeRatio =
+  training100kbNativeMs != null && training100kbMinbpeMs != null && training100kbMinbpeMs > 0
+    ? training100kbNativeMs / training100kbMinbpeMs
+    : null;
 const peakRssEncode1mbMb = parseRamMedianMb(ram, "python-ram-turbotoken-encode-1mb");
 const encode1mbMiBPerSec = mibPerSecFromMs(1.0, encode1mbMs);
 const count1mbMiBPerSec = mibPerSecFromMs(1.0, count1mbMs);
@@ -780,6 +951,40 @@ if (mode === "all" || mode === "cpu") {
     gates.cpu.training100kbNativeMaxMs,
     artifacts.training,
   );
+  if (gates.cpu.requireTrainingCompetitorRows === true) {
+    addBooleanGate(
+      failures,
+      "training 100kb rustbpe row present",
+      training100kbRustbpeMs != null,
+      true,
+      artifacts.training,
+    );
+    addBooleanGate(
+      failures,
+      "training 100kb minbpe row present",
+      training100kbMinbpeMs != null,
+      true,
+      artifacts.training,
+    );
+  }
+  if (gates.cpu.training100kbNativeMaxRustbpeRatio != null) {
+    addMaxGate(
+      failures,
+      "training 100kb native vs rustbpe ratio",
+      training100kbNativeVsRustbpeRatio,
+      gates.cpu.training100kbNativeMaxRustbpeRatio,
+      artifacts.training,
+    );
+  }
+  if (gates.cpu.training100kbNativeMaxMinbpeRatio != null) {
+    addMaxGate(
+      failures,
+      "training 100kb native vs minbpe ratio",
+      training100kbNativeVsMinbpeRatio,
+      gates.cpu.training100kbNativeMaxMinbpeRatio,
+      artifacts.training,
+    );
+  }
   addMaxGate(
     failures,
     "peak RSS encode 1mb MB",
@@ -880,6 +1085,15 @@ if (mode === "all" || mode === "gpu") {
       gates.gpu.minBpeDirectEncodeMiBPerSec,
       artifacts.gpuMemory,
     );
+    if (gates.gpu.requireDirect1mbParity === true) {
+      addBooleanGate(
+        failures,
+        "gpu direct 1mb parity",
+        gpuParsed.direct1mbMatchesNative,
+        true,
+        artifacts.gpuMemory,
+      );
+    }
     if (relativeEnabled) {
       const gpuRelative = gates.relative?.gpu;
       addRelativeMaxGate(
@@ -1030,12 +1244,21 @@ const summary = {
     hostname: os.hostname(),
   },
   gatesPath,
+  artifactSelection: {
+    speedProfile: artifactSpeed ?? "any",
+    strict: artifactSpeed != null,
+  },
+  artifactSpeeds,
   artifacts,
   metrics: {
     startupColdMs,
     encode1mbMs,
     count1mbMs,
     training100kbNativeMs,
+    training100kbRustbpeMs,
+    training100kbMinbpeMs,
+    training100kbNativeVsRustbpeRatio,
+    training100kbNativeVsMinbpeRatio,
     peakRssEncode1mbMb,
     encode1mbMiBPerSec,
     count1mbMiBPerSec,

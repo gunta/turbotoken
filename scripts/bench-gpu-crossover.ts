@@ -25,6 +25,23 @@ const quickModeEnabledPy = quickModeEnabled ? "True" : "False";
 const calibrateForcePy = quickModeEnabled ? "False" : "True";
 const bpeTextKindRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND ?? "low-entropy").trim().toLowerCase();
 const bpeTextKind = bpeTextKindRaw === "normal-text" || bpeTextKindRaw === "normal" ? "normal-text" : "low-entropy";
+const bpeBytesOverrideRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_BPE_BYTES ?? "").trim();
+
+function parsePositiveIntList(raw: string): number[] {
+  if (raw.length === 0) {
+    return [];
+  }
+  const values: number[] = [];
+  for (const part of raw.split(",")) {
+    const value = Number.parseInt(part.trim(), 10);
+    if (Number.isFinite(value) && value > 0) {
+      values.push(value);
+    }
+  }
+  return values;
+}
+
+const bpeBytesOverride = parsePositiveIntList(bpeBytesOverrideRaw);
 
 const encodeSizes = longBenchmarkEnabled
   ? [1024, 4096, 16384, 65536, 262144, 1048576, longChars]
@@ -37,6 +54,7 @@ const bpeSizes = longBenchmarkEnabled
   : quickModeEnabled
     ? [262144]
     : [65536, 262144, 1048576];
+const effectiveBpeSizes = bpeBytesOverride.length > 0 ? bpeBytesOverride : bpeSizes;
 const countBatches = quickModeEnabled ? [2048] : [64, 128, 256, 512, 1024, 2048, 4096, 8192];
 const encodeLoopBaseMiB = quickModeEnabled ? 4 : 16;
 const countLoopBaseBatches = quickModeEnabled ? 4 : 16;
@@ -53,6 +71,11 @@ if (quickModeEnabled) {
   );
 }
 console.log(`BPE text profile: ${bpeTextKind} (set TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=low-entropy|normal-text)`);
+if (bpeBytesOverride.length > 0) {
+  console.log(
+    `BPE byte-size override enabled via TURBOTOKEN_GPU_CROSSOVER_BPE_BYTES=${bpeBytesOverrideRaw}; sizes=${effectiveBpeSizes.join(",")}`,
+  );
+}
 
 const probeResult = Bun.spawnSync({
   cmd: [
@@ -194,7 +217,7 @@ for batch_size in count_batches:
     })
 
 route=_gpu.calibrate_autoroute(force=${calibrateForcePy})
-bpe_sizes=${JSON.stringify(bpeSizes)}
+bpe_sizes=${JSON.stringify(effectiveBpeSizes)}
 bpe_text_kind=${JSON.stringify(bpeTextKind)}
 fixture_text=bytes(pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes())
 if len(fixture_text) == 0:

@@ -1,10 +1,13 @@
 {
-  "version": 3,
+  "version": 4,
   "cpu": {
     "startupColdMaxMs": 350,
     "encode1mbMaxMs": 500,
     "count1mbMaxMs": 500,
     "training100kbNativeMaxMs": 800,
+    "requireTrainingCompetitorRows": false,
+    "training100kbNativeMaxRustbpeRatio": 1.5,
+    "training100kbNativeMaxMinbpeRatio": 0.2,
     "peakRssEncode1mbMaxMb": 768,
     "encode1mbMinMiBPerSec": 2,
     "count1mbMinMiBPerSec": 2
@@ -13,6 +16,7 @@
     "maxDeviceAllocatedMiB": 4096,
     "minBpeDirectEncodeMiBPerSec": 1,
     "requireGpuMemoryRows": false,
+    "requireDirect1mbParity": false,
     "directAbSafety": {
       "requireRows": false,
       "lowEntropyMaxSlowdownPct": 250,
@@ -78,6 +82,9 @@
         "encode1mbMaxMs": 180,
         "count1mbMaxMs": 180,
         "training100kbNativeMaxMs": 140,
+        "requireTrainingCompetitorRows": true,
+        "training100kbNativeMaxRustbpeRatio": 1.25,
+        "training100kbNativeMaxMinbpeRatio": 0.2,
         "peakRssEncode1mbMaxMb": 128,
         "encode1mbMinMiBPerSec": 5,
         "count1mbMinMiBPerSec": 5
@@ -86,31 +93,31 @@
         "enabled": true,
         "cpu": {
           "startupColdMs": {
-            "baseline": 220,
+            "baseline": 64.435196,
             "maxRegressionPct": 35
           },
           "encode1mbMs": {
-            "baseline": 320,
+            "baseline": 74.912429,
             "maxRegressionPct": 35
           },
           "count1mbMs": {
-            "baseline": 320,
+            "baseline": 73.369068,
             "maxRegressionPct": 35
           },
           "training100kbNativeMs": {
-            "baseline": 500,
+            "baseline": 44.718345,
             "maxRegressionPct": 35
           },
           "peakRssEncode1mbMb": {
-            "baseline": 520,
+            "baseline": 30.75,
             "maxRegressionPct": 30
           },
           "encode1mbMiBPerSec": {
-            "baseline": 2.5,
+            "baseline": 13.34892,
             "maxDropPct": 20
           },
           "count1mbMiBPerSec": {
-            "baseline": 2.5,
+            "baseline": 13.629722,
             "maxDropPct": 20
           }
         }
@@ -126,6 +133,9 @@
         "encode1mbMaxMs": 180,
         "count1mbMaxMs": 180,
         "training100kbNativeMaxMs": 140,
+        "requireTrainingCompetitorRows": true,
+        "training100kbNativeMaxRustbpeRatio": 1.25,
+        "training100kbNativeMaxMinbpeRatio": 0.2,
         "peakRssEncode1mbMaxMb": 128,
         "encode1mbMinMiBPerSec": 5,
         "count1mbMinMiBPerSec": 5
@@ -171,8 +181,9 @@
       },
       "gpu": {
         "maxDeviceAllocatedMiB": 256,
-        "minBpeDirectEncodeMiBPerSec": 6,
+        "minBpeDirectEncodeMiBPerSec": 40,
         "requireGpuMemoryRows": true,
+        "requireDirect1mbParity": true,
         "directAbSafety": {
           "requireRows": true,
           "lowEntropyMaxSlowdownPct": 80,
@@ -188,11 +199,11 @@
         "enabled": true,
         "gpu": {
           "maxDeviceAllocatedMiB": {
-            "baseline": 40.453125,
+            "baseline": 48.453125,
             "maxRegressionPct": 50
           },
           "directBpeEncodeMiBPerSec": {
-            "baseline": 32.872394,
+            "baseline": 60.660147,
             "maxDropPct": 40
           }
         }

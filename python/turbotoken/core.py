@@ -961,20 +961,65 @@ class Encoding:
             and self._gpu_range_batch_enabled()
             and text_bytes_len >= self._gpu_range_batch_min_text_bytes()
         )
+        force_all_metal = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        force_all_metal_strict = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if (
+            device in {"auto", "metal"}
+            and force_all_metal
+            and not force_all_metal_strict
+            and gpu is not None
+            and not strict_verify
+        ):
+            # Guard force-all mode on sub-direct-size texts; otherwise thousands of
+            # tiny regex pieces can be slower than the regular CPU path.
+            try:
+                direct_min = int(gpu._metal_bpe_direct_min_bytes())  # type: ignore[attr-defined]
+            except Exception:
+                direct_min = 786_432
+            if text_bytes_len < max(1, direct_min):
+                return self._encode_ordinary_impl(text)
+
+        if device == "auto" and gpu is not None and not strict_verify:
+            # When autoroute is CPU for this text, delegate to the regular encode path.
+            # This keeps cache-friendly CPU behavior and avoids GPU-routing overhead.
+            if gpu.bpe_route_backend(text_bytes_len) != "metal":
+                return self._encode_ordinary_impl(text)
+
         if use_gpu_range_batch:
             piece_ranges = self._ordinary_piece_ranges_bytes(text)
             if piece_ranges is not None:
                 data, ranges = piece_ranges
                 if not ranges:
                     return []
-                if len(ranges) > self._gpu_range_batch_max_ranges():
+                max_ranges = self._gpu_range_batch_max_ranges()
+                if len(ranges) > max_ranges:
+                    # Keep large-piece-count inputs on native range batching in chunks.
+                    # This avoids an expensive fallback to per-piece Python BPE.
+                    cpu_tokens: list[int] = []
+                    cpu_chunk_ok = True
+                    for range_start in range(0, len(ranges), max_ranges):
+                        sub_ranges = ranges[range_start : range_start + max_ranges]
+                        cpu_batch = session.encode_bpe_ranges(data, sub_ranges)
+                        if cpu_batch is None:
+                            cpu_chunk_ok = False
+                            break
+                        flat_tokens, token_offsets = cpu_batch
+                        if len(token_offsets) != len(sub_ranges) + 1:
+                            cpu_chunk_ok = False
+                            break
+                        if flat_tokens:
+                            cpu_tokens.extend(flat_tokens)
+                    if cpu_chunk_ok:
+                        return cpu_tokens
                     ranges = []
-
-                force_all_metal = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                }
 
                 cpu_indices: list[int] = []
                 cpu_ranges: list[tuple[int, int]] = []
@@ -998,6 +1043,15 @@ class Encoding:
 
                 min_metal_ranges = 1 if force_all_metal else self._gpu_range_batch_min_metal_pieces()
                 if not metal_ranges or len(metal_ranges) < min_metal_ranges:
+                    # If Metal does not qualify for this text, keep the fast native
+                    # range-batch path instead of falling through to per-piece Python BPE.
+                    if cpu_ranges and len(cpu_ranges) == len(ranges):
+                        cpu_batch = session.encode_bpe_ranges(data, ranges)
+                        if cpu_batch is not None:
+                            flat_tokens, token_offsets = cpu_batch
+                            if len(token_offsets) == len(ranges) + 1:
+                                return flat_tokens
+
                     ranges = []
                     cpu_indices = []
                     cpu_ranges = []
@@ -1073,11 +1127,6 @@ class Encoding:
 
         out: list[int] = []
         native_piece_min_bytes = self._native_piece_min_bytes()
-        force_all_metal = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_PIECES", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-        }
         for piece_bytes in piece_iter:
             if rank_payload is None:
                 _extend_cached(piece_bytes)
@@ -1099,6 +1148,11 @@ class Encoding:
             else:
                 route_backend = gpu.bpe_route_backend(len(piece_bytes)) if gpu is not None else "native"
             if route_backend != "metal":
+                if len(piece_bytes) >= native_piece_min_bytes and session is not None:
+                    native_tokens = session.encode_bpe(piece_bytes)
+                    if native_tokens is not None:
+                        out.extend(native_tokens)
+                        continue
                 _extend_cached(piece_bytes)
                 continue
 
@@ -1119,6 +1173,11 @@ class Encoding:
                 prefer_metal_stitch=True,
             )
             if chunked is None:
+                if len(piece_bytes) >= native_piece_min_bytes and session is not None:
+                    native_tokens = session.encode_bpe(piece_bytes)
+                    if native_tokens is not None:
+                        out.extend(native_tokens)
+                        continue
                 _extend_cached(piece_bytes)
                 continue
             out.extend(chunked)

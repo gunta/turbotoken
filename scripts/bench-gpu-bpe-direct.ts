@@ -1,14 +1,16 @@
 #!/usr/bin/env bun
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { acquireBenchmarkLock, resolvePath, runCommand, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, benchSpeedProfile, resolvePath, runCommand, section, writeJson } from "./_lib";
 
 type JsonMap = Record<string, unknown>;
 type TextKind = "low-entropy" | "normal-text";
 
 interface WorkloadProfile {
-  key: "lowEntropy" | "normalText";
+  key: "lowEntropy" | "normalText" | "lowEntropyLong" | "normalTextLong";
   textKind: TextKind;
+  inputBytes: number;
+  lane: "short" | "long";
   description: string;
 }
 
@@ -16,12 +18,30 @@ const WORKLOADS: WorkloadProfile[] = [
   {
     key: "lowEntropy",
     textKind: "low-entropy",
+    inputBytes: 262_144,
+    lane: "short",
     description: "Highly repetitive low-entropy text (safety guard stress path).",
   },
   {
     key: "normalText",
     textKind: "normal-text",
+    inputBytes: 262_144,
+    lane: "short",
     description: "Normal English fixture text slice.",
+  },
+  {
+    key: "lowEntropyLong",
+    textKind: "low-entropy",
+    inputBytes: 1_048_576,
+    lane: "long",
+    description: "Long low-entropy direct-route lane (1MB) for true direct-GPU crossover tuning.",
+  },
+  {
+    key: "normalTextLong",
+    textKind: "normal-text",
+    inputBytes: 1_048_576,
+    lane: "long",
+    description: "Long normal-text direct-route lane (1MB) for true direct-GPU crossover tuning.",
   },
 ];
 
@@ -281,12 +301,14 @@ function compareScenarios(disabled: JsonMap, enabled: JsonMap): JsonMap {
 }
 
 function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
+  const bytesString = String(Math.max(1024, profile.inputBytes));
   const env: Record<string, string> = {
     TURBOTOKEN_METAL_BPE_DIRECT_ENABLE: enableDirect ? "1" : "0",
     TURBOTOKEN_GPU_CROSSOVER_QUICK: readEnvOrDefault("TURBOTOKEN_GPU_CROSSOVER_QUICK", "1"),
     TURBOTOKEN_GPU_MEMORY_RUNS: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_RUNS", "1"),
     TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL", "1"),
-    TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: readEnvOrDefault("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES", "262144"),
+    TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES: bytesString,
+    TURBOTOKEN_GPU_CROSSOVER_BPE_BYTES: bytesString,
     TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND: profile.textKind,
     TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND: profile.textKind,
   };
@@ -299,7 +321,7 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   const startedAt = Date.now();
 
   section(
-    `GPU BPE direct scenario: text=${profile.textKind}, TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=${env.TURBOTOKEN_METAL_BPE_DIRECT_ENABLE}`,
+    `GPU BPE direct scenario: text=${profile.textKind}, bytes=${bytesString}, TURBOTOKEN_METAL_BPE_DIRECT_ENABLE=${env.TURBOTOKEN_METAL_BPE_DIRECT_ENABLE}`,
   );
   const crossoverRun = runCommand("bun", ["run", "scripts/bench-gpu-crossover.ts"], {
     env,
@@ -323,6 +345,8 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   const memoryPath = latestResultPathSince("bench-gpu-memory", startedAt) ?? latestResultPath("bench-gpu-memory");
   return {
     enabled: enableDirect,
+    lane: profile.lane,
+    inputBytes: profile.inputBytes,
     env,
     artifacts: {
       crossover: crossoverPath,
@@ -335,15 +359,18 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
 
 section("GPU BPE direct A/B benchmark");
 acquireBenchmarkLock({ label: "bench-gpu-bpe-direct" });
+const speedProfile = benchSpeedProfile();
 const outputPath = resolvePath("bench", "results", `bench-gpu-bpe-direct-${Date.now()}.json`);
 
 const workloads: Record<string, JsonMap> = {};
 for (const workload of WORKLOADS) {
-  section(`Workload profile: ${workload.key} (${workload.textKind})`);
+  section(`Workload profile: ${workload.key} (${workload.textKind}, ${workload.inputBytes} bytes, lane=${workload.lane})`);
   const disabled = runScenario(false, workload);
   const enabled = runScenario(true, workload);
   workloads[workload.key] = {
     textKind: workload.textKind,
+    lane: workload.lane,
+    inputBytes: workload.inputBytes,
     description: workload.description,
     disabled,
     enabled,
@@ -358,10 +385,13 @@ const legacyEnabled = isRecord(lowEntropy?.["enabled"]) ? (lowEntropy["enabled"]
 writeJson(outputPath, {
   tool: "gpu-bpe-direct-bench",
   generatedAt: new Date().toISOString(),
+  speedProfile,
   note: "A/B run for true on-GPU BPE direct merge route vs host-stitched path on low-entropy and normal-text profiles.",
   matrix: {
     directEnable: [false, true],
     textProfiles: WORKLOADS.map((row) => row.textKind),
+    inputBytes: WORKLOADS.map((row) => row.inputBytes),
+    lanes: WORKLOADS.map((row) => row.lane),
   },
   workloads,
   scenarios: {

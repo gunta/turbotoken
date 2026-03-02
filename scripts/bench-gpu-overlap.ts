@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { ensureFixtures } from "./_fixtures";
-import { acquireBenchmarkLock, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
+import { acquireBenchmarkLock, benchSpeedProfile, pythonExecutable, resolvePath, section, writeJson } from "./_lib";
 
 section("GPU overlap benchmark (CPU pretokenize + Metal overlap)");
 acquireBenchmarkLock({ label: "bench-gpu-overlap" });
 ensureFixtures();
 
 const python = pythonExecutable();
+const speedProfile = benchSpeedProfile();
 const runsRaw = process.env.TURBOTOKEN_GPU_OVERLAP_RUNS?.trim();
 const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 3) : 3;
 const batchRaw = process.env.TURBOTOKEN_GPU_OVERLAP_BATCH?.trim();
@@ -35,6 +36,7 @@ if (probeResult.exitCode !== 0 || probeStdout.length === 0) {
   writeJson(outputPath, {
     tool: "gpu-overlap-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: probeStderr || "failed to probe gpu backend",
   });
@@ -49,6 +51,7 @@ try {
   writeJson(outputPath, {
     tool: "gpu-overlap-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: "invalid JSON from gpu backend probe",
     raw: probeStdout,
@@ -61,6 +64,7 @@ if (probe.available !== true) {
   writeJson(outputPath, {
     tool: "gpu-overlap-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "skipped",
     reason: typeof probe.error === "string" ? probe.error : "gpu backend unavailable",
     probe,
@@ -207,6 +211,7 @@ if (runResult.exitCode !== 0) {
   writeJson(outputPath, {
     tool: "gpu-overlap-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "failed",
     probe,
     stderr: new TextDecoder().decode(runResult.stderr).trim(),
@@ -223,6 +228,7 @@ try {
   writeJson(outputPath, {
     tool: "gpu-overlap-bench",
     generatedAt: new Date().toISOString(),
+    speedProfile,
     status: "failed",
     reason: "runner returned invalid JSON",
     raw: runStdout,
@@ -231,5 +237,8 @@ try {
   process.exit(1);
 }
 
-writeJson(outputPath, payload);
+writeJson(outputPath, {
+  ...payload,
+  speedProfile,
+});
 console.log(`Wrote GPU overlap benchmark: ${outputPath}`);

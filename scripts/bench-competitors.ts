@@ -19,6 +19,7 @@ const fullTextFixtures = [
   { id: "100kb", path: "bench/fixtures/english-100kb.txt", bytes: 102_400 },
   { id: "1mb", path: "bench/fixtures/english-1mb.txt", bytes: 1_048_576 },
 ] as const;
+const ciRequiredFixture = fullTextFixtures[3];
 const textFixtures = fastMode
   ? [fullTextFixtures[0], fullTextFixtures[2]]
   : fullTextFixtures;
@@ -182,6 +183,13 @@ for (const fixture of textFixtures) {
     });
   }
 }
+if (fastMode) {
+  // Keep CI governance metrics available in fast mode without re-enabling the full matrix.
+  encodeCommands.push({
+    name: `python-encode-${ciRequiredFixture.id}-turbotoken`,
+    command: encodeCommandForTurbotoken(ciRequiredFixture.path),
+  });
+}
 
 ensureDecodeFixture();
 const tokenCount = decodeFixtureTokenCount();
@@ -264,6 +272,16 @@ for (const fixture of countFixtures) {
     });
   }
 }
+if (fastMode) {
+  // Keep CI governance metrics available in fast mode without re-enabling the full matrix.
+  countCommands.push({
+    name: `python-count-${ciRequiredFixture.id}-turbotoken`,
+    command: countCommandForTurbotoken(ciRequiredFixture.path),
+  });
+}
+
+const encodeFixtureMetadata = fastMode ? [...textFixtures, ciRequiredFixture] : textFixtures;
+const countFixtureMetadata = fastMode ? [...countFixtures, ciRequiredFixture] : countFixtures;
 
 let failures = 0;
 if (encodeCommands.length > 0) {
@@ -273,7 +291,7 @@ if (encodeCommands.length > 0) {
     metadata: {
       operation: "encode",
       encoding: "o200k_base",
-      fixtures: textFixtures,
+      fixtures: encodeFixtureMetadata,
       availability,
       metalAvailable,
       fastMode,
@@ -306,7 +324,7 @@ if (countCommands.length > 0) {
     metadata: {
       operation: "count",
       encoding: "o200k_base",
-      fixtures: countFixtures,
+      fixtures: countFixtureMetadata,
       availability,
       fastMode,
       note: "tiktoken and token-dagger count rows use len(encode(text)) to keep API behavior comparable.",
