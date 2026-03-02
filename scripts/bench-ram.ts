@@ -5,6 +5,7 @@ import { ensureFixtures } from "./_fixtures";
 interface MemoryCommand {
   name: string;
   command: string;
+  runs?: number;
 }
 
 interface MemorySample {
@@ -78,6 +79,11 @@ const availability = {
   gpt_tokenizer: hasBunModule("gpt-tokenizer"),
 };
 
+const trainVocabSize = Number.parseInt(process.env.TURBOTOKEN_TRAIN_VOCAB_SIZE ?? "320", 10);
+const trainMinFrequency = Number.parseInt(process.env.TURBOTOKEN_TRAIN_MIN_FREQUENCY ?? "2", 10);
+const trainFixturePath = resolvePath("bench", "fixtures", "english-1mb.txt");
+const trainingRuns = fastMode ? 1 : 2;
+
 const commands: MemoryCommand[] = [
   {
     name: "python-empty-baseline",
@@ -92,6 +98,12 @@ const commands: MemoryCommand[] = [
     name: "python-ram-turbotoken-cli-encode-1mb",
     command:
       `${python} -m turbotoken.cli encode - --encoding o200k_base < bench/fixtures/english-1mb.txt >/dev/null`,
+  },
+  {
+    name: `python-ram-turbotoken-train-1mb-native-v${trainVocabSize}`,
+    command:
+      `${python} -c "import ctypes,pathlib,platform;data=pathlib.Path('${trainFixturePath}').read_bytes();is_win=(platform.system()=='Windows');suffix='dylib' if platform.system()=='Darwin' else ('dll' if is_win else 'so');primary=('turbotoken.'+suffix) if is_win else ('libturbotoken.'+suffix);cands=[pathlib.Path('zig-out/lib')/primary,pathlib.Path('python/turbotoken/.libs')/primary];lib=None\nfor cand in cands:\n  if cand.exists():\n    lib=ctypes.CDLL(str(cand));\n    break\nassert lib is not None, cands;fn=lib.turbotoken_train_bpe_ascii_o200k;fn.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_uint32,ctypes.c_uint32,ctypes.POINTER(ctypes.c_uint32),ctypes.c_size_t];fn.restype=ctypes.c_long;cap=max(1,(${trainVocabSize}-256)*3);out=(ctypes.c_uint32*cap)();buf=ctypes.create_string_buffer(data);written=fn(ctypes.cast(buf,ctypes.c_void_p),len(data),${trainVocabSize},${trainMinFrequency},out,cap);assert written>=1"`,
+    runs: trainingRuns,
   },
 ];
 
@@ -133,7 +145,8 @@ const rows = [];
 for (const item of commands) {
   section(`RSS: ${item.name}`);
   const samples: MemorySample[] = [];
-  for (let i = 0; i < runs; i += 1) {
+  const rowRuns = Math.max(1, item.runs ?? runs);
+  for (let i = 0; i < rowRuns; i += 1) {
     const result = runShell(`/usr/bin/time ${timeFlag} ${item.command}`, { allowFailure: true });
     const maxRssKb = parseMaxRssKb(result.stderr);
     const sample: MemorySample = {
@@ -145,7 +158,7 @@ for (const item of commands) {
     };
     samples.push(sample);
     const rssText = maxRssKb == null ? "n/a" : `${(maxRssKb / 1024).toFixed(2)} MB`;
-    console.log(`run ${i + 1}/${runs}: exit=${result.code} peak_rss=${rssText}`);
+    console.log(`run ${i + 1}/${rowRuns}: exit=${result.code} peak_rss=${rssText}`);
   }
 
   const successful = samples
@@ -155,7 +168,7 @@ for (const item of commands) {
   rows.push({
     name: item.name,
     command: item.command,
-    runs,
+    runs: rowRuns,
     successfulRuns: successful.length,
     medianRssKb: median(successful),
     meanRssKb:

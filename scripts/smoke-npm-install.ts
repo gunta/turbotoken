@@ -68,6 +68,7 @@ const tempRoot = mkdtempSync(join(tmpdir(), "turbotoken-npm-smoke-"));
 const installDir = join(tempRoot, "install");
 const pkgRoot = join(installDir, "node_modules", "turbotoken");
 const wasmPath = join(pkgRoot, "zig-out", "bin", "turbotoken.wasm");
+const npmWasmPath = join(pkgRoot, "zig-out", "bin", "turbotoken-npm.wasm");
 
 let checkStdout = "";
 let checkStderr = "";
@@ -81,17 +82,25 @@ try {
   if (!existsSync(wasmPath) || statSync(wasmPath).size <= 0) {
     checkCode = 2;
     checkStderr = `missing or empty wasm artifact after npm install: ${wasmPath}`;
+  } else if (!existsSync(npmWasmPath) || statSync(npmWasmPath).size <= 0) {
+    checkCode = 2;
+    checkStderr = `missing or empty npm wasm artifact after npm install: ${npmWasmPath}`;
   } else {
     const checkScript = [
-      `import { loadWasm } from ${JSON.stringify(join(pkgRoot, "js", "src", "wasm-loader.ts"))};`,
-      `const wasmPath = ${JSON.stringify(wasmPath)};`,
-      "const bridge = await loadWasm({ wasmPath, forceReload: true });",
+      "import { getEncodingAsync, loadWasm } from 'turbotoken';",
+      "const bridge = await loadWasm({ forceReload: true });",
       "const encoded = bridge.encodeUtf8Bytes('hello');",
       "const decoded = new TextDecoder().decode(bridge.decodeUtf8Bytes(encoded));",
       "if (decoded !== 'hello') {",
       "  throw new Error(`roundtrip mismatch: ${decoded}`);",
       "}",
-      "console.log(JSON.stringify({ encoded, decoded, wasmPath }));",
+      "const enc = await getEncodingAsync('o200k_base');",
+      "const tokens = await enc.encodeAsync('hello from npm package');",
+      "const text = await enc.decodeAsync(tokens);",
+      "if (text !== 'hello from npm package') {",
+      "  throw new Error(`encoding roundtrip mismatch: ${text}`);",
+      "}",
+      "console.log(JSON.stringify({ encoded, decoded, tokenCount: tokens.length }));",
     ].join("\n");
     const check = runCommand("bun", ["-e", checkScript], {
       cwd: installDir,
@@ -112,7 +121,7 @@ writeJson(outputPath, {
   checkCode,
   checkStdout,
   checkStderr,
-  note: "Packs npm tarball, installs into a temp project, and validates WASM bridge roundtrip from installed files.",
+  note: "Packs npm tarball, installs into a temp project, imports package root, and validates default WASM auto-load + encoding roundtrip.",
 });
 
 if (checkCode !== 0) {

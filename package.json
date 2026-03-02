@@ -1,11 +1,22 @@
 {
   "name": "turbotoken",
   "version": "0.1.0-dev",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "turbotoken monorepo scripts and JS wrapper",
+  "main": "./js/src/index.ts",
+  "module": "./js/src/index.ts",
+  "types": "./js/src/index.ts",
+  "exports": {
+    ".": "./js/src/index.ts",
+    "./encoding": "./js/src/encoding.ts",
+    "./registry": "./js/src/registry.ts",
+    "./wasm-loader": "./js/src/wasm-loader.ts",
+    "./package.json": "./package.json"
+  },
   "files": [
     "js/src",
+    "zig-out/bin/turbotoken-npm.wasm",
     "zig-out/bin/turbotoken.wasm",
     "README.md",
     "LICENSE"
@@ -48,7 +59,10 @@
     "bench:ci": "bun run scripts/ci-benchmark.ts",
     "compat:report": "bun run scripts/compat-report.ts",
     "build:all": "bun run scripts/build-all.ts",
-    "build:wasm": "zig build wasm -Doptimize=ReleaseSmall",
+    "build:wasm:opt": "bun run scripts/optimize-wasm.ts",
+    "build:wasm": "zig build wasm -Doptimize=ReleaseSmall && bun run build:wasm:opt",
+    "bench:wasm:comparisons": "bun run scripts/build-wasm-comparisons.ts",
+    "bench:browser:competitors": "bun run scripts/bench-browser-competitors.ts",
     "build:wheels": "bun run scripts/build-wheels.ts",
     "verify:npm-package": "bun run scripts/verify-npm-package.ts",
     "smoke:wheel-install": "bun run scripts/smoke-wheel-install.ts",
@@ -61,6 +75,7 @@
   },
   "devDependencies": {
     "gpt-tokenizer": "3.4.0",
+    "playwright": "^1.58.2",
     "typescript": "^5.9.3"
   }
 }

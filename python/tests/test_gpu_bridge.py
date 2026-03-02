@@ -45,6 +45,45 @@ def test_gpu_bpe_route_backend_shape() -> None:
     assert route in {"none", "native", "metal"}
 
 
+def test_gpu_direct_settings_default_min_bytes() -> None:
+    enabled, min_bytes, max_bytes, guard_enabled = _gpu._resolve_metal_bpe_direct_settings("", "", "", "")
+    assert enabled is False
+    assert min_bytes == 262_144
+    assert max_bytes >= min_bytes
+    assert guard_enabled is True
+
+
+def test_gpu_overlap_adaptive_cold_start_prefers_serial_then_samples_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TURBOTOKEN_GPU_OVERLAP_ADAPTIVE_ENABLE", "1")
+    _gpu._overlap_perf_cache.clear()
+    try:
+        selected_overlap, key = _gpu._gpu_overlap_select_mode(
+            total_batches=8,
+            total_input_bytes=1_048_576,
+            total_pieces=64,
+        )
+        assert selected_overlap is False
+        assert key is not None
+
+        _gpu._gpu_overlap_record_sample(key, used_overlap=False, elapsed_ms=10.0)
+        selected_overlap_next, key_next = _gpu._gpu_overlap_select_mode(
+            total_batches=8,
+            total_input_bytes=1_048_576,
+            total_pieces=64,
+        )
+        assert key_next == key
+        assert selected_overlap_next is True
+    finally:
+        _gpu._overlap_perf_cache.clear()
+
+
+def test_gpu_overlap_pipeline_min_avg_piece_bytes_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("TURBOTOKEN_GPU_OVERLAP_MIN_AVG_PIECE_BYTES", raising=False)
+    assert _gpu._gpu_overlap_pipeline_min_avg_piece_bytes() == 2048
+
+
 def test_gpu_profile_exposes_memory_fields_when_available() -> None:
     bridge = _gpu.get_metal_bridge()
     if not bridge.available:

@@ -1,10 +1,13 @@
 {
-  "version": 4,
+  "version": 5,
   "cpu": {
     "startupColdMaxMs": 350,
     "encode1mbMaxMs": 500,
     "count1mbMaxMs": 500,
     "training100kbNativeMaxMs": 800,
+    "training1mbNativeMaxMs": 7000,
+    "training1mbNativeMinMiBPerSec": 0.14,
+    "peakRssTrain1mbNativeMaxMb": 1536,
     "requireTrainingCompetitorRows": false,
     "training100kbNativeMaxRustbpeRatio": 1.5,
     "training100kbNativeMaxMinbpeRatio": 0.2,
@@ -16,15 +19,24 @@
     "maxDeviceAllocatedMiB": 4096,
     "minBpeDirectEncodeMiBPerSec": 1,
     "requireGpuMemoryRows": false,
+    "requireGpuOverlapRows": false,
+    "overlapVsNoOverlapMinRatio": 0.7,
     "requireDirect1mbParity": false,
     "directAbSafety": {
       "requireRows": false,
+      "requireLongRows": false,
       "lowEntropyMaxSlowdownPct": 250,
       "lowEntropyMinThroughputRatio": 0.2,
       "normalTextMaxSlowdownPct": 250,
       "normalTextMinThroughputRatio": 0.2,
+      "lowEntropyLongMaxSlowdownPct": 250,
+      "lowEntropyLongMinThroughputRatio": 0.2,
+      "normalTextLongMaxSlowdownPct": 250,
+      "normalTextLongMinThroughputRatio": 0.2,
       "requireLowEntropyNoDirectRoute": false,
       "requireNormalTextDirectRoute": false,
+      "requireLowEntropyLongNoDirectRoute": false,
+      "requireNormalTextLongDirectRoute": false,
       "requireTokenParity": true
     }
   },
@@ -82,6 +94,9 @@
         "encode1mbMaxMs": 180,
         "count1mbMaxMs": 180,
         "training100kbNativeMaxMs": 140,
+        "training1mbNativeMaxMs": 900,
+        "training1mbNativeMinMiBPerSec": 1.0,
+        "peakRssTrain1mbNativeMaxMb": 256,
         "requireTrainingCompetitorRows": true,
         "training100kbNativeMaxRustbpeRatio": 1.25,
         "training100kbNativeMaxMinbpeRatio": 0.2,
@@ -108,8 +123,20 @@
             "baseline": 44.718345,
             "maxRegressionPct": 35
           },
+          "training1mbNativeMs": {
+            "baseline": 620,
+            "maxRegressionPct": 35
+          },
+          "training1mbNativeMiBPerSec": {
+            "baseline": 1.612903,
+            "maxDropPct": 20
+          },
           "peakRssEncode1mbMb": {
             "baseline": 30.75,
+            "maxRegressionPct": 30
+          },
+          "peakRssTrain1mbNativeMb": {
+            "baseline": 120,
             "maxRegressionPct": 30
           },
           "encode1mbMiBPerSec": {
@@ -133,6 +160,9 @@
         "encode1mbMaxMs": 180,
         "count1mbMaxMs": 180,
         "training100kbNativeMaxMs": 140,
+        "training1mbNativeMaxMs": 1000,
+        "training1mbNativeMinMiBPerSec": 0.8,
+        "peakRssTrain1mbNativeMaxMb": 640,
         "requireTrainingCompetitorRows": true,
         "training100kbNativeMaxRustbpeRatio": 1.25,
         "training100kbNativeMaxMinbpeRatio": 0.2,
@@ -159,8 +189,20 @@
             "baseline": 500,
             "maxRegressionPct": 35
           },
+          "training1mbNativeMs": {
+            "baseline": 800,
+            "maxRegressionPct": 35
+          },
+          "training1mbNativeMiBPerSec": {
+            "baseline": 1.25,
+            "maxDropPct": 20
+          },
           "peakRssEncode1mbMb": {
             "baseline": 520,
+            "maxRegressionPct": 30
+          },
+          "peakRssTrain1mbNativeMb": {
+            "baseline": 560,
             "maxRegressionPct": 30
           },
           "encode1mbMiBPerSec": {
@@ -183,15 +225,24 @@
         "maxDeviceAllocatedMiB": 256,
         "minBpeDirectEncodeMiBPerSec": 40,
         "requireGpuMemoryRows": true,
+        "requireGpuOverlapRows": true,
+        "overlapVsNoOverlapMinRatio": 0.9,
         "requireDirect1mbParity": true,
         "directAbSafety": {
           "requireRows": true,
+          "requireLongRows": true,
           "lowEntropyMaxSlowdownPct": 80,
           "lowEntropyMinThroughputRatio": 0.55,
           "normalTextMaxSlowdownPct": 150,
           "normalTextMinThroughputRatio": 0.45,
+          "lowEntropyLongMaxSlowdownPct": 90,
+          "lowEntropyLongMinThroughputRatio": 0.55,
+          "normalTextLongMaxSlowdownPct": 40,
+          "normalTextLongMinThroughputRatio": 1.05,
           "requireLowEntropyNoDirectRoute": true,
           "requireNormalTextDirectRoute": false,
+          "requireLowEntropyLongNoDirectRoute": true,
+          "requireNormalTextLongDirectRoute": true,
           "requireTokenParity": true
         }
       },
@@ -199,11 +250,11 @@
         "enabled": true,
         "gpu": {
           "maxDeviceAllocatedMiB": {
-            "baseline": 48.453125,
+            "baseline": 52.453125,
             "maxRegressionPct": 50
           },
           "directBpeEncodeMiBPerSec": {
-            "baseline": 60.660147,
+            "baseline": 56.924252,
             "maxDropPct": 40
           }
         }

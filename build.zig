@@ -1,18 +1,34 @@
 const std = @import("std");
 
+fn createRootModuleFromFile(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    build_options: *std.Build.Step.Options,
+    root_source_file: []const u8,
+) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path(root_source_file),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addOptions("build_options", build_options);
+    return module;
+}
+
 fn createRootModule(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     build_options: *std.Build.Step.Options,
 ) *std.Build.Module {
-    const module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    module.addOptions("build_options", build_options);
-    return module;
+    return createRootModuleFromFile(
+        b,
+        target,
+        optimize,
+        build_options,
+        "src/main.zig",
+    );
 }
 
 fn addStaticLibraryCompat(
@@ -171,8 +187,29 @@ fn addWasmModuleStep(
     wasm_exe.initial_memory = 16 * 1024 * 1024;
 
     const install_wasm = b.addInstallArtifact(wasm_exe, .{});
+
+    const npm_root_module = createRootModuleFromFile(
+        b,
+        wasm_target,
+        optimize,
+        build_options,
+        "src/main_wasm_npm.zig",
+    );
+    const wasm_npm_exe = b.addExecutable(.{
+        .name = "turbotoken-npm",
+        .root_module = npm_root_module,
+    });
+    wasm_npm_exe.entry = .disabled;
+    wasm_npm_exe.rdynamic = true;
+    wasm_npm_exe.export_memory = true;
+    wasm_npm_exe.import_memory = false;
+    wasm_npm_exe.stack_size = 1 * 1024 * 1024;
+    wasm_npm_exe.initial_memory = 2 * 1024 * 1024;
+
+    const install_wasm_npm = b.addInstallArtifact(wasm_npm_exe, .{});
     const step = b.step("wasm", "Build WebAssembly module (zig-out/bin/turbotoken.wasm)");
     step.dependOn(&install_wasm.step);
+    step.dependOn(&install_wasm_npm.step);
     return step;
 }
 

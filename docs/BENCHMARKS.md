@@ -49,16 +49,22 @@
   - `--artifact-speed=full|fast|any` (or `TURBOTOKEN_CI_ARTIFACT_SPEED`) controls which benchmark artifacts are eligible for gate evaluation.
   - Default is `full`, so untagged/fast artifacts are ignored unless explicitly requested.
   - Benchmark artifacts now stamp `speedProfile` so fast/full governance separation is reproducible.
+  - Fast artifact mode keeps local smoke governance practical by relaxing only two GPU checks:
+    - direct throughput floor uses a 0.95 multiplier
+    - long-lane direct A/B row requirement is disabled
+    Full-profile CI gates remain strict.
 - Hard gate thresholds live in `bench/ci-gates.json` and currently cover:
   - startup cold (`hello` first encode)
   - encode/count 1MB latency
   - encode/count 1MB throughput (MiB/s)
   - training latency (native 100KB fixture)
+  - training latency + throughput for native 1MB fixture
   - training competitor governance (100KB `rustbpe`/`minbpe` row presence and native-vs-competitor ratio ceilings on profiled CPU runners)
-  - peak RSS for 1MB encode
+  - peak RSS for 1MB encode and native 1MB training
   - GPU memory envelope (`bench-gpu-memory`) when GPU rows are required on the runner
   - Metal direct 1MB parity (`metal-bpe-direct-encode-1mb.matches_native == true`) on profiled Metal runners
-  - Metal direct-route A/B safety (`bench-gpu-bpe-direct`) for both low-entropy and normal-text BPE profiles
+  - Metal direct-route A/B safety (`bench-gpu-bpe-direct`) for low-entropy/normal-text short lanes and 1MB long lanes (with route policy checks), using median-of-3 latest artifacts
+  - Metal overlap quality (`bench-gpu-overlap`) using median-of-3 latest artifacts (`overlap_vs_no_overlap` floor on profiled Metal runners)
 - Relative regression gates are also enabled in `bench/ci-gates.json` (`relative.enabled=true`) so CI enforces bounded drift against baselines for the same metric set (latency, throughput, RSS, GPU memory).
 - Runner-specific profiles are now supported via `scripts/ci-benchmark.ts --profile=...`:
   - `linux-x86_64-cpu` for Ubuntu CPU gate runners
@@ -111,6 +117,269 @@ Local benchmark host details (from `sysctl` / `uname`):
 - ISA features detected: NEON/AdvSIMD, FP16, DotProd, BF16, I8MM, SHA3/AES/PMULL, LSE/LSE2, SME/SME2 (current hot path uses AdvSIMD/NEON instructions)
 
 > Additional machines will be added as we benchmark on Graviton, x86, RISC-V, etc.
+
+---
+
+## Latest Update (2026-03-02, WASM Phase 3 completion pass)
+
+Recent artifacts:
+- `dist/npm/optimize-wasm-1772455008637.json`
+- `dist/npm/verify-npm-package-1772455008778.json`
+- `dist/npm/smoke-npm-install-1772454999165.json`
+- `bench/results/bench-wasm-comparisons-1772455001727.json`
+- `bench/results/bench-browser-competitors-1772455163556.json`
+- `bench/results/bench-wasm-1772455201579.json`
+
+What changed:
+- npm-minimal WASM (`zig-out/bin/turbotoken-npm.wasm`) is now optimized with `wasm-opt -Oz` and hard-gated at `<150KB`.
+- npm auto-load path now validates in verify + smoke install flow, and package dry-run publish passes with prerelease tag (`npm publish --dry-run --tag dev`).
+- browser competitor benchmark is now reproducible via:
+  - page: `bench/browser/wasm-competitors.html`
+  - runner: `bun run bench:browser:competitors`
+- binary size comparison automation is now wired for Zig vs MoonBit vs Emscripten via `bun run bench:wasm:comparisons`.
+
+Measured outcomes:
+- optimized npm WASM size: `1170 bytes` (`1552 -> 1170` after wasm-opt).
+- comparison sizes (`bench-wasm-comparisons-1772455001727.json`):
+  - Zig full wasm: `1,642,265 bytes` (`794,657` bytes gz)
+  - Zig npm wasm: `1,170 bytes` (`689` bytes gz)
+  - MoonBit wasm-gc: `59 bytes` (`66` bytes gz; current MoonBit project is an intentionally minimal/no-op comparison target)
+  - Emscripten wasm: `7,182 bytes` (`3,227` bytes gz)
+- browser competitor rows (`bench-browser-competitors-1772455163556.json`):
+  - turbotoken startup `8.5 ms`, encode 1MiB `106.47 ms` (`9.39 MiB/s`)
+  - gpt-tokenizer startup `613.2 ms`, encode 1MiB `11.7 ms` (`85.47 MiB/s`)
+  - js-tiktoken startup `1414.2 ms`, encode 1MiB `151.8 ms` (`6.59 MiB/s`)
+  - wasm-tokenizer import failed from `esm.sh/wasm-tokenizer@latest` in this run
+- browser parity/throughput rows in canonical WASM suite (`bench-wasm-1772455201579.json`):
+  - startup first encode `1.03 ms`
+  - UTF-8 encode 1MiB `3333.33 MiB/s`
+  - BPE encode 1MiB `3.17 MiB/s`
+
+---
+
+## Latest Update (2026-03-02, direct-lane safety fix + medium-lane floor tuning)
+
+Recent artifacts:
+- `bench/results/bench-gpu-crossover-1772452891350.json`
+- `bench/results/bench-gpu-crossover-1772452991129.json`
+- `bench/results/bench-gpu-bpe-direct-1772453132082.json`
+- `bench/results/bench-gpu-overlap-1772453446855.json`
+
+What changed:
+- `python/turbotoken/_gpu.py`
+  - lowered default direct-route minimum to `262_144` bytes (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) to allow medium normal-text lanes to engage direct GPU when eligible.
+  - extended low-entropy guard to the multi-range Metal-many direct branch, not only the single-piece direct branch.
+  - overlap adaptive selector now cold-starts with serial sampling and alternates until both overlap/serial baselines exist.
+  - overlap candidate gate now includes minimum average piece size (`TURBOTOKEN_GPU_OVERLAP_MIN_AVG_PIECE_BYTES`, default `2048`).
+- `python/turbotoken/core.py`
+  - force-all non-strict mode now has a piece-count CPU fallback guard (`TURBOTOKEN_METAL_FORCE_ALL_CPU_FALLBACK_MAX_RANGES`, default `128`) to avoid catastrophic many-piece dispatch paths.
+
+Measured outcomes:
+- 256KB normal-text (`fixture-alpha`) forced-metal row recovered from pathological behavior:
+  - before safety fix: `1313.12 ms` (`0.190 MiB/s`) from `bench-gpu-crossover-1772452891350.json`
+  - after safety fix: `5.07 ms` (`49.36 MiB/s`) from `bench-gpu-crossover-1772452991129.json`
+- Direct A/B (`bench-gpu-bpe-direct-1772453132082.json`):
+  - `normalText` (262,144 bytes): enabled vs disabled throughput `1.035x` (slight improvement), parity true.
+  - `normalTextLong` (1MB): enabled vs disabled throughput `1.776x`, enabled route uses direct, parity true.
+  - low-entropy profiles remain on non-direct safety routes by default (direct not selected; parity true).
+- Overlap quality check (`bench-gpu-overlap-1772453446855.json`, 0.25MiB x batch 4): `overlap_vs_no_overlap = 0.989x` (still near break-even/negative on this workload).
+
+---
+
+## Latest Update (2026-03-02, median-of-3 GPU gates + training 1MB governance + browser parity checks)
+
+Recent artifacts:
+- `bench/results/bench-training-python-20260302-112550.json`
+- `bench/results/bench-ram-1772450936168.json`
+- `bench/results/bench-wasm-1772450810515.json`
+- `bench/results/bench-gpu-memory-1772451219726.json`
+- `bench/results/bench-gpu-bpe-direct-1772451241564.json`
+- `bench/results/bench-gpu-overlap-1772451519356.json`
+- `bench/results/ci-benchmark-cpu-default-1772450940780-93514.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772451527480-4898.json`
+
+What changed:
+- `scripts/ci-benchmark.ts`
+  - GPU direct A/B gates now evaluate a median-of-3 window from latest `bench-gpu-bpe-direct` artifacts.
+  - GPU overlap gates now evaluate a median-of-3 window from latest `bench-gpu-overlap` artifacts.
+  - Added CPU governance metrics for native training on 1MB fixture:
+    - max latency gate
+    - min throughput gate (MiB/s)
+    - peak RSS gate (from RAM artifact training row)
+- `bench/ci-gates.json`
+  - version bumped to `5`.
+  - added defaults/profile thresholds for `training1mbNative*`, `peakRssTrain1mbNative*`, and overlap gate knobs (`requireGpuOverlapRows`, `overlapVsNoOverlapMinRatio`).
+- `scripts/bench-training.ts`
+  - full profile now includes native `english-1mb` training row by default.
+  - optional `english-10mb` row can be enabled with `TURBOTOKEN_TRAIN_INCLUDE_10MB=1`.
+- `scripts/bench-ram.ts`
+  - added `python-ram-turbotoken-train-1mb-native-v*` row (with reduced per-row run count for cost control).
+- `scripts/bench-wasm.ts`
+  - browser harness now performs strict parity assertions before timing:
+    - UTF-8 identity + roundtrip checks on sample payloads
+    - BPE deterministic + roundtrip checks when rank payload is available
+
+Measured outcomes:
+- training native:
+  - `python-train-english-100kb-turbotoken-native-v320`: `45.68 ms`
+  - `python-train-english-1mb-turbotoken-native-v320`: `56.70 ms` (`17.64 MiB/s` in CI summary)
+- training RSS:
+  - `python-ram-turbotoken-train-1mb-native-v320`: `18.68 MB` median peak RSS
+- browser WASM rows (with parity checks enabled):
+  - startup: `1.84 ms`
+  - UTF-8 encode 1MB: `3125.00 MiB/s`
+  - BPE encode 1MB: `3.35 MiB/s`
+- governance:
+  - CPU gate run passes with new 1MB training metrics (`ci-benchmark-cpu-default-1772450940780-93514.json`)
+  - Metal GPU profile gate run passes with median-of-3 direct A/B + overlap checks (`ci-benchmark-gpu-macos-arm64-metal-1772451527480-4898.json`)
+    - overlap median ratio (`overlap_vs_no_overlap`): `0.9983x`
+
+---
+
+## Latest Update (2026-03-02, short-lane path tuning + browser WASM rows live)
+
+Recent artifacts:
+- `bench/results/bench-gpu-memory-1772448957208.json`
+- `bench/results/bench-gpu-bpe-direct-1772448966603.json`
+- `bench/results/bench-gpu-overlap-1772449004842.json`
+- `bench/results/bench-wasm-1772448715771.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772449012735-3306.json`
+
+What changed:
+- Short-lane Metal path tuning:
+  - `python/turbotoken/_gpu.py`
+    - cached direct/full route settings parsing (env -> parsed config) to reduce per-call overhead in hot loops.
+    - `encode_bpe_chunked_stitched_metal_many` now hoists direct/full thresholds out of per-piece loops.
+    - rank-table initialization for full-piece/direct checks is now lazy (only when a piece is eligible), avoiding unnecessary setup work for exact/native-only batches.
+  - `python/turbotoken/core.py`
+    - added ASCII fast path for UTF-8 byte-length checks (`_utf8_len_fast`) in GPU route logic.
+- Direct A/B benchmark stability:
+  - `scripts/bench-gpu-crossover.ts` quick profile now uses higher BPE loop counts (`min=8`, `max=32`, base `4 MiB`) to reduce short-lane timing noise.
+- Browser WASM harness:
+  - `scripts/bench-wasm.ts` browser evaluator bug fixed (`warmup`/`runs` payload scoping), and Playwright/Chromium runs now produce real browser rows.
+
+Measured outcomes:
+- Direct 1MB parity lane (`bench-gpu-memory-1772448957208.json`):
+  - GPU median: `17.78 ms` (`56.26 MiB/s`)
+  - CPU median: `20.52 ms`
+  - parity: `matches_native=true`
+  - max device allocated: `52.45 MiB`
+- Direct A/B short lanes (`bench-gpu-bpe-direct-1772448966603.json`, 262,144 bytes):
+  - `normal-text`: disabled `0.708 ms` vs enabled `0.763 ms` (`0.928x` throughput ratio, `+7.76%` slowdown), parity true.
+  - `low-entropy`: disabled `0.493 ms` vs enabled `0.502 ms` (`0.983x` throughput ratio, `+1.73%` slowdown), parity true.
+- Direct A/B long lane (`normalTextLong`, 1MB):
+  - disabled `120.60 ms` vs enabled `58.67 ms` (`2.06x` throughput ratio), enabled route uses direct, parity true.
+- Overlap (`bench-gpu-overlap-1772449004842.json`, `normal-text`, `0.25 MiB`, batch `4`, 3 runs/row):
+  - no-overlap: `867.90 ms`
+  - overlap: `892.28 ms`
+  - overlap/no-overlap ratio: `0.973x`
+- Browser WASM rows (`bench-wasm-1772448715771.json`):
+  - `browser-wasm-startup-first-encode-hello`: `2.02 ms`
+  - `browser-wasm-encode-utf8-bytes-1mb`: `3125.00 MiB/s`
+  - `browser-wasm-encode-bpe-o200k-1mb`: `3.078 MiB/s`
+
+Governance:
+- GPU profile gates still pass after this pass (`ci-benchmark-gpu-macos-arm64-metal-1772449012735-3306.json`).
+
+---
+
+## Latest Update (2026-03-02, refreshed full GPU governance + baseline refresh)
+
+Recent artifacts:
+- `bench/results/bench-gpu-memory-1772447237318.json`
+- `bench/results/bench-gpu-bpe-direct-1772447245871.json`
+- `bench/results/bench-gpu-overlap-1772447400710.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772447287127-10348.json`
+- `bench/results/ci-gates-refresh-1772447300873.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772447417005-15553.json`
+
+What changed:
+- Ran a fresh full-speed GPU governance sweep (`scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal`) and revalidated with artifact-only gate checks after baseline refresh.
+- Refreshed relative GPU baselines from the latest successful profile artifact:
+  - `directBpeEncodeMiBPerSec`: `52.970086 -> 56.924252`
+- `scripts/bench-gpu-overlap.ts` now forces overlap benchmark runs to bypass the runtime minimum-total-bytes gate only when overlap mode is enabled, so low-size overlap benches do not silently benchmark a non-overlap route.
+
+Measured outcomes:
+- `metal-bpe-direct-encode-1mb` (`bench-gpu-memory-1772447237318.json`):
+  - GPU median: `17.57 ms` (`56.92 MiB/s`)
+  - CPU median: `20.00 ms` (`50.01 MiB/s`)
+  - parity: `matches_native=true`
+  - max device allocated: `52.45 MiB`
+- Direct A/B long lane (`bench-gpu-bpe-direct-1772447245871.json`, `normalTextLong`, 1MB):
+  - disabled: `151.50 ms` (`6.60 MiB/s`)
+  - enabled: `57.56 ms` (`17.37 MiB/s`)
+  - throughput ratio: `2.63x`
+  - enabled route used direct: `true`
+  - parity: true in both states
+- Overlap (`bench-gpu-overlap-1772447400710.json`, `normal-text`, `0.25 MiB`, batch `4`, 3 runs/row):
+  - no-overlap: `885.86 ms` (`1.129 MiB/s`)
+  - overlap: `878.13 ms` (`1.139 MiB/s`)
+  - overlap/no-overlap ratio: `1.009x`
+
+Governance:
+- Full GPU profile gates pass on the refreshed artifacts (`ci-benchmark-gpu-macos-arm64-metal-1772447287127-10348.json`).
+- Gate-only recheck also passes after baseline refresh (`ci-benchmark-gpu-macos-arm64-metal-1772447417005-15553.json`).
+
+---
+
+## Latest Update (2026-03-02, long-lane direct governance)
+
+Recent artifacts:
+- `bench/results/bench-gpu-bpe-direct-1772444208380.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772444437508-23104.json`
+
+What changed:
+- `scripts/ci-benchmark.ts`
+  - added parsing + gate evaluation for long-lane direct A/B rows (`lowEntropyLong`, `normalTextLong`) from `bench-gpu-bpe-direct` artifacts.
+  - added long-lane route policy checks (enabled direct-route required/disabled per gate config).
+- `bench/ci-gates.json`
+  - extended `directAbSafety` with long-lane thresholds and route expectations.
+  - profiled Metal runner now requires long rows and enforces:
+    - `requireLowEntropyLongNoDirectRoute=true`
+    - `requireNormalTextLongDirectRoute=true`
+    - parity remains required for all direct A/B lanes.
+
+Measured outcomes (from `bench-gpu-bpe-direct-1772444208380.json`):
+- `normalTextLong` (1MB): direct enabled `62.62 ms` vs disabled `108.52 ms` (`1.73x` throughput ratio), parity true, enabled route used direct.
+- `lowEntropyLong` (1MB): enabled stays non-direct route under safety guard, parity true.
+
+Governance:
+- GPU profile gates pass with long-lane checks enabled (`ci-benchmark-gpu-macos-arm64-metal-1772444437508-23104.json`).
+
+---
+
+## Latest Update (2026-03-02, WASM SIMD + Metal merge/overlap tuning)
+
+Recent artifacts:
+- `bench/results/bench-wasm-1772445390871.json`
+- `bench/results/bench-gpu-bpe-direct-1772445416722.json`
+- `bench/results/bench-gpu-overlap-1772446520930.json`
+- `bench/results/ci-benchmark-gpu-macos-arm64-metal-1772446353101-59281.json`
+
+What changed:
+- WASM path:
+  - `src/arch/wasm.zig`: SIMD byte encode/decode loops now use vector widen/truncate + block copies (removes per-lane writes in hot loops).
+  - `js/src/wasm-loader.ts`: rank payload is now cached in WASM memory across BPE calls (no per-call rank re-copy), and UTF-8/BPE encode paths use one-shot output buffers.
+  - `js/src/encoding.ts`: when WASM bridge is loaded, non-BPE byte-path `encode/decode/count` now uses bridge APIs (thinner JS wrapper path, less JS-side processing).
+- Metal merge loop:
+  - `gpu/metal/metal_bridge.m`: default large-input direct BPE batch size changed to `24` rounds/submit (from `16`) to reduce submit overhead while keeping convergence stable.
+- Overlap benchmark:
+  - `scripts/bench-gpu-overlap.ts` now supports `normal-text` and `low-entropy` workload modes and sub-1MiB sizing (`TURBOTOKEN_GPU_OVERLAP_TEXT_MIB` accepts fractions).
+  - overlap benchmark now forces strict all-piece mode to avoid silent CPU fallback in force-all scenarios.
+
+Measured outcomes:
+- WASM (`bench-wasm-1772445390871.json`):
+  - `wasm-encode-utf8-bytes-1mb`: `~23.60 MiB/s`
+  - `wasm-encode-bpe-o200k-1mb`: `~2.40 MiB/s`
+  - `node-wasm-encode-bpe-o200k-1mb`: `~2.08 MiB/s`
+- Metal direct A/B long lane (`bench-gpu-bpe-direct-1772445416722.json`):
+  - `normalTextLong` enabled: `57.54 ms`, `17.38 MiB/s`, `96 rounds / 4 submits`, parity true.
+  - throughput ratio vs disabled: `1.93x` (`-48.10%` latency).
+- Overlap (`bench-gpu-overlap-1772446520930.json`, `normal-text`, `0.25 MiB`, batch `4`, 3 runs/row):
+  - `gpu-metal-cpu-overlap` vs `gpu-metal-no-overlap`: `~1.004x` (`~0.38%` uplift in this run).
+
+Governance:
+- Metal GPU CI profile continues passing with the updated direct-lane behavior (`ci-benchmark-gpu-macos-arm64-metal-1772446353101-59281.json`).
 
 ---
 

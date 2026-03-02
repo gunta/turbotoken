@@ -1,0 +1,199 @@
+{
+  "$comment": "Test vectors for turbotoken language bindings. All bindings must produce identical results.",
+  "encodings": {
+    "o200k_base": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+      "n_vocab": 200019,
+      "special_tokens": {
+        "<|endoftext|>": 199999,
+        "<|endofprompt|>": 200018
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        },
+        {
+          "text": "hello  world",
+          "description": "double space"
+        },
+        {
+          "text": "",
+          "description": "empty string",
+          "expected_count": 0
+        },
+        {
+          "text": "a",
+          "description": "single ASCII character"
+        },
+        {
+          "text": "The quick brown fox jumps over the lazy dog",
+          "description": "pangram"
+        },
+        {
+          "text": "🎉🚀💻",
+          "description": "emoji sequence"
+        },
+        {
+          "text": "日本語テスト",
+          "description": "CJK characters"
+        },
+        {
+          "text": "  \n\t  ",
+          "description": "whitespace only"
+        },
+        {
+          "text": "Hello, World! This is a test of the turbotoken library.",
+          "description": "mixed punctuation"
+        },
+        {
+          "text": "AAAAAAAAAA",
+          "description": "repeated character"
+        }
+      ]
+    },
+    "cl100k_base": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+      "n_vocab": 100277,
+      "special_tokens": {
+        "<|endoftext|>": 100257,
+        "<|fim_prefix|>": 100258,
+        "<|fim_middle|>": 100259,
+        "<|fim_suffix|>": 100260,
+        "<|endofprompt|>": 100276
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        },
+        {
+          "text": "tiktoken is great",
+          "description": "library name"
+        },
+        {
+          "text": "",
+          "description": "empty string",
+          "expected_count": 0
+        }
+      ]
+    },
+    "p50k_base": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+      "n_vocab": 50281,
+      "special_tokens": {
+        "<|endoftext|>": 50256
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        },
+        {
+          "text": "",
+          "description": "empty string",
+          "expected_count": 0
+        }
+      ]
+    },
+    "r50k_base": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken",
+      "n_vocab": 50257,
+      "special_tokens": {
+        "<|endoftext|>": 50256
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        },
+        {
+          "text": "",
+          "description": "empty string",
+          "expected_count": 0
+        }
+      ]
+    },
+    "gpt2": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/r50k_base.tiktoken",
+      "n_vocab": 50257,
+      "special_tokens": {
+        "<|endoftext|>": 50256
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        }
+      ]
+    },
+    "p50k_edit": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/p50k_base.tiktoken",
+      "n_vocab": 50281,
+      "special_tokens": {
+        "<|endoftext|>": 50256
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        }
+      ]
+    },
+    "o200k_harmony": {
+      "rank_file_url": "https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken",
+      "n_vocab": 200019,
+      "special_tokens": {
+        "<|endoftext|>": 199999,
+        "<|endofprompt|>": 200018
+      },
+      "tests": [
+        {
+          "text": "hello world",
+          "description": "simple ASCII text"
+        }
+      ]
+    }
+  },
+  "chat_templates": {
+    "turbotoken_v1": {
+      "message_prefix": "[[role:{role}]]\n",
+      "message_suffix": "\n[[/message]]\n",
+      "assistant_prefix": "[[role:{role}]]\n"
+    },
+    "im_tokens": {
+      "message_prefix": "<|im_start|>{role}\n",
+      "message_suffix": "<|im_end|>\n",
+      "assistant_prefix": "<|im_start|>{role}\n"
+    }
+  },
+  "chat_test": {
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ],
+    "description": "Basic chat template test — encode with turbotoken_v1 template"
+  },
+  "round_trip_texts": [
+    "hello world",
+    "The quick brown fox jumps over the lazy dog",
+    "🎉🚀💻",
+    "日本語テスト",
+    "def hello():\n    print('world')\n",
+    "Hello, World! This is a test of the turbotoken library.",
+    "   ",
+    "a"
+  ],
+  "model_to_encoding": {
+    "gpt-4o": "o200k_base",
+    "gpt-4o-mini": "o200k_base",
+    "gpt-4": "cl100k_base",
+    "gpt-3.5-turbo": "cl100k_base",
+    "text-embedding-ada-002": "cl100k_base",
+    "text-davinci-003": "p50k_base",
+    "davinci": "r50k_base",
+    "gpt2": "gpt2",
+    "o1": "o200k_base",
+    "o3": "o200k_base"
+  }
+}

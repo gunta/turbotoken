@@ -318,6 +318,10 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   if (process.env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT) {
     env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT = process.env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT;
   }
+  if (profile.lane === "long" && profile.textKind === "normal-text") {
+    env.TURBOTOKEN_GPU_CROSSOVER_NORMAL_TEXT_MODE = "singlepiece-lower";
+    env.TURBOTOKEN_GPU_MEMORY_NORMAL_TEXT_MODE = "singlepiece-lower";
+  }
   const startedAt = Date.now();
 
   section(

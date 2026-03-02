@@ -51,10 +51,9 @@ pub fn encodeU8ToU32(bytes: []const u8, out: []u32) void {
     while (idx + lanes <= bytes.len) : (idx += lanes) {
         const chunk_ptr: *const [lanes]u8 = @ptrCast(bytes[idx .. idx + lanes].ptr);
         const chunk: @Vector(lanes, u8) = chunk_ptr.*;
-        const values: [lanes]u8 = @bitCast(chunk);
-        inline for (values, 0..) |byte, lane| {
-            out[idx + lane] = byte;
-        }
+        const widened: @Vector(lanes, u32) = @intCast(chunk);
+        const values: [lanes]u32 = @bitCast(widened);
+        @memcpy(out[idx .. idx + lanes], values[0..]);
     }
     while (idx < bytes.len) : (idx += 1) {
         out[idx] = bytes[idx];
@@ -85,10 +84,9 @@ pub fn validateAndDecodeU32ToU8(tokens: []const u32, out: []u8) bool {
         if (@reduce(.Or, invalid_mask)) {
             return false;
         }
-        const values: [lanes]u32 = @bitCast(chunk);
-        inline for (values, 0..) |token, lane| {
-            out[idx + lane] = @as(u8, @intCast(token));
-        }
+        const narrowed: @Vector(lanes, u8) = @truncate(chunk);
+        const values: [lanes]u8 = @bitCast(narrowed);
+        @memcpy(out[idx .. idx + lanes], values[0..]);
     }
 
     while (idx < tokens.len) : (idx += 1) {

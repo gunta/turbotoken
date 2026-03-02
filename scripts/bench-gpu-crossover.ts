@@ -25,6 +25,10 @@ const quickModeEnabledPy = quickModeEnabled ? "True" : "False";
 const calibrateForcePy = quickModeEnabled ? "False" : "True";
 const bpeTextKindRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND ?? "low-entropy").trim().toLowerCase();
 const bpeTextKind = bpeTextKindRaw === "normal-text" || bpeTextKindRaw === "normal" ? "normal-text" : "low-entropy";
+const normalTextModeRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_NORMAL_TEXT_MODE ?? "").trim().toLowerCase();
+const normalTextMode = normalTextModeRaw === "singlepiece-lower" || normalTextModeRaw === "lower"
+  ? "singlepiece-lower"
+  : "fixture-alpha";
 const bpeBytesOverrideRaw = (process.env.TURBOTOKEN_GPU_CROSSOVER_BPE_BYTES ?? "").trim();
 
 function parsePositiveIntList(raw: string): number[] {
@@ -58,7 +62,9 @@ const effectiveBpeSizes = bpeBytesOverride.length > 0 ? bpeBytesOverride : bpeSi
 const countBatches = quickModeEnabled ? [2048] : [64, 128, 256, 512, 1024, 2048, 4096, 8192];
 const encodeLoopBaseMiB = quickModeEnabled ? 4 : 16;
 const countLoopBaseBatches = quickModeEnabled ? 4 : 16;
-const bpeLoopBaseMiB = quickModeEnabled ? 1 : 2;
+const bpeLoopBaseMiB = quickModeEnabled ? 4 : 2;
+const bpeLoopMin = quickModeEnabled ? 8 : 1;
+const bpeLoopMax = quickModeEnabled ? 32 : 8;
 
 if (longBenchmarkEnabled) {
   console.log(
@@ -71,6 +77,11 @@ if (quickModeEnabled) {
   );
 }
 console.log(`BPE text profile: ${bpeTextKind} (set TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=low-entropy|normal-text)`);
+if (bpeTextKind === "normal-text") {
+  console.log(
+    `Normal-text generator mode: ${normalTextMode} (set TURBOTOKEN_GPU_CROSSOVER_NORMAL_TEXT_MODE=fixture-alpha|singlepiece-lower)`,
+  );
+}
 if (bpeBytesOverride.length > 0) {
   console.log(
     `BPE byte-size override enabled via TURBOTOKEN_GPU_CROSSOVER_BPE_BYTES=${bpeBytesOverrideRaw}; sizes=${effectiveBpeSizes.join(",")}`,
@@ -218,18 +229,23 @@ for batch_size in count_batches:
 
 route=_gpu.calibrate_autoroute(force=${calibrateForcePy})
 bpe_sizes=${JSON.stringify(effectiveBpeSizes)}
+bpe_loop_min=${bpeLoopMin}
+bpe_loop_max=${bpeLoopMax}
 bpe_text_kind=${JSON.stringify(bpeTextKind)}
+normal_text_mode=${JSON.stringify(normalTextMode)}
 fixture_text=bytes(pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes())
 if len(fixture_text) == 0:
     fixture_text=b"The quick brown fox jumps over the lazy dog. "
 normal_stream=bytes(ch for ch in fixture_text if (65 <= ch <= 90) or (97 <= ch <= 122))
 if len(normal_stream) == 0:
     normal_stream=b"TheQuickBrownFoxJumpsOverTheLazyDog"
+normal_stream_lower=bytes(((ch + 32) if (65 <= ch <= 90) else ch) for ch in normal_stream)
 
 def build_bpe_text(size):
     if bpe_text_kind == "normal-text":
-        repeats=max(1,(size+len(normal_stream)-1)//len(normal_stream))
-        payload=(normal_stream*repeats)[:size]
+        source=normal_stream_lower if normal_text_mode == "singlepiece-lower" else normal_stream
+        repeats=max(1,(size+len(source)-1)//len(source))
+        payload=(source*repeats)[:size]
         return payload.decode("ascii", "ignore")
     return 'a'*size
 
@@ -238,7 +254,7 @@ for size in bpe_sizes:
     text=build_bpe_text(size)
     data=text.encode('utf-8')
     input_bytes=max(1,len(data))
-    loops=max(1,min(8,(${bpeLoopBaseMiB}*1048576)//input_bytes))
+    loops=max(bpe_loop_min,min(bpe_loop_max,(${bpeLoopBaseMiB}*1048576)//input_bytes))
     baseline=enc.encode(text)
     route_backend=_gpu.bpe_route_backend(input_bytes)
     auto_tokens=enc.encode_gpu(
@@ -298,6 +314,7 @@ print(json.dumps({
     },
     "bpe_text_profile":{
         "kind":bpe_text_kind,
+        "normal_text_mode":normal_text_mode,
         "source_fixture":"bench/fixtures/english-1mb.txt",
         "flag":"TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND",
     },

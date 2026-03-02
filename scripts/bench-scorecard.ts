@@ -259,6 +259,30 @@ function commandMeanMs(payload: JsonMap | null, commandName: string): number | n
   return null;
 }
 
+function commandMeanMsByPrefix(payload: JsonMap | null, prefix: string): number | null {
+  if (!payload) {
+    return null;
+  }
+  const results = payload["results"];
+  if (!Array.isArray(results)) {
+    return null;
+  }
+  for (const row of results) {
+    if (!isRecord(row)) {
+      continue;
+    }
+    const name = String(row["command"] ?? row["commandName"] ?? "");
+    if (!name.startsWith(prefix)) {
+      continue;
+    }
+    const meanSeconds = toNumber(row["mean"]) ?? toNumber(row["meanSeconds"]);
+    if (meanSeconds != null) {
+      return meanSeconds * 1000;
+    }
+  }
+  return null;
+}
+
 function winner(rows: CompetitorRow[]): CompetitorRow | null {
   const valid = rows.filter((row) => Number.isFinite(row.meanMs));
   if (valid.length === 0) {
@@ -423,6 +447,17 @@ const training100kbRows: CompetitorRow[] = [
   { name: "minbpe", meanMs: commandMeanMs(training, "python-train-english-100kb-minbpe-v320") ?? Number.NaN },
 ].map((row) => ({ ...row, mibPerSec: toMiBPerSec(row.meanMs, 100 / 1024) }));
 
+const training1mbNativeMs =
+  commandMeanMs(training, "python-train-english-1mb-turbotoken-native-v320") ??
+  commandMeanMsByPrefix(training, "python-train-english-1mb-turbotoken-native-v");
+const training1mbNativeRows: CompetitorRow[] = [
+  {
+    name: "turbotoken-native",
+    meanMs: training1mbNativeMs ?? Number.NaN,
+    mibPerSec: toMiBPerSec(training1mbNativeMs, 1.0),
+  },
+];
+
 const chatEncodeRows: CompetitorRow[] = [
   { name: "turbotoken", meanMs: commandMeanMs(chatHelpers, "python-chat-encode-turbotoken") ?? Number.NaN },
   { name: "gpt-tokenizer", meanMs: commandMeanMs(chatHelpers, "js-chat-encode-gpt-tokenizer") ?? Number.NaN },
@@ -473,6 +508,10 @@ const ramRows = extractRamRows(ram).map((row) => ({
     return kb == null ? null : kb / 1024;
   })(),
 }));
+const training1mbNativeRssMb = (() => {
+  const row = ramRows.find((entry) => entry.name.startsWith("python-ram-turbotoken-train-1mb-native-v"));
+  return row?.medianRssMb ?? null;
+})();
 
 const wasmRows = (() => {
   if (!wasm) {
@@ -600,6 +639,9 @@ const payload: JsonMap = {
     chatLimitWinner: winner(chatLimitRows),
     training100kb: training100kbRows,
     training100kbWinner: winner(training100kbRows),
+    training1mbNative: training1mbNativeRows,
+    training1mbNativeWinner: winner(training1mbNativeRows),
+    training1mbNativeRssMb,
     wasm,
     wasmRows,
     wasmNodeRows,
@@ -659,7 +701,12 @@ const markdownRows = [
   ...wasmBrowserRows.slice(0, 8).map((row) => {
     const status = typeof row.status === "string" ? row.status : "ok";
     const reason = typeof row.reason === "string" && row.reason.length > 0 ? ` (${row.reason})` : "";
-    return `- browser row ${row.name}: ${status}${reason}`;
+    const metrics = status === "ok"
+      ? ` | ${row.meanMs == null ? "n/a" : `${round(row.meanMs, 2)} ms`} | ${
+        row.throughputMbPerSec == null ? "throughput n/a" : `${round(row.throughputMbPerSec, 2)} MB/s`
+      }`
+      : "";
+    return `- browser row ${row.name}: ${status}${reason}${metrics}`;
   }),
   ``,
   `## GPU Direct A/B (Headline: normal-text)`,
@@ -733,6 +780,18 @@ const markdownRows = [
   `- chat count: ${winner(chatCountRows)?.name ?? "n/a"}`,
   `- chat limit: ${winner(chatLimitRows)?.name ?? "n/a"}`,
   `- training 100KB: ${winner(training100kbRows)?.name ?? "n/a"}`,
+  `- training 1MB native: ${winner(training1mbNativeRows)?.name ?? "n/a"}`,
+  `- training 1MB native latency: ${
+    training1mbNativeRows[0]?.meanMs != null && Number.isFinite(training1mbNativeRows[0].meanMs)
+      ? `${round(training1mbNativeRows[0].meanMs, 2)} ms`
+      : "n/a"
+  }`,
+  `- training 1MB native throughput: ${
+    training1mbNativeRows[0]?.mibPerSec != null && Number.isFinite(training1mbNativeRows[0].mibPerSec)
+      ? `${round(training1mbNativeRows[0].mibPerSec, 3)} MiB/s`
+      : "n/a"
+  }`,
+  `- training 1MB native RSS: ${training1mbNativeRssMb == null ? "n/a" : `${round(training1mbNativeRssMb, 2)} MB`}`,
   ``,
   `## Artifacts`,
   ...Object.entries(artifacts).map(([name, path]) => `- ${name}: ${path ?? "missing"}`),

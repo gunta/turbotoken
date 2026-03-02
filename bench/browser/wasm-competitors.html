@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>turbotoken Browser Bench (vs competitors)</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --muted: #94a3b8;
+        --text: #e5e7eb;
+        --accent: #22d3ee;
+        --ok: #34d399;
+        --fail: #f87171;
+      }
+      body {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: radial-gradient(circle at top, #1f2937 0%, var(--bg) 45%);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      .panel {
+        background: color-mix(in srgb, var(--panel) 92%, black 8%);
+        border: 1px solid #1f2937;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 20px;
+      }
+      p {
+        color: var(--muted);
+      }
+      button {
+        border: 0;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        background: var(--accent);
+        color: #082f49;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+      }
+      th,
+      td {
+        border-bottom: 1px solid #1f2937;
+        padding: 10px 8px;
+        text-align: left;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .fail {
+        color: var(--fail);
+      }
+      .mono {
+        font-variant-numeric: tabular-nums;
+      }
+      .log {
+        margin-top: 14px;
+        color: var(--muted);
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="panel">
+        <h1>Browser Tokenizer Benchmark</h1>
+        <p>
+          Measures startup and 1MiB encode throughput for <code>turbotoken</code> and browser-loadable competitors.
+          Serve this file from repository root (example: <code>python -m http.server</code>), then open in a browser.
+          For reliable local runs, keep <code>bench/fixtures/o200k_base.tiktoken</code> present (the headless runner auto-downloads it).
+        </p>
+        <button id="run">Run Benchmark</button>
+        <table>
+          <thead>
+            <tr>
+              <th>Runner</th>
+              <th>Startup (ms)</th>
+              <th>Encode 1MiB (ms)</th>
+              <th>MiB/s</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="log" class="log"></div>
+      </div>
+    </div>
+    <script type="module" src="./wasm-competitors.mjs"></script>
+  </body>
+</html>

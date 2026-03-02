@@ -115,6 +115,7 @@ export function ensureFixtures(force = false): void {
   writeFixture(resolve(FIXTURES_DIR, "english-10kb.txt"), repeatToSize(englishSeed, 10 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "english-100kb.txt"), repeatToSize(englishSeed, 100 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "english-1mb.txt"), repeatToSize(englishSeed, 1024 * 1024), force);
+  writeFixture(resolve(FIXTURES_DIR, "english-10mb.txt"), repeatToSize(englishSeed, 10 * 1024 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "code-50kb.py"), repeatToSize(codeSeed, 50 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "cjk-10kb.txt"), repeatToSize(cjkSeed, 10 * 1024), force);
   writeFixture(resolve(FIXTURES_DIR, "emoji-10kb.txt"), repeatToSize(emojiSeed, 10 * 1024), force);

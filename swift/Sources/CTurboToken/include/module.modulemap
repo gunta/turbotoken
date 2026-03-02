@@ -1,0 +1,5 @@
+module CTurboToken {
+    header "turbotoken.h"
+    link "turbotoken"
+    export *
+}

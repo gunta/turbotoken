@@ -13,9 +13,15 @@ const runs = runsRaw ? Math.max(1, Number.parseInt(runsRaw, 10) || 3) : 3;
 const batchRaw = process.env.TURBOTOKEN_GPU_OVERLAP_BATCH?.trim();
 const batch = batchRaw ? Math.max(1, Number.parseInt(batchRaw, 10) || 4) : 4;
 const textMiBRaw = process.env.TURBOTOKEN_GPU_OVERLAP_TEXT_MIB?.trim();
-const textMiB = textMiBRaw ? Math.max(1, Number.parseInt(textMiBRaw, 10) || 1) : 1;
+const defaultTextMiB = speedProfile === "fast" ? 0.125 : 0.25;
+const textMiB = textMiBRaw
+  ? Math.max(0.125, Number.parseFloat(textMiBRaw) || defaultTextMiB)
+  : defaultTextMiB;
+const textKindRaw = process.env.TURBOTOKEN_GPU_OVERLAP_TEXT_KIND?.trim().toLowerCase();
+const textKind = textKindRaw === "low-entropy" ? "low-entropy" : "normal-text";
 const chunkBytesRaw = process.env.TURBOTOKEN_GPU_OVERLAP_CHUNK_BYTES?.trim();
 const chunkBytes = chunkBytesRaw ? Math.max(256, Number.parseInt(chunkBytesRaw, 10) || 1024) : 1024;
+const fixturePath = resolvePath("bench", "fixtures", "english-1mb.txt");
 
 const outputPath = resolvePath("bench", "results", `bench-gpu-overlap-${Date.now()}.json`);
 
@@ -80,10 +86,31 @@ from turbotoken import _gpu,get_encoding
 
 runs=int(sys.argv[1])
 batch_size=int(sys.argv[2])
-text_mib=max(1,int(sys.argv[3]))
+text_mib=max(0.125,float(sys.argv[3]))
 chunk_bytes=max(256,int(sys.argv[4]))
+text_kind=str(sys.argv[5] if len(sys.argv) > 5 else 'normal-text').strip().lower()
+fixture_path=str(sys.argv[6] if len(sys.argv) > 6 else '')
 enc=get_encoding('o200k_base')
-text="a"*(text_mib*1024*1024)
+target_bytes=max(1,int(text_mib*1024*1024))
+if text_kind == 'low-entropy':
+    text="a"*target_bytes
+else:
+    payload=b""
+    if fixture_path:
+        try:
+            with open(fixture_path, "rb") as fh:
+                payload=fh.read()
+        except Exception:
+            payload=b""
+    if not payload:
+        payload=(b"The quick brown fox jumps over the lazy dog. " * 2048)
+    normal_stream=bytes(ch for ch in payload if (65 <= ch <= 90) or (97 <= ch <= 122))
+    if not normal_stream:
+        normal_stream=b"TheQuickBrownFoxJumpsOverTheLazyDog"
+    normal_stream_lower=bytes(((ch + 32) if (65 <= ch <= 90) else ch) for ch in normal_stream)
+    repeats=(target_bytes + len(normal_stream_lower) - 1)//len(normal_stream_lower)
+    text_bytes=(normal_stream_lower*repeats)[:target_bytes]
+    text=text_bytes.decode("ascii", errors="ignore")
 texts=[text]*batch_size
 piece_bytes=len(text.encode('utf-8'))
 total_bytes=piece_bytes*batch_size
@@ -96,9 +123,14 @@ MEMORY_KEYS=(
 
 def encode_gpu_metal(overlap_enabled):
     prev_force=os.environ.get('TURBOTOKEN_METAL_FORCE_ALL_PIECES')
+    prev_force_strict=os.environ.get('TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT')
     prev_overlap=os.environ.get('TURBOTOKEN_GPU_OVERLAP_ENABLE')
+    prev_overlap_min_total=os.environ.get('TURBOTOKEN_GPU_OVERLAP_MIN_TOTAL_INPUT_BYTES')
     os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES']='1'
+    os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT']='1'
     os.environ['TURBOTOKEN_GPU_OVERLAP_ENABLE']='1' if overlap_enabled else '0'
+    if overlap_enabled:
+        os.environ['TURBOTOKEN_GPU_OVERLAP_MIN_TOTAL_INPUT_BYTES']='0'
     try:
         return enc.encode_gpu(
             texts,
@@ -113,10 +145,18 @@ def encode_gpu_metal(overlap_enabled):
             os.environ.pop('TURBOTOKEN_METAL_FORCE_ALL_PIECES', None)
         else:
             os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES']=prev_force
+        if prev_force_strict is None:
+            os.environ.pop('TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT', None)
+        else:
+            os.environ['TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT']=prev_force_strict
         if prev_overlap is None:
             os.environ.pop('TURBOTOKEN_GPU_OVERLAP_ENABLE', None)
         else:
             os.environ['TURBOTOKEN_GPU_OVERLAP_ENABLE']=prev_overlap
+        if prev_overlap_min_total is None:
+            os.environ.pop('TURBOTOKEN_GPU_OVERLAP_MIN_TOTAL_INPUT_BYTES', None)
+        else:
+            os.environ['TURBOTOKEN_GPU_OVERLAP_MIN_TOTAL_INPUT_BYTES']=prev_overlap_min_total
 
 # Keep one correctness check for each route mode before timing.
 baseline_tokens=enc.encode_batch(texts, num_threads=1)
@@ -166,6 +206,8 @@ print(json.dumps({
     'runs_per_row':runs,
     'batch_size':batch_size,
     'text_mib':text_mib,
+    'text_kind':text_kind,
+    'fixture_path':fixture_path or None,
     'chunk_bytes':chunk_bytes,
     'piece_bytes':piece_bytes,
     'total_bytes':total_bytes,
@@ -201,7 +243,17 @@ print(json.dumps({
 `;
 
 const runResult = Bun.spawnSync({
-  cmd: [python, "-c", py, String(runs), String(batch), String(textMiB), String(chunkBytes)],
+  cmd: [
+    python,
+    "-c",
+    py,
+    String(runs),
+    String(batch),
+    String(textMiB),
+    String(chunkBytes),
+    textKind,
+    fixturePath,
+  ],
   cwd: resolvePath(),
   stdout: "pipe",
   stderr: "pipe",

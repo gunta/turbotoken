@@ -184,6 +184,17 @@ _owner_flag_pool: ThreadPoolExecutor | None = None
 _owner_flag_pool_lock = Lock()
 
 
+@dataclass(slots=True)
+class _OverlapPerfState:
+    calls: int
+    overlap_ewma_ms: float | None
+    serial_ewma_ms: float | None
+
+
+_overlap_perf_cache: dict[tuple[int, int, int], _OverlapPerfState] = {}
+_overlap_perf_lock = Lock()
+
+
 def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -214,30 +225,98 @@ def _env_flag(name: str, *, default: bool) -> bool:
     return default
 
 
+def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: float | None = None) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if value < minimum:
+        value = minimum
+    if maximum is not None and value > maximum:
+        value = maximum
+    return value
+
+
 def _metal_bpe_direct_enabled() -> bool:
-    return _env_flag("TURBOTOKEN_METAL_BPE_DIRECT_ENABLE", default=False)
+    enabled, _min_bytes, _max_bytes, _guard_enabled = _metal_bpe_direct_settings()
+    return enabled
 
 
 def _metal_bpe_direct_min_bytes() -> int:
     # Keep direct-on-GPU route focused on large texts where it wins reliably.
-    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES", 786_432, minimum=1)
+    _enabled, min_bytes, _max_bytes, _guard_enabled = _metal_bpe_direct_settings()
+    return min_bytes
 
 
 def _metal_bpe_direct_max_bytes() -> int:
-    return _env_int("TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES", 1_048_576, minimum=1)
+    _enabled, _min_bytes, max_bytes, _guard_enabled = _metal_bpe_direct_settings()
+    return max_bytes
 
 
 def _metal_bpe_direct_low_entropy_guard_enabled() -> bool:
-    return _env_flag("TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD", default=True)
+    _enabled, _min_bytes, _max_bytes, guard_enabled = _metal_bpe_direct_settings()
+    return guard_enabled
 
 
 def _metal_bpe_full_min_bytes() -> int:
     # Full-piece GPU route is expensive for tiny regex pieces; keep it for larger pieces.
-    return _env_int("TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES", 4096, minimum=1)
+    min_bytes, _max_bytes = _metal_bpe_full_settings()
+    return min_bytes
 
 
 def _metal_bpe_full_max_bytes() -> int:
-    return _env_int("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", 16384, minimum=1)
+    _min_bytes, max_bytes = _metal_bpe_full_settings()
+    return max_bytes
+
+
+@lru_cache(maxsize=64)
+def _resolve_metal_bpe_direct_settings(
+    enabled_raw: str,
+    min_raw: str,
+    max_raw: str,
+    guard_raw: str,
+) -> tuple[bool, int, int, bool]:
+    enabled = _env_flag_from_raw(enabled_raw, default=False)
+    # Keep default direct path available for medium/large normal-text lanes.
+    min_bytes = _parse_int_floor(min_raw, 262_144, minimum=1)
+    max_bytes = _parse_int_floor(max_raw, 1_048_576, minimum=1)
+    guard_enabled = _env_flag_from_raw(guard_raw, default=True)
+    return enabled, min_bytes, max(max_bytes, min_bytes), guard_enabled
+
+
+def _metal_bpe_direct_settings() -> tuple[bool, int, int, bool]:
+    return _resolve_metal_bpe_direct_settings(
+        os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_ENABLE", "").strip().lower(),
+        os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES", "").strip(),
+        os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_MAX_BYTES", "").strip(),
+        os.environ.get("TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD", "").strip().lower(),
+    )
+
+
+@lru_cache(maxsize=64)
+def _resolve_metal_bpe_full_settings(min_raw: str, max_raw: str) -> tuple[int, int]:
+    min_bytes = _parse_int_floor(min_raw, 4096, minimum=1)
+    max_bytes = _parse_int_floor(max_raw, 16384, minimum=1)
+    return min_bytes, max(max_bytes, min_bytes)
+
+
+def _metal_bpe_full_settings() -> tuple[int, int]:
+    return _resolve_metal_bpe_full_settings(
+        os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES", "").strip(),
+        os.environ.get("TURBOTOKEN_METAL_BPE_FULL_MAX_BYTES", "").strip(),
+    )
+
+
+def _env_flag_from_raw(raw: str, *, default: bool) -> bool:
+    lowered = raw.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return default
 
 
 def _is_low_entropy_direct_input(data: bytes) -> bool:
@@ -268,14 +347,13 @@ def _encode_bpe_direct_metal(
     *,
     token_lens: dict[int, int],
 ) -> list[int] | None:
-    if not _metal_bpe_direct_enabled():
+    direct_enabled, direct_min, direct_max, low_entropy_guard_enabled = _metal_bpe_direct_settings()
+    if not direct_enabled:
         return None
 
-    direct_min = _metal_bpe_direct_min_bytes()
-    direct_max = _metal_bpe_direct_max_bytes()
     if len(data) < direct_min or len(data) > direct_max:
         return None
-    if _metal_bpe_direct_low_entropy_guard_enabled() and _is_low_entropy_direct_input(data):
+    if low_entropy_guard_enabled and _is_low_entropy_direct_input(data):
         return None
 
     metal_bridge = get_metal_bridge()
@@ -352,6 +430,124 @@ def _gpu_overlap_pipeline_min_batches() -> int:
     return _env_int("TURBOTOKEN_GPU_OVERLAP_MIN_BATCHES", 2, minimum=2)
 
 
+def _gpu_overlap_pipeline_min_total_input_bytes() -> int:
+    return _env_int("TURBOTOKEN_GPU_OVERLAP_MIN_TOTAL_INPUT_BYTES", 524_288, minimum=1)
+
+
+def _gpu_overlap_pipeline_min_avg_piece_bytes() -> int:
+    # Avoid overlap overhead on workloads dominated by tiny regex pieces.
+    return _env_int("TURBOTOKEN_GPU_OVERLAP_MIN_AVG_PIECE_BYTES", 2048, minimum=1)
+
+
+def _gpu_overlap_pipeline_depth() -> int:
+    depth = _env_int("TURBOTOKEN_GPU_OVERLAP_PIPELINE_DEPTH", 1, minimum=1)
+    # Keep overlap depth bounded to avoid excessive prepared-batch memory growth.
+    return min(depth, 8)
+
+
+def _gpu_overlap_adaptive_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_GPU_OVERLAP_ADAPTIVE_ENABLE", default=True)
+
+
+def _gpu_overlap_adaptive_margin_pct() -> float:
+    return _env_float("TURBOTOKEN_GPU_OVERLAP_ADAPTIVE_MARGIN_PCT", 3.0, minimum=0.0, maximum=100.0)
+
+
+def _gpu_overlap_adaptive_ewma_alpha() -> float:
+    return _env_float("TURBOTOKEN_GPU_OVERLAP_ADAPTIVE_EWMA_ALPHA", 0.25, minimum=0.05, maximum=1.0)
+
+
+def _gpu_overlap_adaptive_explore_every() -> int:
+    return _env_int("TURBOTOKEN_GPU_OVERLAP_ADAPTIVE_EXPLORE_EVERY", 8, minimum=2)
+
+
+def _bucketize(value: int, *, limits: Sequence[int]) -> int:
+    for limit in limits:
+        if value <= limit:
+            return limit
+    return limits[-1] * 2
+
+
+def _gpu_overlap_perf_key(
+    *,
+    total_batches: int,
+    total_input_bytes: int | None,
+    total_pieces: int | None,
+) -> tuple[int, int, int]:
+    batches_bucket = _bucketize(max(1, total_batches), limits=[2, 4, 8, 16, 32, 64, 128, 256])
+    bytes_bucket = _bucketize(max(1, total_input_bytes or 0), limits=[262_144, 524_288, 1_048_576, 4_194_304, 16_777_216])
+    pieces_bucket = _bucketize(max(1, total_pieces or total_batches), limits=[1, 2, 4, 8, 16, 32, 64, 128])
+    return batches_bucket, bytes_bucket, pieces_bucket
+
+
+def _gpu_overlap_select_mode(
+    *,
+    total_batches: int,
+    total_input_bytes: int | None,
+    total_pieces: int | None,
+) -> tuple[bool, tuple[int, int, int] | None]:
+    if not _gpu_overlap_adaptive_enabled():
+        return True, None
+
+    key = _gpu_overlap_perf_key(
+        total_batches=total_batches,
+        total_input_bytes=total_input_bytes,
+        total_pieces=total_pieces,
+    )
+    explore_every = _gpu_overlap_adaptive_explore_every()
+    margin_pct = _gpu_overlap_adaptive_margin_pct()
+
+    with _overlap_perf_lock:
+        state = _overlap_perf_cache.get(key)
+        if state is None:
+            state = _OverlapPerfState(calls=0, overlap_ewma_ms=None, serial_ewma_ms=None)
+            _overlap_perf_cache[key] = state
+            if len(_overlap_perf_cache) > 128:
+                _overlap_perf_cache.pop(next(iter(_overlap_perf_cache)))
+        state.calls += 1
+        calls = state.calls
+
+        overlap_ms = state.overlap_ewma_ms
+        serial_ms = state.serial_ewma_ms
+
+    if overlap_ms is None and serial_ms is None:
+        # Cold start: take one serial sample first to avoid eager overlap lock-in.
+        return False, key
+    if overlap_ms is None:
+        # Alternate until overlap has at least one baseline sample.
+        return (calls % 2) == 0, key
+    if serial_ms is None:
+        # Alternate until serial has at least one baseline sample.
+        return (calls % 2) != 0, key
+
+    prefer_overlap = overlap_ms <= (serial_ms * (1.0 + (margin_pct / 100.0)))
+    if calls % explore_every == 0:
+        return (not prefer_overlap), key
+    return prefer_overlap, key
+
+
+def _gpu_overlap_record_sample(
+    key: tuple[int, int, int] | None,
+    *,
+    used_overlap: bool,
+    elapsed_ms: float,
+) -> None:
+    if key is None or elapsed_ms <= 0:
+        return
+    alpha = _gpu_overlap_adaptive_ewma_alpha()
+    with _overlap_perf_lock:
+        state = _overlap_perf_cache.get(key)
+        if state is None:
+            state = _OverlapPerfState(calls=0, overlap_ewma_ms=None, serial_ewma_ms=None)
+            _overlap_perf_cache[key] = state
+        if used_overlap:
+            prev = state.overlap_ewma_ms
+            state.overlap_ewma_ms = elapsed_ms if prev is None else ((alpha * elapsed_ms) + ((1.0 - alpha) * prev))
+        else:
+            prev = state.serial_ewma_ms
+            state.serial_ewma_ms = elapsed_ms if prev is None else ((alpha * elapsed_ms) + ((1.0 - alpha) * prev))
+
+
 @dataclass(slots=True)
 class _PreparedOwnerBatch:
     flat_tokens: list[int]
@@ -389,12 +585,27 @@ def _run_owner_batch_pipeline(
     consume_batch_tokens: Any,
     metal_bridge: "MetalBridge",
     native_bridge: Any,
+    total_input_bytes: int | None = None,
+    total_pieces: int | None = None,
 ) -> bool:
     if total_batches <= 0:
         return True
 
-    use_overlap = _gpu_overlap_pipeline_enabled() and total_batches >= _gpu_overlap_pipeline_min_batches()
-    if not use_overlap:
+    min_total_input_bytes = _gpu_overlap_pipeline_min_total_input_bytes()
+    bytes_ok = total_input_bytes is None or total_input_bytes >= min_total_input_bytes
+    avg_piece_bytes: int | None = None
+    if total_input_bytes is not None:
+        piece_count = total_pieces if total_pieces and total_pieces > 0 else total_batches
+        avg_piece_bytes = total_input_bytes // max(1, piece_count)
+    avg_piece_ok = avg_piece_bytes is None or avg_piece_bytes >= _gpu_overlap_pipeline_min_avg_piece_bytes()
+    overlap_candidate = (
+        _gpu_overlap_pipeline_enabled()
+        and total_batches >= _gpu_overlap_pipeline_min_batches()
+        and bytes_ok
+        and avg_piece_ok
+    )
+
+    def _run_serial() -> bool:
         for batch_idx in range(total_batches):
             prepared = prepare_batch(batch_idx)
             if prepared is None:
@@ -409,47 +620,122 @@ def _run_owner_batch_pipeline(
             consume_batch_tokens(batch_idx, filtered)
         return True
 
-    prepared = prepare_batch(0)
-    if prepared is None:
-        return False
-
-    pool = _get_owner_flag_pool()
-    future = pool.submit(
-        _resolve_owner_batch,
-        metal_bridge=metal_bridge,
-        native_bridge=native_bridge,
-        prepared=prepared,
-    )
-    for batch_idx in range(total_batches):
-        next_prepared: _PreparedOwnerBatch | None = None
-        next_prepare_failed = False
-        if batch_idx + 1 < total_batches:
-            next_prepared = prepare_batch(batch_idx + 1)
-            if next_prepared is None:
-                next_prepare_failed = True
-
-        try:
-            filtered = future.result()
-        except Exception:
-            return False
-        if filtered is None:
-            return False
-        consume_batch_tokens(batch_idx, filtered)
-        if next_prepare_failed:
+    def _run_overlap() -> bool:
+        prepared = prepare_batch(0)
+        if prepared is None:
             return False
 
-        if next_prepared is None:
-            break
+        pool = _get_owner_flag_pool()
+        pipeline_depth = min(_gpu_overlap_pipeline_depth(), total_batches)
+        if pipeline_depth <= 1:
+            future = pool.submit(
+                _resolve_owner_batch,
+                metal_bridge=metal_bridge,
+                native_bridge=native_bridge,
+                prepared=prepared,
+            )
+            for batch_idx in range(total_batches):
+                next_prepared: _PreparedOwnerBatch | None = None
+                next_prepare_failed = False
+                if batch_idx + 1 < total_batches:
+                    next_prepared = prepare_batch(batch_idx + 1)
+                    if next_prepared is None:
+                        next_prepare_failed = True
 
-        prepared = next_prepared
-        future = pool.submit(
-            _resolve_owner_batch,
-            metal_bridge=metal_bridge,
-            native_bridge=native_bridge,
-            prepared=prepared,
+                try:
+                    filtered = future.result()
+                except Exception:
+                    return False
+                if filtered is None:
+                    return False
+                consume_batch_tokens(batch_idx, filtered)
+                if next_prepare_failed:
+                    return False
+
+                if next_prepared is None:
+                    break
+
+                prepared_local = next_prepared
+                future = pool.submit(
+                    _resolve_owner_batch,
+                    metal_bridge=metal_bridge,
+                    native_bridge=native_bridge,
+                    prepared=prepared_local,
+                )
+            return True
+
+        pending: list[tuple[int, Any]] = []
+        next_batch_idx = 0
+        consumed = 0
+
+        while next_batch_idx < total_batches and len(pending) < pipeline_depth:
+            if next_batch_idx == 0:
+                current_prepared = prepared
+            else:
+                current_prepared = prepare_batch(next_batch_idx)
+                if current_prepared is None:
+                    return False
+            pending.append(
+                (
+                    next_batch_idx,
+                    pool.submit(
+                        _resolve_owner_batch,
+                        metal_bridge=metal_bridge,
+                        native_bridge=native_bridge,
+                        prepared=current_prepared,
+                    ),
+                )
+            )
+            next_batch_idx += 1
+
+        while pending:
+            batch_idx, future = pending.pop(0)
+            try:
+                filtered = future.result()
+            except Exception:
+                return False
+            if filtered is None:
+                return False
+            consume_batch_tokens(batch_idx, filtered)
+            consumed += 1
+
+            while next_batch_idx < total_batches and len(pending) < pipeline_depth:
+                current_prepared = prepare_batch(next_batch_idx)
+                if current_prepared is None:
+                    return False
+                pending.append(
+                    (
+                        next_batch_idx,
+                        pool.submit(
+                            _resolve_owner_batch,
+                            metal_bridge=metal_bridge,
+                            native_bridge=native_bridge,
+                            prepared=current_prepared,
+                        ),
+                    )
+                )
+                next_batch_idx += 1
+
+        return consumed == total_batches
+
+    selected_overlap = False
+    adaptive_key: tuple[int, int, int] | None = None
+    if overlap_candidate:
+        selected_overlap, adaptive_key = _gpu_overlap_select_mode(
+            total_batches=total_batches,
+            total_input_bytes=total_input_bytes,
+            total_pieces=total_pieces,
         )
 
-    return True
+    started_at = time.perf_counter()
+    success = _run_overlap() if selected_overlap else _run_serial()
+    elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+    _gpu_overlap_record_sample(
+        adaptive_key,
+        used_overlap=selected_overlap,
+        elapsed_ms=elapsed_ms,
+    )
+    return success
 
 
 def _rank_token_lens_from_payload(rank_payload: bytes) -> dict[int, int]:
@@ -1615,6 +1901,8 @@ def _encode_bpe_chunked_stitched_metal(
         consume_batch_tokens=_consume_batch_tokens,
         metal_bridge=metal_bridge,
         native_bridge=native_bridge,
+        total_input_bytes=len(data),
+        total_pieces=num_chunks,
     ):
         return None
 
@@ -1726,9 +2014,16 @@ def _encode_bpe_chunked_stitched_metal_many(
         return []
 
     token_lens = _rank_token_lens_from_payload(rank_payload)
-    full_piece_min_bytes = _metal_bpe_full_min_bytes()
-    full_piece_max_bytes = _metal_bpe_full_max_bytes()
-    full_piece_gpu_ready = _ensure_metal_bpe_rank_table(rank_payload)
+    direct_enabled, direct_min_bytes, direct_max_bytes, low_entropy_guard_enabled = _metal_bpe_direct_settings()
+    full_piece_min_bytes, full_piece_max_bytes = _metal_bpe_full_settings()
+    full_piece_gpu_ready: bool | None = None
+
+    def full_piece_gpu_available() -> bool:
+        nonlocal full_piece_gpu_ready
+        if full_piece_gpu_ready is None:
+            full_piece_gpu_ready = _ensure_metal_bpe_rank_table(rank_payload)
+        return full_piece_gpu_ready
+
     native_layout_enabled = os.environ.get("TURBOTOKEN_GPU_NATIVE_LAYOUT_ENABLE", "").strip().lower() in {
         "1",
         "true",
@@ -1747,18 +2042,17 @@ def _encode_bpe_chunked_stitched_metal_many(
         piece_len = piece_end - piece_start
         piece_bytes = data[piece_start:piece_end]
 
-        if _metal_bpe_direct_enabled():
-            direct_min = _metal_bpe_direct_min_bytes()
-            direct_max = _metal_bpe_direct_max_bytes()
-            if piece_len >= direct_min and piece_len <= direct_max and full_piece_gpu_ready:
-                gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
-                if gpu_tokens is not None:
-                    gpu_total = _token_total_bytes(gpu_tokens, token_lens)
-                    if gpu_total == piece_len:
-                        per_piece[piece_idx] = gpu_tokens
-                        continue
+        if direct_enabled:
+            if piece_len >= direct_min_bytes and piece_len <= direct_max_bytes and full_piece_gpu_available():
+                if not (low_entropy_guard_enabled and _is_low_entropy_direct_input(piece_bytes)):
+                    gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
+                    if gpu_tokens is not None:
+                        gpu_total = _token_total_bytes(gpu_tokens, token_lens)
+                        if gpu_total == piece_len:
+                            per_piece[piece_idx] = gpu_tokens
+                            continue
 
-        if piece_len >= full_piece_min_bytes and piece_len <= full_piece_max_bytes and full_piece_gpu_ready:
+        if piece_len >= full_piece_min_bytes and piece_len <= full_piece_max_bytes and full_piece_gpu_available():
             gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
             if gpu_tokens is not None:
                 gpu_total = _token_total_bytes(gpu_tokens, token_lens)

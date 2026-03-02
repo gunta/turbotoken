@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <PackageId>TurboToken</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>turbotoken contributors</Authors>
+    <Description>The fastest BPE tokenizer on every platform. Drop-in replacement for tiktoken.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/turbotoken/turbotoken</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/turbotoken/turbotoken</RepositoryUrl>
+    <PackageTags>tokenizer;bpe;tiktoken;nlp;ai</PackageTags>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

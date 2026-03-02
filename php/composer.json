@@ -1,0 +1,24 @@
+{
+    "name": "turbotoken/turbotoken",
+    "description": "The fastest BPE tokenizer on every platform — drop-in tiktoken replacement",
+    "version": "0.1.0",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=7.4",
+        "ext-ffi": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0 || ^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "TurboToken\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "TurboToken\\Tests\\": "tests/"
+        }
+    }
+}

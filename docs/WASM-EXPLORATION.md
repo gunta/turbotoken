@@ -15,13 +15,21 @@ We need a WASM build that:
 4. Is as fast as possible for BPE encoding/decoding
 5. Loads and initializes quickly (Time To First Token)
 
-## Implemented Baseline (2026-02-26)
+## Implemented Baseline (2026-03-02)
 
 - Zig WASM build step now emits `zig-out/bin/turbotoken.wasm` via `zig build wasm`.
 - JS loader (`js/src/wasm-loader.ts`) instantiates the module and calls exported Zig C-ABI symbols directly.
 - JS `Encoding` now has async WASM+BPE methods (`encodeAsync`, `decodeAsync`, `countAsync`) with rank payload loading.
 - JS now also exposes WASM training wrappers (`trainBpeFromChunkCounts`, `trainBpeFromChunks`).
 - `scripts/bench-wasm.ts` now reports startup latency, throughput (MB/s), and peak RSS rows.
+- npm-minimal WASM target is now emitted from Zig (`zig-out/bin/turbotoken-npm.wasm`) with `wasm-opt` size gating.
+- automated cross-toolchain size comparison is now wired:
+  - `bun run bench:wasm:comparisons`
+  - latest artifact: `bench/results/bench-wasm-comparisons-1772455001727.json`
+- browser competitor benchmark page + headless runner are now wired:
+  - page: `bench/browser/wasm-competitors.html`
+  - runner: `bun run bench:browser:competitors`
+  - latest artifact: `bench/results/bench-browser-competitors-1772455163556.json`
 
 This is still an optimization-stage baseline, not a final browser package release.
 
@@ -222,26 +230,30 @@ Build MoonBit and Emscripten for DOCUMENTATION ONLY:
 
 ### Binary Size Comparison
 
-| Approach | .wasm size | .js glue | Total package | vs tiktoken.js |
+| Approach | .wasm size | .js glue | Total package | Notes |
 |----------|-----------|----------|--------------|----------------|
-| tiktoken.js (baseline) | PENDING | PENDING | PENDING | 1x |
-| Zig (ReleaseSmall) | PENDING | None | PENDING | PENDING |
-| Zig (ReleaseFast) | PENDING | None | PENDING | PENDING |
-| Zig (ReleaseSmall + wasm-opt) | PENDING | None | PENDING | PENDING |
-| MoonBit | PENDING | PENDING | PENDING | PENDING |
-| Emscripten | PENDING | PENDING | PENDING | PENDING |
+| Zig full (`turbotoken.wasm`) | `1,642,265 B` | None | included in npm tarball | from `bench-wasm-comparisons-1772455001727.json` |
+| Zig npm-minimal (`turbotoken-npm.wasm`) | `1,170 B` | None | included in npm tarball | `wasm-opt` result, below `150KB` gate |
+| MoonBit (`wasm-gc`) | `59 B` | None | standalone | current benchmark project is intentionally minimal/no-op main |
+| Emscripten (C byte-path shim) | `7,182 B` | None | standalone | built from `bench/wasm/emscripten/utf8_tokenizer.c` |
+| npm package dry-run (`turbotoken@0.1.0-dev`) | N/A | N/A | `811.5 kB` tarball / `1.7 MB` unpacked | from `npm publish --dry-run --tag dev` |
 
-### Encode Speed (o200k_base, 100KB text, Node.js)
+### Encode Speed (Browser, o200k_base, 1MiB text)
 
 | Approach | Mean | Median | Stddev | vs tiktoken.js |
 |----------|------|--------|--------|----------------|
-| tiktoken.js | PENDING | PENDING | PENDING | 1x |
-| gpt-tokenizer (pure JS) | PENDING | PENDING | PENDING | PENDING |
-| wasm-tokenizer | PENDING | PENDING | PENDING | PENDING |
-| Zig WASM (scalar) | PENDING | PENDING | PENDING | PENDING |
-| Zig WASM (SIMD) | PENDING | PENDING | PENDING | PENDING |
-| MoonBit WASM | PENDING | PENDING | PENDING | PENDING |
-| Emscripten WASM | PENDING | PENDING | PENDING | PENDING |
+| turbotoken (WASM full BPE, browser) | `106.47 ms` (1MiB) | N/A | N/A | `9.39 MiB/s` (`bench-browser-competitors-1772455163556.json`) |
+| gpt-tokenizer (browser) | `11.70 ms` (1MiB) | N/A | N/A | `85.47 MiB/s` (`bench-browser-competitors-1772455163556.json`) |
+| js-tiktoken (browser) | `151.80 ms` (1MiB) | N/A | N/A | `6.59 MiB/s` (`bench-browser-competitors-1772455163556.json`) |
+| wasm-tokenizer (browser) | N/A | N/A | N/A | module import failed in this run (`esm.sh/wasm-tokenizer@latest`) |
+
+### Startup (Browser, first encode of `"hello"`)
+
+| Approach | Mean |
+|----------|------|
+| turbotoken (WASM full BPE) | `8.5 ms` |
+| gpt-tokenizer | `613.2 ms` |
+| js-tiktoken | `1414.2 ms` |
 
 ### Decode Speed (o200k_base, 128K tokens, Node.js)
 

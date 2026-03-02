@@ -115,6 +115,24 @@ export class Encoding {
   private rankPayload: Uint8Array | null = null;
   private loadPromise: Promise<void> | null = null;
 
+  private encodeBytePath(text: string): number[] {
+    if (this.bridge !== null) {
+      return this.bridge.encodeUtf8Bytes(text);
+    }
+    return encodeByteFallback(text);
+  }
+
+  private decodeBytePath(tokens: readonly number[]): string {
+    if (this.bridge !== null && tokens.every((token) => Number.isInteger(token) && token >= 0 && token <= 0xff)) {
+      return decoder.decode(this.bridge.decodeUtf8Bytes(tokens));
+    }
+    return decodeByteFallback(tokens);
+  }
+
+  private countBytePath(text: string): number {
+    return this.encodeBytePath(text).length;
+  }
+
   constructor(public readonly name: string, options: EncodingOptions = {}) {
     this.spec = getEncodingSpec(name);
     this.wasmOptions = options.wasm ?? {};
@@ -164,7 +182,10 @@ export class Encoding {
   }
 
   encode(text: string): number[] {
-    if (!this.enableWasmBpe || !this.isReady()) {
+    if (!this.enableWasmBpe) {
+      return this.encodeBytePath(text);
+    }
+    if (!this.isReady()) {
       return encodeByteFallback(text);
     }
     return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
@@ -173,13 +194,16 @@ export class Encoding {
   async encodeAsync(text: string): Promise<number[]> {
     await this.ready();
     if (!this.enableWasmBpe) {
-      return encodeByteFallback(text);
+      return this.encodeBytePath(text);
     }
     return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
   }
 
   decode(tokens: readonly number[]): string {
-    if (!this.enableWasmBpe || !this.isReady()) {
+    if (!this.enableWasmBpe) {
+      return this.decodeBytePath(tokens);
+    }
+    if (!this.isReady()) {
       return decodeByteFallback(tokens);
     }
     const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
@@ -189,14 +213,17 @@ export class Encoding {
   async decodeAsync(tokens: readonly number[]): Promise<string> {
     await this.ready();
     if (!this.enableWasmBpe) {
-      return decodeByteFallback(tokens);
+      return this.decodeBytePath(tokens);
     }
     const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
     return decoder.decode(bytes);
   }
 
   count(text: string): number {
-    if (!this.enableWasmBpe || !this.isReady()) {
+    if (!this.enableWasmBpe) {
+      return this.countBytePath(text);
+    }
+    if (!this.isReady()) {
       return encodeByteFallback(text).length;
     }
     return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
@@ -210,7 +237,11 @@ export class Encoding {
     if (tokenLimit < 0) {
       throw new Error("tokenLimit must be >= 0");
     }
-    if (!this.enableWasmBpe || !this.isReady()) {
+    if (!this.enableWasmBpe) {
+      const count = this.countBytePath(text);
+      return count <= tokenLimit ? count : false;
+    }
+    if (!this.isReady()) {
       const count = encodeByteFallback(text).length;
       return count <= tokenLimit ? count : false;
     }
@@ -311,7 +342,7 @@ export class Encoding {
   async countAsync(text: string): Promise<number> {
     await this.ready();
     if (!this.enableWasmBpe) {
-      return encodeByteFallback(text).length;
+      return this.countBytePath(text);
     }
     return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
   }

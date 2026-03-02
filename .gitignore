@@ -21,6 +21,7 @@ zig-out/
 *.dll
 *.wasm
 dist/
+.cache/
 
 # Bench outputs
 bench/results/*.json
@@ -28,4 +29,8 @@ bench/results/*.md
 bench/results/cache/
 bench/charts/*.png
 bench/charts/*.svg
+bench/wasm/moonbit/_build/
+bench/wasm/emscripten/*.wasm
+bench/fixtures/english-10mb.txt
+bench/fixtures/o200k_base.tiktoken
 .dmux/

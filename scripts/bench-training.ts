@@ -3,15 +3,24 @@ import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { ensureFixtures } from "./_fixtures";
 import { runBench, type BenchCommand } from "./_bench";
-import { pythonExecutable, resolvePath, runShell } from "./_lib";
+import { benchSpeedProfile, pythonExecutable, resolvePath, runShell } from "./_lib";
 
 ensureFixtures();
 const python = process.env.TURBOTOKEN_BENCH_PYTHON?.trim() || pythonExecutable();
+const speedProfile = benchSpeedProfile();
 
-const fixturePath = process.env.TURBOTOKEN_TRAIN_FIXTURE?.trim()
-  ? resolvePath(process.env.TURBOTOKEN_TRAIN_FIXTURE.trim())
-  : resolvePath("bench/fixtures/english-100kb.txt");
-const fixtureLabel = basename(fixturePath, ".txt");
+const include10mb = ["1", "true", "yes", "on"].includes(
+  (process.env.TURBOTOKEN_TRAIN_INCLUDE_10MB ?? "").trim().toLowerCase(),
+);
+const fixturePaths: string[] = process.env.TURBOTOKEN_TRAIN_FIXTURE?.trim()
+  ? [resolvePath(process.env.TURBOTOKEN_TRAIN_FIXTURE.trim())]
+  : speedProfile === "fast"
+    ? [resolvePath("bench/fixtures/english-100kb.txt")]
+    : [resolvePath("bench/fixtures/english-100kb.txt"), resolvePath("bench/fixtures/english-1mb.txt")];
+if (include10mb) {
+  fixturePaths.push(resolvePath("bench/fixtures/english-10mb.txt"));
+}
+const uniqueFixturePaths = [...new Set(fixturePaths)];
 const vocabSize = Number.parseInt(process.env.TURBOTOKEN_TRAIN_VOCAB_SIZE ?? "320", 10);
 const minFrequency = Number.parseInt(process.env.TURBOTOKEN_TRAIN_MIN_FREQUENCY ?? "2", 10);
 const minbpeLocalPath = process.env.TURBOTOKEN_MINBPE_PATH?.trim() || "/tmp/minbpe";
@@ -49,43 +58,51 @@ function commandForRustbpeTraining(path: string): string {
   return `TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib,rustbpe;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();tok=rustbpe.Tokenizer();tok.train_from_iterator([text],vocab_size=${vocabSize});assert tok.vocab_size>=256"`;
 }
 
-const commands: BenchCommand[] = [
-  {
+const commands: BenchCommand[] = [];
+for (const fixturePath of uniqueFixturePaths) {
+  const fixtureLabel = basename(fixturePath, ".txt");
+  commands.push({
     name: `python-train-${fixtureLabel}-turbotoken-native-v${vocabSize}`,
     command: commandForTurbotokenTraining(fixturePath),
-  },
-  {
-    name: `python-train-${fixtureLabel}-turbotoken-py-fallback-v${vocabSize}`,
-    command: commandForTurbotokenTrainingPythonFallback(fixturePath),
-  },
-];
+  });
+}
+
+const smallestFixturePath = uniqueFixturePaths[0] ?? resolvePath("bench/fixtures/english-100kb.txt");
+const smallestFixtureLabel = basename(smallestFixturePath, ".txt");
+commands.push({
+  name: `python-train-${smallestFixtureLabel}-turbotoken-py-fallback-v${vocabSize}`,
+  command: commandForTurbotokenTrainingPythonFallback(smallestFixturePath),
+});
 
 if (availability.minbpe) {
   commands.push({
-    name: `python-train-${fixtureLabel}-minbpe-v${vocabSize}`,
-    command: commandForMinbpeTraining(fixturePath),
+    name: `python-train-${smallestFixtureLabel}-minbpe-v${vocabSize}`,
+    command: commandForMinbpeTraining(smallestFixturePath),
   });
 }
 
 if (availability.rustbpe) {
   commands.push({
-    name: `python-train-${fixtureLabel}-rustbpe-v${vocabSize}`,
-    command: commandForRustbpeTraining(fixturePath),
+    name: `python-train-${smallestFixtureLabel}-rustbpe-v${vocabSize}`,
+    command: commandForRustbpeTraining(smallestFixturePath),
   });
 }
+
+const minRuns = speedProfile === "fast" ? 2 : 4;
 
 const failures = runBench({
   name: "bench-training-python",
   commands,
   warmup: 1,
-  minRuns: 6,
+  minRuns,
   metadata: {
-    fixturePath,
+    fixturePaths: uniqueFixturePaths,
     vocabSize,
     minFrequency,
+    speedProfile,
     availability,
     minbpeLocalPath: existsSync(minbpeLocalPath) ? minbpeLocalPath : null,
-    note: "Training benchmark compares tokenizer training speed. turbotoken training is a new CPU incremental-pair-count implementation; GPU training path is not implemented yet.",
+    note: "Training benchmark compares tokenizer training speed. Full profile includes 100KB and 1MB native rows; optional 10MB row can be enabled with TURBOTOKEN_TRAIN_INCLUDE_10MB=1. GPU training path is not implemented yet.",
   },
 });
 

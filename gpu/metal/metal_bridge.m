@@ -1144,9 +1144,10 @@ static NSUInteger count_threads_per_group_for(
 }
 
 static uint32_t bpe_rounds_per_submit(size_t input_len) {
-    // On very large buffers, oversized batches increase no-op rounds near convergence.
-    // Keep a smaller default there to reduce tail-round over-dispatch.
-    const uint32_t default_value = input_len >= (512u * 1024u) ? 16u : 32u;
+    // On very large buffers, oversized batches increase no-op rounds near convergence,
+    // but too-small batches overpay command-buffer submit overhead.
+    // A 24-round default has been a better balance on 1MB direct lanes than 16.
+    const uint32_t default_value = input_len >= (512u * 1024u) ? 24u : 32u;
     const char *raw = getenv("TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT");
     if (raw == NULL || raw[0] == '\0') {
         return default_value;
@@ -1188,7 +1189,8 @@ static bool bpe_active_compaction_enabled(size_t input_len) {
 }
 
 static uint32_t bpe_active_compact_stride(void) {
-    const uint32_t default_value = 4u;
+    // A stride of 3 reduced long-lane direct BPE latency in local crossover A/B.
+    const uint32_t default_value = 3u;
     const char *raw = getenv("TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE");
     if (raw == NULL || raw[0] == '\0') {
         return default_value;

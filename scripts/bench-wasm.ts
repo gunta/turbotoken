@@ -67,6 +67,17 @@ interface MemoryRow {
   samples: MemorySample[];
 }
 
+interface BrowserBenchRow {
+  name: string;
+  category: "startup" | "throughput";
+  meanMs: number | null;
+  throughputMbPerSec: number | null;
+  runs: number;
+  warmup: number;
+  status: "ok" | "not-run";
+  reason?: string;
+}
+
 acquireBenchmarkLock({ label: "bench-wasm" });
 
 const fastMode = ["1", "true", "yes", "on"].includes(
@@ -280,6 +291,611 @@ function runMemoryRows(rows: readonly { name: string; command: string }[], runs:
   }
 
   return out;
+}
+
+function envFlag(name: string): boolean {
+  const raw = (process.env[name] ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function browserFallbackRows(reason: string, runs: number, warmup: number): BrowserBenchRow[] {
+  return [
+    {
+      name: "browser-wasm-startup-first-encode-hello",
+      category: "startup",
+      meanMs: null,
+      throughputMbPerSec: null,
+      runs,
+      warmup,
+      status: "not-run",
+      reason,
+    },
+    {
+      name: "browser-wasm-encode-utf8-bytes-1mb",
+      category: "throughput",
+      meanMs: null,
+      throughputMbPerSec: null,
+      runs,
+      warmup,
+      status: "not-run",
+      reason,
+    },
+    {
+      name: "browser-wasm-encode-bpe-o200k-1mb",
+      category: "throughput",
+      meanMs: null,
+      throughputMbPerSec: null,
+      runs,
+      warmup,
+      status: "not-run",
+      reason,
+    },
+  ];
+}
+
+async function runBrowserRows(params: {
+  wasmPath: string;
+  fixture1mbPath: string;
+  rankPayloadPath: string | null;
+  rankPayloadAvailable: boolean;
+  fastMode: boolean;
+}): Promise<BrowserBenchRow[]> {
+  const browserEnable = envFlag("TURBOTOKEN_WASM_BROWSER_ENABLE");
+  const browserWarmupRaw = process.env.TURBOTOKEN_WASM_BROWSER_WARMUP?.trim();
+  const browserRunsRaw = process.env.TURBOTOKEN_WASM_BROWSER_RUNS?.trim();
+  const warmup = browserWarmupRaw
+    ? Math.max(0, Number.parseInt(browserWarmupRaw, 10) || 0)
+    : params.fastMode
+      ? 1
+      : 2;
+  const runs = browserRunsRaw
+    ? Math.max(1, Number.parseInt(browserRunsRaw, 10) || 3)
+    : params.fastMode
+      ? 3
+      : 5;
+
+  if (!browserEnable) {
+    return browserFallbackRows("browser harness disabled (set TURBOTOKEN_WASM_BROWSER_ENABLE=1)", runs, warmup);
+  }
+
+  let playwrightModule: unknown;
+  try {
+    playwrightModule = await import("playwright");
+  } catch (error) {
+    return browserFallbackRows(`playwright not installed: ${String(error)}`, runs, warmup);
+  }
+
+  const chromium = (playwrightModule as { chromium?: { launch: (opts?: unknown) => Promise<unknown> } }).chromium;
+  if (!chromium) {
+    return browserFallbackRows("playwright chromium launcher unavailable", runs, warmup);
+  }
+
+  const wasmBytes = new Uint8Array(readFileSync(params.wasmPath));
+  const input1mbBytes = new Uint8Array(readFileSync(params.fixture1mbPath));
+  const rankBytes = params.rankPayloadAvailable && params.rankPayloadPath
+    ? new Uint8Array(readFileSync(params.rankPayloadPath))
+    : null;
+  if (wasmBytes.byteLength === 0 || input1mbBytes.byteLength === 0) {
+    return browserFallbackRows("missing wasm or fixture payload for browser run", runs, warmup);
+  }
+
+  let browser: {
+    newPage: () => Promise<{
+      evaluate: <T, P>(fn: (payload: P) => Promise<T>, payload: P) => Promise<T>;
+      close: () => Promise<void>;
+    }>;
+    close: () => Promise<void>;
+  } | null = null;
+  try {
+    browser = await (chromium.launch({
+      headless: true,
+    }) as Promise<typeof browser>);
+  } catch (error) {
+    return browserFallbackRows(`failed to launch headless chromium: ${String(error)}`, runs, warmup);
+  }
+
+  try {
+    const page = await browser.newPage();
+    const result = await page.evaluate(
+      async (payload: {
+        wasmBytes: number[];
+        inputBytes: number[];
+        rankBytes: number[] | null;
+        runs: number;
+        warmup: number;
+      }) => {
+        const wasmBytes = new Uint8Array(payload.wasmBytes);
+        const inputBytes = new Uint8Array(payload.inputBytes);
+        const rankBytes = payload.rankBytes ? new Uint8Array(payload.rankBytes) : null;
+        const hello = new TextEncoder().encode("hello");
+        const bytesToMiB = (bytes: number, ms: number): number | null => {
+          if (!Number.isFinite(ms) || ms <= 0) {
+            return null;
+          }
+          return (bytes / (1024 * 1024)) / (ms / 1000);
+        };
+        const instantiate = async () => {
+          const { instance } = await WebAssembly.instantiate(wasmBytes, {});
+          const exports = instance.exports as {
+            memory: WebAssembly.Memory;
+            turbotoken_wasm_alloc: (size: number) => number;
+            turbotoken_wasm_free: (ptr: number, size: number) => void;
+            turbotoken_encode_utf8_bytes: (
+              textPtr: number,
+              textLen: number,
+              outTokensPtr: number,
+              outCap: number,
+            ) => number;
+            turbotoken_encode_bpe_from_ranks: (
+              rankPtr: number,
+              rankLen: number,
+              textPtr: number,
+              textLen: number,
+              outTokensPtr: number,
+              outCap: number,
+            ) => number;
+            turbotoken_decode_utf8_bytes: (
+              tokensPtr: number,
+              tokenLen: number,
+              outBytesPtr: number,
+              outCap: number,
+            ) => number;
+            turbotoken_decode_bpe_from_ranks: (
+              rankPtr: number,
+              rankLen: number,
+              tokensPtr: number,
+              tokenLen: number,
+              outBytesPtr: number,
+              outCap: number,
+            ) => number;
+          };
+          if (typeof exports.turbotoken_wasm_alloc !== "function" || typeof exports.turbotoken_encode_utf8_bytes !== "function") {
+            throw new Error("required wasm exports are missing");
+          }
+          if (typeof exports.turbotoken_decode_utf8_bytes !== "function") {
+            throw new Error("required wasm decode export is missing");
+          }
+          return exports;
+        };
+        const encodeUtf8Once = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_encode_utf8_bytes: (textPtr: number, textLen: number, outTokensPtr: number, outCap: number) => number;
+        }, textBytes: Uint8Array): void => {
+          const textPtr = exports.turbotoken_wasm_alloc(textBytes.byteLength);
+          if (textPtr === 0) {
+            throw new Error("wasm alloc failed for utf8 text");
+          }
+          const outBytes = textBytes.byteLength * 4;
+          const outPtr = exports.turbotoken_wasm_alloc(outBytes);
+          if (outPtr === 0) {
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            throw new Error("wasm alloc failed for utf8 output");
+          }
+          try {
+            new Uint8Array(exports.memory.buffer).set(textBytes, textPtr);
+            const written = exports.turbotoken_encode_utf8_bytes(textPtr, textBytes.byteLength, outPtr, textBytes.byteLength);
+            if (written < 0) {
+              throw new Error("utf8 encode failed");
+            }
+          } finally {
+            exports.turbotoken_wasm_free(outPtr, outBytes);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+          }
+        };
+        const encodeBpeOnce = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_encode_bpe_from_ranks: (
+            rankPtr: number,
+            rankLen: number,
+            textPtr: number,
+            textLen: number,
+            outTokensPtr: number,
+            outCap: number,
+          ) => number;
+        }, ranks: Uint8Array, textBytes: Uint8Array): void => {
+          const rankPtr = exports.turbotoken_wasm_alloc(ranks.byteLength);
+          const textPtr = exports.turbotoken_wasm_alloc(textBytes.byteLength);
+          if (rankPtr === 0 || textPtr === 0) {
+            if (rankPtr !== 0) {
+              exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+            }
+            if (textPtr !== 0) {
+              exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            }
+            throw new Error("wasm alloc failed for bpe inputs");
+          }
+          const outBytes = textBytes.byteLength * 4;
+          const outPtr = exports.turbotoken_wasm_alloc(outBytes);
+          if (outPtr === 0) {
+            exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            throw new Error("wasm alloc failed for bpe output");
+          }
+          try {
+            const heap = new Uint8Array(exports.memory.buffer);
+            heap.set(ranks, rankPtr);
+            heap.set(textBytes, textPtr);
+            const written = exports.turbotoken_encode_bpe_from_ranks(
+              rankPtr,
+              ranks.byteLength,
+              textPtr,
+              textBytes.byteLength,
+              outPtr,
+              textBytes.byteLength,
+            );
+            if (written < 0) {
+              throw new Error("bpe encode failed");
+            }
+          } finally {
+            exports.turbotoken_wasm_free(outPtr, outBytes);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+          }
+        };
+        const readU32List = (memory: WebAssembly.Memory, ptr: number, len: number): Uint32Array => {
+          if (len <= 0) {
+            return new Uint32Array(0);
+          }
+          if ((ptr & 3) === 0) {
+            return new Uint32Array(memory.buffer.slice(ptr, ptr + (len * 4)));
+          }
+          const out = new Uint32Array(len);
+          const dv = new DataView(memory.buffer);
+          for (let i = 0; i < len; i += 1) {
+            out[i] = dv.getUint32(ptr + (i * 4), true);
+          }
+          return out;
+        };
+        const writeU32List = (memory: WebAssembly.Memory, ptr: number, values: Uint32Array): void => {
+          if (values.length === 0) {
+            return;
+          }
+          if ((ptr & 3) === 0) {
+            new Uint32Array(memory.buffer, ptr, values.length).set(values);
+            return;
+          }
+          const dv = new DataView(memory.buffer);
+          for (let i = 0; i < values.length; i += 1) {
+            dv.setUint32(ptr + (i * 4), values[i], true);
+          }
+        };
+        const encodeUtf8Tokens = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_encode_utf8_bytes: (textPtr: number, textLen: number, outTokensPtr: number, outCap: number) => number;
+        }, textBytes: Uint8Array): Uint32Array => {
+          const textPtr = exports.turbotoken_wasm_alloc(textBytes.byteLength);
+          if (textPtr === 0) {
+            throw new Error("wasm alloc failed for utf8 parity text");
+          }
+          const outBytes = textBytes.byteLength * 4;
+          const outPtr = exports.turbotoken_wasm_alloc(outBytes);
+          if (outPtr === 0) {
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            throw new Error("wasm alloc failed for utf8 parity output");
+          }
+          try {
+            new Uint8Array(exports.memory.buffer).set(textBytes, textPtr);
+            const written = exports.turbotoken_encode_utf8_bytes(textPtr, textBytes.byteLength, outPtr, textBytes.byteLength);
+            if (written < 0) {
+              throw new Error("utf8 parity encode failed");
+            }
+            return readU32List(exports.memory, outPtr, written);
+          } finally {
+            exports.turbotoken_wasm_free(outPtr, outBytes);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+          }
+        };
+        const encodeBpeTokens = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_encode_bpe_from_ranks: (
+            rankPtr: number,
+            rankLen: number,
+            textPtr: number,
+            textLen: number,
+            outTokensPtr: number,
+            outCap: number,
+          ) => number;
+        }, ranks: Uint8Array, textBytes: Uint8Array): Uint32Array => {
+          const rankPtr = exports.turbotoken_wasm_alloc(ranks.byteLength);
+          const textPtr = exports.turbotoken_wasm_alloc(textBytes.byteLength);
+          if (rankPtr === 0 || textPtr === 0) {
+            if (rankPtr !== 0) {
+              exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+            }
+            if (textPtr !== 0) {
+              exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            }
+            throw new Error("wasm alloc failed for bpe parity inputs");
+          }
+          const outBytes = textBytes.byteLength * 4;
+          const outPtr = exports.turbotoken_wasm_alloc(outBytes);
+          if (outPtr === 0) {
+            exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            throw new Error("wasm alloc failed for bpe parity output");
+          }
+          try {
+            const heap = new Uint8Array(exports.memory.buffer);
+            heap.set(ranks, rankPtr);
+            heap.set(textBytes, textPtr);
+            const written = exports.turbotoken_encode_bpe_from_ranks(
+              rankPtr,
+              ranks.byteLength,
+              textPtr,
+              textBytes.byteLength,
+              outPtr,
+              textBytes.byteLength,
+            );
+            if (written < 0) {
+              throw new Error("bpe parity encode failed");
+            }
+            return readU32List(exports.memory, outPtr, written);
+          } finally {
+            exports.turbotoken_wasm_free(outPtr, outBytes);
+            exports.turbotoken_wasm_free(textPtr, textBytes.byteLength);
+            exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+          }
+        };
+        const decodeUtf8Tokens = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_decode_utf8_bytes: (tokensPtr: number, tokenLen: number, outBytesPtr: number, outCap: number) => number;
+        }, tokens: Uint32Array): Uint8Array => {
+          if (tokens.length === 0) {
+            return new Uint8Array(0);
+          }
+          const tokenBytes = tokens.length * 4;
+          const tokenPtr = exports.turbotoken_wasm_alloc(tokenBytes);
+          if (tokenPtr === 0) {
+            throw new Error("wasm alloc failed for utf8 parity token input");
+          }
+          writeU32List(exports.memory, tokenPtr, tokens);
+          try {
+            const needed = exports.turbotoken_decode_utf8_bytes(tokenPtr, tokens.length, 0, 0);
+            if (needed < 0) {
+              throw new Error("utf8 parity decode size failed");
+            }
+            if (needed === 0) {
+              return new Uint8Array(0);
+            }
+            const outPtr = exports.turbotoken_wasm_alloc(needed);
+            if (outPtr === 0) {
+              throw new Error("wasm alloc failed for utf8 parity decode output");
+            }
+            try {
+              const written = exports.turbotoken_decode_utf8_bytes(tokenPtr, tokens.length, outPtr, needed);
+              if (written < 0) {
+                throw new Error("utf8 parity decode failed");
+              }
+              return new Uint8Array(exports.memory.buffer.slice(outPtr, outPtr + written));
+            } finally {
+              exports.turbotoken_wasm_free(outPtr, needed);
+            }
+          } finally {
+            exports.turbotoken_wasm_free(tokenPtr, tokenBytes);
+          }
+        };
+        const decodeBpeTokens = (exports: {
+          memory: WebAssembly.Memory;
+          turbotoken_wasm_alloc: (size: number) => number;
+          turbotoken_wasm_free: (ptr: number, size: number) => void;
+          turbotoken_decode_bpe_from_ranks: (
+            rankPtr: number,
+            rankLen: number,
+            tokensPtr: number,
+            tokenLen: number,
+            outBytesPtr: number,
+            outCap: number,
+          ) => number;
+        }, ranks: Uint8Array, tokens: Uint32Array): Uint8Array => {
+          const rankPtr = exports.turbotoken_wasm_alloc(ranks.byteLength);
+          if (rankPtr === 0) {
+            throw new Error("wasm alloc failed for bpe parity rank input");
+          }
+          new Uint8Array(exports.memory.buffer).set(ranks, rankPtr);
+          try {
+            const tokenBytes = tokens.length * 4;
+            const tokenPtr = exports.turbotoken_wasm_alloc(tokenBytes);
+            if (tokenPtr === 0 && tokenBytes > 0) {
+              throw new Error("wasm alloc failed for bpe parity token input");
+            }
+            if (tokenBytes > 0) {
+              writeU32List(exports.memory, tokenPtr, tokens);
+            }
+            try {
+              const needed = exports.turbotoken_decode_bpe_from_ranks(
+                rankPtr,
+                ranks.byteLength,
+                tokenPtr,
+                tokens.length,
+                0,
+                0,
+              );
+              if (needed < 0) {
+                throw new Error("bpe parity decode size failed");
+              }
+              if (needed === 0) {
+                return new Uint8Array(0);
+              }
+              const outPtr = exports.turbotoken_wasm_alloc(needed);
+              if (outPtr === 0) {
+                throw new Error("wasm alloc failed for bpe parity decode output");
+              }
+              try {
+                const written = exports.turbotoken_decode_bpe_from_ranks(
+                  rankPtr,
+                  ranks.byteLength,
+                  tokenPtr,
+                  tokens.length,
+                  outPtr,
+                  needed,
+                );
+                if (written < 0) {
+                  throw new Error("bpe parity decode failed");
+                }
+                return new Uint8Array(exports.memory.buffer.slice(outPtr, outPtr + written));
+              } finally {
+                exports.turbotoken_wasm_free(outPtr, needed);
+              }
+            } finally {
+              if (tokenBytes > 0) {
+                exports.turbotoken_wasm_free(tokenPtr, tokenBytes);
+              }
+            }
+          } finally {
+            exports.turbotoken_wasm_free(rankPtr, ranks.byteLength);
+          }
+        };
+        const assertBytesEqual = (actual: Uint8Array, expected: Uint8Array, label: string): void => {
+          if (actual.byteLength !== expected.byteLength) {
+            throw new Error(`${label} length mismatch (${actual.byteLength} vs ${expected.byteLength})`);
+          }
+          for (let i = 0; i < actual.byteLength; i += 1) {
+            if (actual[i] !== expected[i]) {
+              throw new Error(`${label} mismatch at byte ${i}`);
+            }
+          }
+        };
+        const measureMs = async (fn: () => Promise<void>, warmup: number, runs: number): Promise<number> => {
+          for (let i = 0; i < warmup; i += 1) {
+            await fn();
+          }
+          const start = performance.now();
+          for (let i = 0; i < runs; i += 1) {
+            await fn();
+          }
+          return (performance.now() - start) / runs;
+        };
+
+        // Browser parity checks: verify encode/decode invariants before timing.
+        const paritySample = inputBytes.subarray(0, Math.min(inputBytes.byteLength, 64 * 1024));
+        const parityExports = await instantiate();
+        const helloUtf8Tokens = encodeUtf8Tokens(parityExports, hello);
+        if (helloUtf8Tokens.length !== hello.byteLength) {
+          throw new Error("utf8 parity failed for hello length");
+        }
+        const decodedHelloUtf8 = decodeUtf8Tokens(parityExports, helloUtf8Tokens);
+        assertBytesEqual(decodedHelloUtf8, hello, "utf8 hello decode");
+        const sampleUtf8Tokens = encodeUtf8Tokens(parityExports, paritySample);
+        if (sampleUtf8Tokens.length !== paritySample.byteLength) {
+          throw new Error("utf8 parity failed for sample length");
+        }
+        const decodedSampleUtf8 = decodeUtf8Tokens(parityExports, sampleUtf8Tokens);
+        assertBytesEqual(decodedSampleUtf8, paritySample, "utf8 sample decode");
+        for (let i = 0; i < Math.min(sampleUtf8Tokens.length, paritySample.byteLength); i += 1) {
+          if (sampleUtf8Tokens[i] !== paritySample[i]) {
+            throw new Error(`utf8 sample token mismatch at index ${i}`);
+          }
+        }
+
+        let bpeParityChecked = false;
+        if (rankBytes && rankBytes.byteLength > 0) {
+          const helloBpeTokens = encodeBpeTokens(parityExports, rankBytes, hello);
+          const helloBpeTokensRepeat = encodeBpeTokens(parityExports, rankBytes, hello);
+          if (helloBpeTokens.length !== helloBpeTokensRepeat.length) {
+            throw new Error("bpe parity failed for hello deterministic length");
+          }
+          for (let i = 0; i < helloBpeTokens.length; i += 1) {
+            if (helloBpeTokens[i] !== helloBpeTokensRepeat[i]) {
+              throw new Error(`bpe parity failed for hello deterministic token at ${i}`);
+            }
+          }
+          const decodedHelloBpe = decodeBpeTokens(parityExports, rankBytes, helloBpeTokens);
+          assertBytesEqual(decodedHelloBpe, hello, "bpe hello decode");
+          const sampleBpeTokens = encodeBpeTokens(parityExports, rankBytes, paritySample);
+          const decodedSampleBpe = decodeBpeTokens(parityExports, rankBytes, sampleBpeTokens);
+          assertBytesEqual(decodedSampleBpe, paritySample, "bpe sample decode");
+          bpeParityChecked = true;
+        }
+
+        const startupMs = await measureMs(async () => {
+          const exports = await instantiate();
+          encodeUtf8Once(exports, hello);
+        }, payload.warmup, payload.runs);
+
+        const utf8Exports = await instantiate();
+        const utf8Ms = await measureMs(async () => {
+          encodeUtf8Once(utf8Exports, inputBytes);
+        }, payload.warmup, payload.runs);
+
+        let bpeMs: number | null = null;
+        if (rankBytes && rankBytes.byteLength > 0) {
+          const bpeExports = await instantiate();
+          bpeMs = await measureMs(async () => {
+            encodeBpeOnce(bpeExports, rankBytes, inputBytes);
+          }, payload.warmup, payload.runs);
+        }
+
+        return {
+          startupMs,
+          utf8Ms,
+          utf8MiBPerSec: bytesToMiB(inputBytes.byteLength, utf8Ms),
+          bpeMs,
+          bpeMiBPerSec: bpeMs == null ? null : bytesToMiB(inputBytes.byteLength, bpeMs),
+          parity: {
+            utf8RoundTripChecked: true,
+            utf8IdentityChecked: true,
+            bpeRoundTripChecked: bpeParityChecked,
+          },
+        };
+      },
+      {
+        wasmBytes: Array.from(wasmBytes),
+        inputBytes: Array.from(input1mbBytes),
+        rankBytes: rankBytes ? Array.from(rankBytes) : null,
+        runs,
+        warmup,
+      },
+    );
+    await page.close();
+
+    const rows: BrowserBenchRow[] = [
+      {
+        name: "browser-wasm-startup-first-encode-hello",
+        category: "startup",
+        meanMs: typeof result.startupMs === "number" ? result.startupMs : null,
+        throughputMbPerSec: null,
+        runs,
+        warmup,
+        status: "ok",
+      },
+      {
+        name: "browser-wasm-encode-utf8-bytes-1mb",
+        category: "throughput",
+        meanMs: typeof result.utf8Ms === "number" ? result.utf8Ms : null,
+        throughputMbPerSec: typeof result.utf8MiBPerSec === "number" ? result.utf8MiBPerSec : null,
+        runs,
+        warmup,
+        status: "ok",
+      },
+      {
+        name: "browser-wasm-encode-bpe-o200k-1mb",
+        category: "throughput",
+        meanMs: typeof result.bpeMs === "number" ? result.bpeMs : null,
+        throughputMbPerSec: typeof result.bpeMiBPerSec === "number" ? result.bpeMiBPerSec : null,
+        runs,
+        warmup,
+        status: result.bpeMs == null ? "not-run" : "ok",
+        reason: result.bpeMs == null ? "rank payload unavailable for browser BPE run" : undefined,
+      },
+    ];
+    return rows;
+  } catch (error) {
+    return browserFallbackRows(`browser benchmark failed: ${String(error)}`, runs, warmup);
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
+  }
 }
 
 ensureFixtures();
@@ -570,32 +1186,13 @@ const throughputRows = benchRowsWithDerived
     runs: row.runs,
   }));
 
-const browserRows = [
-  {
-    name: "browser-wasm-startup-first-encode-hello",
-    category: "startup",
-    meanMs: null,
-    throughputMbPerSec: null,
-    status: "not-run",
-    reason: "browser benchmark harness is not configured in this local run",
-  },
-  {
-    name: "browser-wasm-encode-utf8-bytes-1mb",
-    category: "throughput",
-    meanMs: null,
-    throughputMbPerSec: null,
-    status: "not-run",
-    reason: "browser benchmark harness is not configured in this local run",
-  },
-  {
-    name: "browser-wasm-encode-bpe-o200k-1mb",
-    category: "throughput",
-    meanMs: null,
-    throughputMbPerSec: null,
-    status: "not-run",
-    reason: "browser benchmark harness is not configured in this local run",
-  },
-];
+const browserRows = await runBrowserRows({
+  wasmPath,
+  fixture1mbPath: fixture1mb,
+  rankPayloadPath: rankPayloadInfo?.path ?? null,
+  rankPayloadAvailable: rankPayloadInfo !== null,
+  fastMode,
+});
 
 writeJson(outputPath, {
   generatedAt: new Date().toISOString(),
@@ -641,6 +1238,7 @@ writeJson(outputPath, {
     rows: memoryRows,
   },
   browser: {
+    enabled: envFlag("TURBOTOKEN_WASM_BROWSER_ENABLE"),
     rows: browserRows,
   },
   note: "WASM benchmark matrix includes startup latency, throughput MB/s, and RSS-style memory rows for byte-path and optional BPE workloads.",

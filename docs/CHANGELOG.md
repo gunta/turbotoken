@@ -9,6 +9,12 @@
 ## [Unreleased]
 
 ### Added
+- WASM Phase 3 packaging/comparison tooling:
+  - npm-minimal WASM entry (`src/main_wasm_npm.zig`) and dual WASM outputs from `zig build wasm` (`turbotoken.wasm` + `turbotoken-npm.wasm`).
+  - `scripts/optimize-wasm.ts` for `wasm-opt -Oz` pipeline with `<150KB` npm-WASM size gate (default `TURBOTOKEN_NPM_WASM_MAX_BYTES=153600`).
+  - `scripts/build-wasm-comparisons.ts` and comparison source trees under `bench/wasm/moonbit` and `bench/wasm/emscripten`.
+  - browser competitor benchmark page (`bench/browser/wasm-competitors.html`) + headless runner (`scripts/bench-browser-competitors.ts`).
+  - npm auto-load verification hardening in `js/src/wasm-loader.ts`, `scripts/verify-npm-package.ts`, and `scripts/smoke-npm-install.ts`.
 - x86_64 runtime dispatch backend in Zig (`src/arch/x86_64.zig`) for UTF-8 byte encode/decode/count paths with AVX-512 -> AVX2 -> SSE4.2 -> scalar selection.
 - wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
 - CI benchmark governance additions:
@@ -142,13 +148,14 @@
 - Metal tiny-piece routing safeguards + batching:
   - full-piece GPU path now has a lower bound (`TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES`, default `4096`) so tiny regex pieces avoid per-piece GPU dispatch overhead.
   - force-all mode now has a sub-direct-size safety fallback to regular CPU encode unless `TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT=1`.
+  - force-all non-strict mode now also falls back to CPU when pretokenized range count exceeds `TURBOTOKEN_METAL_FORCE_ALL_CPU_FALLBACK_MAX_RANGES` (default `128`) to avoid pathological many-piece Metal dispatch.
   - single-chunk exact pieces in Metal-many path now use native range batching instead of per-piece native encode calls.
 - Metal bridge Python wrappers now use one-shot output buffers for `encode_utf8_bytes(...)` and `encode_bpe_from_bytes(...)` (no separate probe call).
 - `python/turbotoken/core.py` GPU routing fallback behavior:
   - `encode_gpu(device="auto", strict_verify=False)` now returns the regular CPU encode path immediately when whole-text autoroute resolves to native.
   - GPU range-batch overflow fallback now keeps native range batching in chunks instead of dropping to per-piece Python BPE.
 - `python/turbotoken/_gpu.py` route-threshold lookup now caches resolved thresholds by env/profile tuple, removing repeated per-piece route-cache file reads in hot loops.
-- Metal direct-route default minimum bytes increased to `786_432` (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) so default direct dispatch focuses on larger texts where throughput is consistently better.
+- Metal direct-route default minimum bytes tuned to `262_144` (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) so medium normal-text lanes can use direct GPU by default while low-entropy guardrails remain active.
 - Profiled Metal gate floor raised to `40 MiB/s` for direct 1MB throughput (`macos-arm64-metal.minBpeDirectEncodeMiBPerSec`), with parity gate still mandatory.
 - Refreshed relative CI baselines from latest full-profile passing artifacts (`scripts/refresh-ci-gates-baselines.ts --speed=full ...`), including updated Metal direct throughput/memory baselines and CPU profile baselines.
 - `train_mergeable_ranks_from_iterator(...)` now defaults native pretokenize/direct-ASCII toggles to enabled when `TURBOTOKEN_TRAINING_BACKEND=native` (unless explicitly overridden to `0/false/no`).
@@ -158,11 +165,11 @@
 - Metal direct BPE route (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`) is now **opt-in by default** after A/B benchmarks showed a large regression on the tracked quick-profile workload; stitched/native fallback remains default-safe.
 - Metal direct BPE route now has a default low-entropy safety guard (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`) to avoid pathological repetitive-input regressions.
 - Metal direct BPE host loop now batches multiple rounds per command submission by default (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`, configurable up to 64) to reduce round-submission overhead.
-- Metal direct BPE round batching now uses an input-size-aware default (`16` rounds/submit for very large buffers, `32` for smaller buffers; still overrideable via `TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`) to reduce command-submission overhead on medium pieces without over-dispatching tail rounds on 1MB direct rows.
+- Metal direct BPE round batching now uses an input-size-aware default (`24` rounds/submit for very large buffers, `32` for smaller buffers; still overrideable via `TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`) to reduce command-submission overhead on medium pieces without over-dispatching tail rounds on 1MB direct rows.
 - Metal candidate kernel removed redundant per-thread safety branches in the direct BPE hot path (`tt_bpe_find_candidates`) after host-side rank-table validation guarantees.
 - Metal direct BPE loop now fuses candidate discovery and global min-rank reduction into a single kernel pass (find+min), removing one full-grid dispatch per BPE round in the direct route.
 - Metal active-index compaction now supports explicit env control (`TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_ENABLE`) and uses an adaptive default (enabled for large direct inputs, disabled for smaller inputs).
-- Metal active-index compaction now supports stride control (`TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE`, default `4`) so compaction can run every N rounds instead of every round.
+- Metal active-index compaction now supports stride control (`TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE`, default `3`) so compaction can run every N rounds instead of every round.
 - Metal compaction kernel now uses block-prefix packing (one atomic append per threadgroup) instead of per-token atomic appends to reduce atomic contention in direct BPE loops.
 - Metal direct BPE now uses specialized no-branch compute pipelines for find/mark/apply phases (`*_full` vs `*_active`) instead of a single kernel with runtime mode branching, reducing per-dispatch overhead on the default full-grid path.
 - Fixed a direct-route correctness regression in multi-round command submissions by moving `next_active_count` resets from host writes into the on-GPU reset kernel (`tt_bpe_reset_counters`), avoiding pre-dispatch counter clobbering.

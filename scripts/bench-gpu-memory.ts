@@ -78,6 +78,8 @@ skip_direct_kernel=os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL","")
 route_bytes_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES","").strip()
 route_text_kind_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND","low-entropy").strip().lower()
 route_text_kind="normal-text" if route_text_kind_raw in {"normal","normal-text"} else "low-entropy"
+route_normal_text_mode_raw=os.environ.get("TURBOTOKEN_GPU_MEMORY_NORMAL_TEXT_MODE","").strip().lower()
+route_normal_text_mode="singlepiece-lower" if route_normal_text_mode_raw in {"singlepiece-lower","lower"} else "fixture-alpha"
 
 def summarize(name,workload,samples):
     keys=[
@@ -132,6 +134,7 @@ fixture_1mb=pathlib.Path("bench/fixtures/english-1mb.txt").read_bytes()
 normal_stream=bytes(ch for ch in fixture_1mb if (65 <= ch <= 90) or (97 <= ch <= 122))
 if len(normal_stream) == 0:
     normal_stream=b"TheQuickBrownFoxJumpsOverTheLazyDog"
+normal_stream_lower=bytes(((ch + 32) if (65 <= ch <= 90) else ch) for ch in normal_stream)
 try:
     route_input_bytes=int(route_bytes_raw) if route_bytes_raw else len(fixture_1mb)
 except ValueError:
@@ -140,8 +143,9 @@ route_input_bytes=max(4096, min(len(fixture_1mb), route_input_bytes))
 
 def build_route_text(size):
     if route_text_kind == "normal-text":
-        repeats=max(1,(size+len(normal_stream)-1)//len(normal_stream))
-        payload=(normal_stream*repeats)[:size]
+        source=normal_stream_lower if route_normal_text_mode == "singlepiece-lower" else normal_stream
+        repeats=max(1,(size+len(source)-1)//len(source))
+        payload=(source*repeats)[:size]
         return payload.decode("ascii","ignore")
     return "a"*size
 
@@ -320,6 +324,7 @@ print(json.dumps({
         "TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL":os.environ.get("TURBOTOKEN_GPU_MEMORY_SKIP_DIRECT_KERNEL"),
         "TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES":os.environ.get("TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES"),
         "TURBOTOKEN_GPU_MEMORY_ROUTE_TEXT_KIND":route_text_kind,
+        "TURBOTOKEN_GPU_MEMORY_NORMAL_TEXT_MODE":route_normal_text_mode,
     },
     "note":"GPU memory rows are derived from Metal bridge telemetry: active bytes (last op), bridge working-set bytes (persistent MTLBuffer capacity), and device currentAllocatedSize when reported by the driver. Throughput columns use median GPU/CPU ns and known workload byte totals.",
 }))

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 turbotoken is a **drop-in replacement for tiktoken** — the fastest BPE tokenizer on every platform. It uses **Zig + hand-written assembly** as its core, with platform-specific backends: ARM64 NEON, Apple Metal GPU, Zig WASM (unified), AVX2/AVX-512, NVIDIA CUDA, and RISC-V Vector.
 
-**Current status:** Planning/documentation phase. No source code exists yet. All implementation is ahead.
+**Current status:** Active development. Phase 1 (ARM64 NEON + Python) is ~95% complete with 6.75x speedup over tiktoken measured. Phase 2 (Metal GPU) has production-grade shaders. Phase 3 (WASM) is functional. Phase 4 (AVX) has dispatch skeleton. ~15,000 lines of working Zig/Python/JS/ASM code.
 
 ## Architecture Decisions (Critical)
 
@@ -24,7 +24,7 @@ These are settled decisions — do not revisit or suggest alternatives:
 
 Full rationale in ADR-001 through ADR-010 in `docs/ARCHITECTURE.md`.
 
-## Build Commands (Planned)
+## Build Commands
 
 ```bash
 # Build native (current platform)
@@ -52,7 +52,7 @@ bun run scripts/build-all.ts
 bun run scripts/sync-upstream.ts
 ```
 
-## Planned Repository Structure
+## Repository Structure
 
 ```
 docs/                    # All project documentation (see Documentation Map)
@@ -110,12 +110,18 @@ NEON (Phase 1) → Metal (Phase 2) → Zig WASM (Phase 3) → AVX (Phase 4) → 
 
 Primary dev target: **Apple M4 Max** (12P+4E cores, 40 GPU cores, 128GB unified, 48MB L2).
 
-## Performance Targets
+## Performance Targets vs Measured (2026-03-02)
 
-- encode 100KB (NEON): <2.5ms (~8x tiktoken)
-- decode 128K tokens: <0.06ms
-- count 673K tokens: <35ms
-- WASM binary: <200KB (after wasm-opt)
-- Python wheel: <500KB
-- Startup to first encode: <5ms
-- Peak RAM (o200k_base): <12MB
+| Metric | Target | Measured | Status |
+|--------|--------|----------|--------|
+| encode 100KB | <2.5ms (8x tiktoken) | 41ms (6.75x tiktoken) | Gap — 6.75x achieved, not 8x |
+| decode 128K tokens | <0.06ms | not benchmarked end-to-end | Pending |
+| count 673K tokens | <35ms | not benchmarked at this size | Pending |
+| WASM binary | <200KB | not optimized yet | Phase 3 TODO |
+| Python wheel | <500KB | wheels built, size TBD | Phase 1 launch |
+| Startup cold | <5ms | 67.5ms | Gap — 13x off target |
+| Peak RAM (o200k_base) | <12MB | 31.5 MB (1MB encode) | Gap — ~2.6x off target |
+| Training 100KB | — | 45.7ms (beats rustbpe/minbpe) | Win |
+| GPU long-lane 1MB | — | 1.72x throughput boost | Win |
+
+**Key win:** 6.75x faster than tiktoken on 100KB encode. 3.3x faster startup. Training beats all competitors.

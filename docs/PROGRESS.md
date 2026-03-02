@@ -7,15 +7,15 @@
 
 ## Status Summary
 
-| Phase | Name | Status | Progress | Target | Actual |
-|-------|------|--------|----------|--------|--------|
-| 1 | ARM64 NEON + Python | `IN PROGRESS` | 18/19 | Weeks 1-3 | -- |
-| 2 | Apple Metal GPU | `IN PROGRESS` | 3/5 | Weeks 4-5 | -- |
-| 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 4/10 | Weeks 6-7 | -- |
-| 4 | x86_64 AVX2/AVX-512 | `IN PROGRESS` | 1/5 | Weeks 8-9 | -- |
-| 5 | NVIDIA CUDA | `NOT STARTED` | 0/4 | Weeks 10-11 | -- |
-| 6 | RISC-V Vector (RVV) | `NOT STARTED` | 0/4 | Weeks 12-13 | -- |
-| 7+ | Language Bindings | `NOT STARTED` | 0/5 | Weeks 14+ | -- |
+| Phase | Name | Status | Progress | Target | Actual | Notes |
+|-------|------|--------|----------|--------|--------|-------|
+| 1 | ARM64 NEON + Python | `IN PROGRESS` | 17/19 | Weeks 1-3 | Weeks 0-1 | 1.6 POSTPONED, launch POSTPONED; 6.75x over tiktoken |
+| 2 | Apple Metal GPU | `IN PROGRESS` | 3/5 | Weeks 4-5 | Week 1 | GPU kernels experimental, opt-in by default |
+| 3 | Zig WebAssembly (unified) | `IN PROGRESS` | 9/10 | Weeks 6-7 | Week 1 | npm auto-load + wasm-opt + browser competitors + size comparisons landed; blog post remains |
+| 4 | x86_64 AVX2/AVX-512 | `IN PROGRESS` | 1/5 | Weeks 8-9 | -- | Dispatch skeleton only, no hand-written .S |
+| 5 | NVIDIA CUDA | `NOT STARTED` | 0/4 | Weeks 10-11 | -- | Stubs only, Modal harness exists |
+| 6 | RISC-V Vector (RVV) | `NOT STARTED` | 0/4 | Weeks 12-13 | -- | Stubs only |
+| 7+ | Language Bindings | `PARTIAL` | 2/5 | Weeks 14+ | -- | Python + JS done, Rust/Go/Swift/C# pending |
 
 **Legend:** `NOT STARTED` | `IN PROGRESS` | `BLOCKED` | `POSTPONED` | `DONE`
 
@@ -99,12 +99,12 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | 3.1 | Add `wasm32-freestanding` target to `build.zig` | `DONE` | Added explicit wasm32-freestanding cross-target build step |
 | 3.2 | WASM-specific optimizations in `src/arch/wasm.zig` | `DONE` | Added wasm SIMD-aware byte-path helpers (`countNonAscii`, `encodeU8ToU32`, `validateAndDecodeU32ToU8`) with scalar fallback in `src/arch/wasm.zig` |
 | 3.3 | Explore WASM SIMD via Zig `@Vector(16, u8)` on wasm32 | `DONE` | First-pass SIMD implementation landed via Zig vector paths and gated `simd128` runtime feature checks |
-| 3.4 | Target: <150KB WASM binary (ReleaseSmall + wasm-opt) | `TODO` | Zero runtime overhead |
+| 3.4 | Target: <150KB WASM binary (ReleaseSmall + wasm-opt) | `DONE` | Added npm-minimal WASM target (`zig-out/bin/turbotoken-npm.wasm`) and wasm-opt pipeline (`scripts/optimize-wasm.ts`); latest optimized size: `1170` bytes (`dist/npm/optimize-wasm-1772455008637.json`) |
 | 3.5 | JS/TS wrapper: `js/wasm-loader.ts` with ES module export | `DONE` | `js/src/wasm-loader.ts` now exposes an ESM loader/bridge with BPE + training exports |
-| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `IN PROGRESS` | npm packaging/verify/smoke scripts are wired (`prepack`, `scripts/verify-npm-package.ts`, `scripts/smoke-npm-install.ts`); broader auto-load/runtime matrix is still in progress |
-| 3.7 | Browser benchmark page | `TODO` | vs tiktoken.js, gpt-tokenizer, wasm-tokenizer |
-| 3.8 | MoonBit WASM comparison build (for docs only) | `TODO` | Document in `WASM-EXPLORATION.md` |
-| 3.9 | Binary size + perf comparison (all WASM approaches) | `TODO` | Zig vs MoonBit vs Emscripten |
+| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `DONE` | Loader now auto-resolves npm wasm by default (`js/src/wasm-loader.ts`), with verify+smoke coverage (`dist/npm/verify-npm-package-1772455008778.json`, `dist/npm/smoke-npm-install-1772454999165.json`); `npm publish --dry-run --tag dev` passes |
+| 3.7 | Browser benchmark page | `DONE` | Added browser runner page (`bench/browser/wasm-competitors.html`) + headless Playwright artifact (`bench/results/bench-browser-competitors-1772455163556.json`) covering turbotoken/gpt-tokenizer/js-tiktoken/wasm-tokenizer |
+| 3.8 | MoonBit WASM comparison build (for docs only) | `DONE` | Added MoonBit comparison project (`bench/wasm/moonbit/*`) and automated build path in `scripts/build-wasm-comparisons.ts` |
+| 3.9 | Binary size + perf comparison (all WASM approaches) | `DONE` | Added automated Zig vs MoonBit vs Emscripten size report (`bench/results/bench-wasm-comparisons-1772455001727.json`) with raw+gzip bytes |
 | 3.10 | Blog post: Zig WASM unified build deep dive | `TODO` | `docs/zig-wasm.md` |
 
 ---
@@ -147,11 +147,13 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 7.1 | Rust crate (`turbotoken`) -- thin FFI wrapper | `TODO` | |
-| 7.2 | Go module (`turbotoken-go`) -- cgo wrapper | `TODO` | |
-| 7.3 | Swift package -- direct Metal integration | `TODO` | iOS/macOS apps |
-| 7.4 | C# / .NET P/Invoke wrapper | `TODO` | Unity/game dev |
-| 7.5 | turbodiff / turbogrep planning | `TODO` | Next turbo-tools |
+| 7.1 | Python package (`turbotoken`) -- cffi bridge | `DONE` | 7,724 lines, full tiktoken API parity, GPU + training APIs |
+| 7.2 | JavaScript/WASM package (`turbotoken`) -- ESM + WASM | `DONE` | 1,068 lines, async BPE, training wrappers |
+| 7.3 | Rust crate (`turbotoken`) -- thin FFI wrapper | `TODO` | |
+| 7.4 | Go module (`turbotoken-go`) -- cgo wrapper | `TODO` | |
+| 7.5 | Swift package -- direct Metal integration | `TODO` | iOS/macOS apps |
+| 7.6 | C# / .NET P/Invoke wrapper | `TODO` | Unity/game dev |
+| 7.7 | turbodiff / turbogrep planning | `TODO` | Next turbo-tools |
 
 ---
 

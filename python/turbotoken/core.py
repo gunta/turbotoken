@@ -79,6 +79,22 @@ def _sanitize_text(text: str) -> str:
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
 
 
+def _utf8_len_fast(text: str) -> int:
+    # Fast path for ASCII workloads: UTF-8 length equals codepoint length.
+    if text.isascii():
+        return len(text)
+    return len(text.encode("utf-8"))
+
+
+def _gpu_short_lane_bypass_enabled() -> bool:
+    raw = os.environ.get("TURBOTOKEN_GPU_SHORT_LANE_BYPASS_ENABLE", "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return True
+
+
 @lru_cache(maxsize=128)
 def _special_token_regex(tokens: frozenset[str]):
     import regex
@@ -682,6 +698,16 @@ class Encoding:
             return 8192
         return max(1, value)
 
+    def _metal_force_all_cpu_fallback_max_ranges(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_METAL_FORCE_ALL_CPU_FALLBACK_MAX_RANGES", "").strip()
+        if not raw:
+            return 128
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 128
+        return max(0, value)
+
     def _native_rank_session(self) -> Any | None:
         rank_payload = self._rank_payload_cache
         if rank_payload is None:
@@ -945,7 +971,7 @@ class Encoding:
             except Exception:
                 gpu = None
         bpe_cache = self._bpe_cache
-        text_bytes_len = len(text.encode("utf-8"))
+        text_bytes_len = _utf8_len_fast(text)
         use_overlap_pretokenize = (
             gpu is not None
             and not strict_verify
@@ -972,6 +998,21 @@ class Encoding:
             "yes",
         }
         if (
+            device == "metal"
+            and gpu is not None
+            and not strict_verify
+            and _gpu_short_lane_bypass_enabled()
+            and not force_all_metal_strict
+        ):
+            # Strict short-lane policy: below direct-size crossover, stay on CPU/native.
+            # This avoids paying Metal setup/route overhead on known short-text regimes.
+            try:
+                direct_min = int(gpu._metal_bpe_direct_min_bytes())  # type: ignore[attr-defined]
+            except Exception:
+                direct_min = 262_144
+            if text_bytes_len < max(1, direct_min):
+                return self._encode_ordinary_impl(text)
+        if (
             device in {"auto", "metal"}
             and force_all_metal
             and not force_all_metal_strict
@@ -983,9 +1024,16 @@ class Encoding:
             try:
                 direct_min = int(gpu._metal_bpe_direct_min_bytes())  # type: ignore[attr-defined]
             except Exception:
-                direct_min = 786_432
+                direct_min = 262_144
             if text_bytes_len < max(1, direct_min):
                 return self._encode_ordinary_impl(text)
+            fallback_max_ranges = self._metal_force_all_cpu_fallback_max_ranges()
+            if fallback_max_ranges > 0:
+                piece_ranges = self._ordinary_piece_ranges_bytes(text)
+                if piece_ranges is not None:
+                    _, ranges = piece_ranges
+                    if len(ranges) > fallback_max_ranges:
+                        return self._encode_ordinary_impl(text)
 
         if device == "auto" and gpu is not None and not strict_verify:
             # When autoroute is CPU for this text, delegate to the regular encode path.
