@@ -100,19 +100,62 @@ body::after {
   z-index: 0;
 }
 
-/* === LANG TOGGLE === */
-.lang-toggle {
+/* === TOP NAV === */
+.topnav {
   position: fixed;
-  top: 20px;
-  right: 24px;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 28px;
+  background: rgba(11, 11, 16, 0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.topnav-logo {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  text-decoration: none;
+}
+.topnav-logo svg {
+  height: 32px;
+  width: auto;
+}
+.topnav-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.topnav-gh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--text-muted);
+  transition: color 0.2s, background 0.2s;
+}
+.topnav-gh:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+.topnav-gh svg {
+  width: 20px;
+  height: 20px;
+}
+.lang-toggle {
+  display: flex;
   gap: 4px;
-  background: var(--bg-card);
+  background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 4px;
-  backdrop-filter: blur(20px);
 }
 .lang-btn {
   padding: 6px 14px;
@@ -157,7 +200,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
 
 /* === HERO === */
 .hero {
-  padding: 120px 0 72px;
+  padding: 140px 0 72px;
   text-align: center;
   position: relative;
 }
@@ -900,19 +943,47 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
 }
 
 @media (max-width: 600px) {
+  .topnav { padding: 10px 16px; }
+  .topnav-logo svg { height: 26px; }
   .story-card { padding: 36px 28px; }
   .story-card .story-quote { font-size: 17px; }
-  .hero { padding: 96px 0 48px; }
+  .hero { padding: 100px 0 48px; }
 }
 </style>
 </head>
 <body>
 
-<!-- Language Toggle -->
-<div class="lang-toggle">
-  <button class="lang-btn active" onclick="setLang('en')">EN</button>
-  <button class="lang-btn" onclick="setLang('ja')">JP</button>
-</div>
+<!-- Top Nav -->
+<nav class="topnav">
+  <a href="#" class="topnav-logo" aria-label="turbotoken">
+    <svg viewBox="0 0 240 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="44" height="44" y="2" rx="10" fill="#0b0b10"/>
+      <rect width="44" height="44" y="2" rx="10" stroke="url(#nav-border)" stroke-width="1.5" fill="none"/>
+      <path d="M25.5 8L14 24h8l-1 12 12-16h-8l.5-12z" fill="url(#nav-bolt)"/>
+      <text x="56" y="34" font-family="system-ui, -apple-system, sans-serif" font-weight="800" font-size="30" letter-spacing="-1" fill="#f4f4f6">turbo<tspan fill="url(#nav-accent)">token</tspan></text>
+      <defs>
+        <linearGradient id="nav-bolt" x1="14" y1="8" x2="33" y2="36" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#ff4400"/><stop offset=".45" stop-color="#ff5c1a"/><stop offset="1" stop-color="#fbbf24"/>
+        </linearGradient>
+        <linearGradient id="nav-accent" x1="56" y1="10" x2="240" y2="40" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#ff5c1a"/><stop offset="1" stop-color="#fbbf24"/>
+        </linearGradient>
+        <linearGradient id="nav-border" x1="0" y1="2" x2="44" y2="46" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#ff5c1a" stop-opacity=".3"/><stop offset="1" stop-color="#fbbf24" stop-opacity=".15"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  </a>
+  <div class="topnav-right">
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('en')">EN</button>
+      <button class="lang-btn" onclick="setLang('ja')">JP</button>
+    </div>
+    <a href="https://github.com/gunta/turbotoken" class="topnav-gh" target="_blank" rel="noopener" aria-label="GitHub">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+    </a>
+  </div>
+</nav>
 
 <div class="container">
 
