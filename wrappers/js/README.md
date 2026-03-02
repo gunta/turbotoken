@@ -1,0 +1,27 @@
+# turbotoken JS/TS Wrapper
+
+JavaScript/TypeScript wrapper package for turbotoken.
+
+## Local Dev
+
+```bash
+zig build wasm -Doptimize=ReleaseSmall
+bun test wrappers/js/tests/smoke.test.ts
+```
+
+## Usage
+
+```ts
+import { getEncodingAsync } from "turbotoken";
+
+const enc = await getEncodingAsync("o200k_base", {
+  backend: "auto",
+  wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
+});
+
+const ids = await enc.encodeAsync("hello world");
+```
+
+Notes:
+- `backend: "auto"` prefers optional native packages, then falls back to WASM.
+- Source lives in `wrappers/js/src`.

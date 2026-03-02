@@ -37,8 +37,9 @@ Agents must keep this status explicit in docs, PRs, and benchmark claims.
 - `src/`: Zig tokenizer core.
 - `asm/`: architecture-specific assembly stubs/implementations.
 - `gpu/`: Metal and CUDA experiments.
-- `python/`: Python package and tests.
-- `js/`: JS/TS wrapper and smoke tests.
+- `wrappers/`: all language wrappers (each package has its own README).
+- `wrappers/python/`: Python package and tests.
+- `wrappers/js/`: JS/TS wrapper and smoke tests.
 - `scripts/`: Bun TypeScript automation/benchmark/sync scripts.
 - `docs/`: PRD, architecture decisions, progress, and benchmark notes.
 

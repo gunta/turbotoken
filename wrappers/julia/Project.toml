@@ -1,0 +1,6 @@
+name = "TurboToken"
+uuid = "b7e3f1a2-4c9d-4e8b-af12-d3c6e7f89a01"
+version = "0.1.0"
+
+[compat]
+julia = "1.9"

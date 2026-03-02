@@ -1,0 +1,15 @@
+Package: turbotoken
+Title: Fast BPE Tokenizer
+Version: 0.1.0
+Authors@R: person("TurboToken Contributors", role = c("aut", "cre"),
+                   email = "turbotoken@example.com")
+Description: A drop-in replacement for tiktoken providing the fastest BPE
+    tokenization on every platform. Uses a Zig + hand-written assembly core
+    with platform-specific SIMD backends.
+License: MIT + file LICENSE
+SystemRequirements: libturbotoken
+Imports: utils
+Suggests: testthat (>= 3.0)
+NeedsCompilation: yes
+Encoding: UTF-8
+RoxygenNote: 7.3.0

@@ -77,7 +77,7 @@ function defaultWasmPath(): string {
   if (typeof process !== "undefined" && process.env?.TURBOTOKEN_WASM_PATH) {
     return process.env.TURBOTOKEN_WASM_PATH;
   }
-  const moduleCandidate = new URL("../../zig-out/bin/turbotoken-npm.wasm", import.meta.url);
+  const moduleCandidate = new URL("../../../zig-out/bin/turbotoken-npm.wasm", import.meta.url);
   if (moduleCandidate.protocol !== "file:") {
     return moduleCandidate.href;
   }
@@ -188,6 +188,7 @@ export function clearWasmCache(): void {
 }
 
 export class WasmBridge {
+  readonly kind = "wasm";
   private readonly encoder = new TextEncoder();
   private cachedRankPayload: Uint8Array | null = null;
   private cachedRankPtr = 0;

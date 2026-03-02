@@ -1,0 +1,33 @@
+plugins {
+    id 'groovy'
+    id 'maven-publish'
+}
+
+group = 'com.turbotoken'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.groovy:groovy:4.0.15'
+    implementation files('../java/build/libs/turbotoken.jar')
+
+    testImplementation 'org.apache.groovy:groovy-test:4.0.15'
+    testImplementation platform('org.spockframework:spock-bom:2.4-M1-groovy-4.0')
+    testImplementation 'org.spockframework:spock-core'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            artifactId = 'turbotoken-groovy'
+        }
+    }
+}

@@ -73,8 +73,8 @@ asm/                     # Hand-written assembly (.S)
   riscv/                 # RVV hot loops
 gpu/metal/               # Apple Metal compute shaders
 gpu/cuda/                # NVIDIA CUDA kernels
-python/turbotoken/       # Python package (cffi bridge)
-js/                      # npm package (WASM loader)
+wrappers/python/turbotoken/       # Python package (cffi bridge)
+wrappers/js/             # npm package (WASM loader)
 scripts/                 # Bun Shell TypeScript (all tooling)
 bench/                   # Benchmark fixtures and results
 upstream/                # Git submodules (tiktoken, rs-bpe, github-bpe)

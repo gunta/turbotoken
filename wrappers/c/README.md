@@ -17,7 +17,7 @@ This produces `zig-out/lib/libturbotoken.a` (or `.so`/`.dylib` depending on conf
 ## Building with CMake
 
 ```bash
-cd c
+cd wrappers/c
 mkdir build && cd build
 
 # Option A: use pre-built library (run `zig build` first)
@@ -40,7 +40,7 @@ cc -o encode_example examples/encode_example.c $(pkg-config --cflags --libs turb
 ## Manual compilation
 
 ```bash
-cc -I../include -o encode_example examples/encode_example.c -L../zig-out/lib -lturbotoken
+cc -I../../include -o encode_example examples/encode_example.c -L../../zig-out/lib -lturbotoken
 ```
 
 ## Quick start

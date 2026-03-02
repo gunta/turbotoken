@@ -100,7 +100,7 @@ try {
       "if (text !== 'hello from npm package') {",
       "  throw new Error(`encoding roundtrip mismatch: ${text}`);",
       "}",
-      "console.log(JSON.stringify({ encoded, decoded, tokenCount: tokens.length }));",
+      "console.log(JSON.stringify({ encoded, decoded, tokenCount: tokens.length, backendKind: enc.backendKind() }));",
     ].join("\n");
     const check = runCommand("bun", ["-e", checkScript], {
       cwd: installDir,

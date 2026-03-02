@@ -18,7 +18,7 @@ We need a WASM build that:
 ## Implemented Baseline (2026-03-02)
 
 - Zig WASM build step now emits `zig-out/bin/turbotoken.wasm` via `zig build wasm`.
-- JS loader (`js/src/wasm-loader.ts`) instantiates the module and calls exported Zig C-ABI symbols directly.
+- JS loader (`wrappers/js/src/wasm-loader.ts`) instantiates the module and calls exported Zig C-ABI symbols directly.
 - JS `Encoding` now has async WASM+BPE methods (`encodeAsync`, `decodeAsync`, `countAsync`) with rank payload loading.
 - JS now also exposes WASM training wrappers (`trainBpeFromChunkCounts`, `trainBpeFromChunks`).
 - `scripts/bench-wasm.ts` now reports startup latency, throughput (MB/s), and peak RSS rows.
@@ -192,7 +192,7 @@ Day 1: Add wasm32-freestanding target to build.zig
 Day 2: Test compilation of full src/*.zig for WASM
 Day 3: Write WASM-specific arch file (src/arch/wasm.zig)
 Day 4: Measure binary size (ReleaseSmall, ReleaseFast, wasm-opt)
-Day 5: Write JS/TS wrapper (js/wasm-loader.ts)
+Day 5: Write JS/TS wrapper (wrappers/js/wasm-loader.ts)
 Day 6: Test WASM SIMD via @Vector(16, u8)
 Day 7: Browser benchmark page
 ```

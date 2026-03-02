@@ -56,12 +56,12 @@ bun run bench:wasm:comparisons
 - `turbotoken_decode_utf8_bytes`
 - `turbotoken_version`
 
-`js/src/wasm-loader.ts` treats BPE/training exports as optional and throws a clear error if they are called against the minimal artifact.
+`wrappers/js/src/wasm-loader.ts` treats BPE/training exports as optional and throws a clear error if they are called against the minimal artifact.
 
 ## JS usage
 
 ```ts
-import { getEncodingAsync, trainBpeFromChunks } from "../js/src/index";
+import { getEncodingAsync, trainBpeFromChunks } from "../wrappers/js/src/index";
 
 const enc = await getEncodingAsync("o200k_base", {
   wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },

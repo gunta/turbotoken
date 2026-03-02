@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <PackageId>TurboToken.FSharp</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>turbotoken contributors</Authors>
+    <Description>F# bindings for turbotoken, the fastest BPE tokenizer on every platform.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/turbotoken/turbotoken</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/turbotoken/turbotoken</RepositoryUrl>
+    <PackageTags>tokenizer;bpe;tiktoken;nlp;ai;fsharp</PackageTags>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="NativeMethods.fs" />
+    <Compile Include="Chat.fs" />
+    <Compile Include="Registry.fs" />
+    <Compile Include="RankCache.fs" />
+    <Compile Include="Encoding.fs" />
+    <Compile Include="TurboToken.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.*" />
+  </ItemGroup>
+
+</Project>

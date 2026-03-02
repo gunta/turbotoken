@@ -17,7 +17,7 @@ if(TURBOTOKEN_BUILD_FROM_SOURCE)
         OUTPUT "${TURBOTOKEN_LIB}"
         COMMAND "${ZIG_EXECUTABLE}" build -Doptimize=ReleaseFast
                 --prefix "${CMAKE_BINARY_DIR}/zig-out"
-        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
         COMMENT "Building libturbotoken from Zig source"
     )
     add_custom_target(turbotoken_zig_build DEPENDS "${TURBOTOKEN_LIB}")
@@ -30,7 +30,7 @@ if(TURBOTOKEN_BUILD_FROM_SOURCE)
 else()
     find_library(TURBOTOKEN_LIBRARY
         NAMES turbotoken
-        HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../zig-out/lib"
+        HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../../zig-out/lib"
               "${CMAKE_INSTALL_PREFIX}/lib"
     )
     if(NOT TURBOTOKEN_LIBRARY)
@@ -48,7 +48,7 @@ endif()
 
 # --- Public include directory -----------------------------------------------
 
-set(TURBOTOKEN_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+set(TURBOTOKEN_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 
 # --- Imported target with interface -----------------------------------------
 

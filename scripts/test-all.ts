@@ -20,7 +20,7 @@ const tasks: Task[] = [
   {
     name: "js-smoke",
     command: "bun",
-    args: ["test", "js/tests/smoke.test.ts"],
+    args: ["test", "wrappers/js/tests/smoke.test.ts"],
     required: true,
   },
   {

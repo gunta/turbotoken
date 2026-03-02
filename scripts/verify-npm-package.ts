@@ -1,12 +1,22 @@
 #!/usr/bin/env bun
 import { existsSync, statSync } from "node:fs";
 import { resolvePath, section, writeJson } from "./_lib";
-import { loadWasm } from "../js/src/wasm-loader";
+import { loadWasm } from "../wrappers/js/src/wasm-loader";
+import { loadNative } from "../wrappers/js/src/native-loader";
 
 section("Verify npm/WASM package artifacts");
 
 const wasmPath = resolvePath("zig-out", "bin", "turbotoken.wasm");
 const npmWasmPath = resolvePath("zig-out", "bin", "turbotoken-npm.wasm");
+const nativeLibExt = process.platform === "darwin" ? "dylib" : process.platform === "linux" ? "so" : process.platform === "win32" ? "dll" : null;
+const nativeLibName = nativeLibExt === "dll" ? "turbotoken.dll" : nativeLibExt ? `libturbotoken.${nativeLibExt}` : null;
+const nativeLibPath = nativeLibName
+  ? [
+    resolvePath("zig-out", "lib", nativeLibName),
+    resolvePath("zig-out", "bin", nativeLibName),
+    nativeLibExt === "dll" ? resolvePath("zig-out", "bin", "libturbotoken.dll") : null,
+  ].filter((candidate): candidate is string => candidate != null).find((candidate) => existsSync(candidate)) ?? null
+  : null;
 const resultPath = resolvePath("dist", "npm", `verify-npm-package-${Date.now()}.json`);
 const npmWasmLimitBytes = (() => {
   const raw = process.env.TURBOTOKEN_NPM_WASM_MAX_BYTES?.trim();
@@ -40,6 +50,7 @@ if (!existsSync(npmWasmPath)) {
 
 const wasmBytes = statSync(wasmPath).size;
 const npmWasmBytes = statSync(npmWasmPath).size;
+const nativeLibBytes = nativeLibPath ? statSync(nativeLibPath).size : null;
 if (wasmBytes <= 0) {
   writeJson(resultPath, {
     status: "failed",
@@ -59,6 +70,17 @@ if (npmWasmBytes <= 0) {
   console.error(`Empty npm WASM artifact: ${npmWasmPath}`);
   process.exit(1);
 }
+if (nativeLibBytes != null && nativeLibBytes <= 0) {
+  writeJson(resultPath, {
+    status: "failed",
+    reason: `empty host native library at ${nativeLibPath}`,
+    wasmBytes,
+    npmWasmBytes,
+    nativeLibBytes,
+  });
+  console.error(`Empty host native library: ${nativeLibPath}`);
+  process.exit(1);
+}
 if (npmWasmBytes > npmWasmLimitBytes) {
   writeJson(resultPath, {
     status: "failed",
@@ -75,23 +97,34 @@ if (npmWasmBytes > npmWasmLimitBytes) {
 
 let encodeHello: number[] = [];
 let decodeHello = "";
+let nativeEncodeHello: number[] = [];
+let nativeDecodeHello = "";
+let nativeCheckStatus: "ok" | "skipped" | "failed" = "skipped";
 try {
   // Verify package default auto-load path (no explicit wasmPath).
   const bridge = await loadWasm({ forceReload: true });
   encodeHello = bridge.encodeUtf8Bytes("hello");
   decodeHello = new TextDecoder().decode(bridge.decodeUtf8Bytes(encodeHello));
+  if (nativeLibPath) {
+    const nativeBridge = await loadNative({ nativeLibPath, forceReload: true });
+    nativeEncodeHello = nativeBridge.encodeUtf8Bytes("hello");
+    nativeDecodeHello = new TextDecoder().decode(nativeBridge.decodeUtf8Bytes(nativeEncodeHello));
+    nativeCheckStatus = "ok";
+  }
 } catch (error) {
   writeJson(resultPath, {
     status: "failed",
-    reason: "failed to instantiate/execute wasm bridge",
+    reason: "failed to instantiate/execute wasm/native bridge",
     wasmPath,
     wasmBytes,
     npmWasmPath,
     npmWasmBytes,
+    nativeLibPath,
+    nativeLibBytes,
     npmWasmLimitBytes,
     error: String(error),
   });
-  console.error(`WASM bridge verification failed: ${String(error)}`);
+  console.error(`WASM/native bridge verification failed: ${String(error)}`);
   process.exit(1);
 }
 
@@ -107,6 +140,18 @@ if (decodeHello !== "hello") {
   console.error(`WASM roundtrip mismatch: got ${JSON.stringify(decodeHello)}`);
   process.exit(1);
 }
+if (nativeCheckStatus === "ok" && nativeDecodeHello !== "hello") {
+  writeJson(resultPath, {
+    status: "failed",
+    reason: "native roundtrip mismatch",
+    nativeLibPath,
+    nativeLibBytes,
+    nativeEncodeHello,
+    nativeDecodeHello,
+  });
+  console.error(`Native roundtrip mismatch: got ${JSON.stringify(nativeDecodeHello)}`);
+  process.exit(1);
+}
 
 writeJson(resultPath, {
   status: "ok",
@@ -114,10 +159,15 @@ writeJson(resultPath, {
   wasmBytes,
   npmWasmPath,
   npmWasmBytes,
+  nativeLibPath,
+  nativeLibBytes,
+  nativeCheckStatus,
   npmWasmLimitBytes,
   encodeHello,
   decodeHello,
-  note: "npm wrapper remains thin, auto-loads local npm wasm by default, and validates roundtrip.",
+  nativeEncodeHello,
+  nativeDecodeHello,
+  note: "npm wrapper remains thin, validates host native bridge, and auto-loads npm wasm by default with fallback.",
 });
 
 console.log(`WASM/npm package verification passed: ${resultPath}`);

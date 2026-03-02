@@ -77,6 +77,8 @@ local function find_library()
 
     -- Try relative to this file's typical install location
     local paths_to_try = {
+        "../../../zig-out/lib/",
+        "../../../../zig-out/lib/",
         "../../zig-out/lib/",
         "../zig-out/lib/",
         "./zig-out/lib/",

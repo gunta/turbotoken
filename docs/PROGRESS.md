@@ -29,7 +29,7 @@
 
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
-| 1.1 | Scaffold project structure (`src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`) | `DONE` | Scaffold committed with working directory layout |
+| 1.1 | Scaffold project structure (`src/`, `src/arch/`, `asm/arm64/`, `wrappers/python/`, `bench/`, `scripts/`, `build.zig`) | `DONE` | Scaffold committed with working directory layout |
 | 1.2 | Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) | `DONE` | Added generated pair-cache seed sets from `.tiktoken` merge files (`scripts/generate-pair-cache-seeds.ts` -> `src/generated/pair_cache_seeds.zig`) and runtime fingerprint matching (`populateFromKnownSeedSets`) |
 | 1.3 | Implement O(n) backtracking BPE encoder in Zig | `DONE` | Replaced quadratic merge scanning with a backtracking merge queue (`std.PriorityQueue`) over a linked-token chain, plus pair-rank memoization through `src/pair_cache.zig` |
 | 1.4 | Write NEON pre-tokenizer: Zig `@Vector(16, u8)` + hand-written ARM64 `.S` | `DONE` | Added ARM64 NEON `.S` pretokenizer routine (`turbotoken_arm64_count_non_ascii`), optional DotProd variant (`turbotoken_arm64_count_non_ascii_dotprod`), and runtime kernel auto-selection in `src/arch/aarch64.zig`/`src/pretokenizer.zig` |
@@ -44,10 +44,10 @@
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
 | 1.10 | cffi bridge from Zig (via `export fn` C ABI) to Python | `DONE` | cffi bridge is wired and loads native symbols from `zig-out/lib/libturbotoken.*` after `zig build` (`turbotoken_version`, `turbotoken_count`, plus optional rank-based BPE encode/decode symbol wrappers) |
-| 1.11 | Implement full `Encoding` class (tiktoken API parity) | `DONE` | `python/turbotoken/core.py` now performs regex + BPE merges from `.tiktoken` ranks with special-token handling and parity-oriented encode/decode/count behavior |
-| 1.12 | Load merge tables from `.tiktoken` rank file URLs | `DONE` | Added `python/turbotoken/_rank_files.py` with URL download, cache in `~/.cache/turbotoken/`, and rank-file parsing |
+| 1.11 | Implement full `Encoding` class (tiktoken API parity) | `DONE` | `wrappers/python/turbotoken/core.py` now performs regex + BPE merges from `.tiktoken` ranks with special-token handling and parity-oriented encode/decode/count behavior |
+| 1.12 | Load merge tables from `.tiktoken` rank file URLs | `DONE` | Added `wrappers/python/turbotoken/_rank_files.py` with URL download, cache in `~/.cache/turbotoken/`, and rank-file parsing |
 | 1.13 | Implement `count()` fast path (no allocation) | `DONE` | `count()` now tokenizes with the same BPE path as `encode()` while avoiding token-list allocation by summing per-piece token lengths |
-| 1.14 | Sync and adapt tiktoken's test suite | `DONE` | Added adapted upstream public coverage in `python/tests/upstream/test_tiktoken_adapted_public.py` (plus generated sync smoke test) and validated against installed `tiktoken` |
+| 1.14 | Sync and adapt tiktoken's test suite | `DONE` | Added adapted upstream public coverage in `wrappers/python/tests/upstream/test_tiktoken_adapted_public.py` (plus generated sync smoke test) and validated against installed `tiktoken` |
 | 1.15 | Byte-perfect comparison tests vs tiktoken | `DONE` | `scripts/compat-report.ts` shows `mismatch_count=0` across 7 encodings/aliases (`bench/results/compat-report-1771996467170.json`), with additional parity smoke + deterministic fuzz tests against `tiktoken` |
 
 ### Week 3: Packaging + Benchmarks + Launch
@@ -100,8 +100,8 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | 3.2 | WASM-specific optimizations in `src/arch/wasm.zig` | `DONE` | Added wasm SIMD-aware byte-path helpers (`countNonAscii`, `encodeU8ToU32`, `validateAndDecodeU32ToU8`) with scalar fallback in `src/arch/wasm.zig` |
 | 3.3 | Explore WASM SIMD via Zig `@Vector(16, u8)` on wasm32 | `DONE` | First-pass SIMD implementation landed via Zig vector paths and gated `simd128` runtime feature checks |
 | 3.4 | Target: <150KB WASM binary (ReleaseSmall + wasm-opt) | `DONE` | Added npm-minimal WASM target (`zig-out/bin/turbotoken-npm.wasm`) and wasm-opt pipeline (`scripts/optimize-wasm.ts`); latest optimized size: `1170` bytes (`dist/npm/optimize-wasm-1772455008637.json`) |
-| 3.5 | JS/TS wrapper: `js/wasm-loader.ts` with ES module export | `DONE` | `js/src/wasm-loader.ts` now exposes an ESM loader/bridge with BPE + training exports |
-| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `DONE` | Loader now auto-resolves npm wasm by default (`js/src/wasm-loader.ts`), with verify+smoke coverage (`dist/npm/verify-npm-package-1772455008778.json`, `dist/npm/smoke-npm-install-1772454999165.json`); `npm publish --dry-run --tag dev` passes |
+| 3.5 | JS/TS wrapper: `wrappers/js/wasm-loader.ts` with ES module export | `DONE` | `wrappers/js/src/wasm-loader.ts` now exposes an ESM loader/bridge with BPE + training exports |
+| 3.6 | npm package: `turbotoken` with WASM auto-loaded | `DONE` | Loader now auto-resolves npm wasm by default (`wrappers/js/src/wasm-loader.ts`), with verify+smoke coverage (`dist/npm/verify-npm-package-1772455008778.json`, `dist/npm/smoke-npm-install-1772454999165.json`); `npm publish --dry-run --tag dev` passes |
 | 3.7 | Browser benchmark page | `DONE` | Added browser runner page (`bench/browser/wasm-competitors.html`) + headless Playwright artifact (`bench/results/bench-browser-competitors-1772455163556.json`) covering turbotoken/gpt-tokenizer/js-tiktoken/wasm-tokenizer |
 | 3.8 | MoonBit WASM comparison build (for docs only) | `DONE` | Added MoonBit comparison project (`bench/wasm/moonbit/*`) and automated build path in `scripts/build-wasm-comparisons.ts` |
 | 3.9 | Binary size + perf comparison (all WASM approaches) | `DONE` | Added automated Zig vs MoonBit vs Emscripten size report (`bench/results/bench-wasm-comparisons-1772455001727.json`) with raw+gzip bytes |
@@ -148,7 +148,7 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | # | Task | Status | Notes / Commit |
 |---|------|--------|----------------|
 | 7.1 | Python package (`turbotoken`) -- cffi bridge | `DONE` | 7,724 lines, full tiktoken API parity, GPU + training APIs |
-| 7.2 | JavaScript/WASM package (`turbotoken`) -- ESM + WASM | `DONE` | 1,068 lines, async BPE, training wrappers |
+| 7.2 | JavaScript/WASM package (`turbotoken`) -- ESM + WASM | `DONE` | 1,068 lines, async BPE/training wrappers, plus Bun native backend routing (`auto|native|wasm|js`) with `@turbotoken/native-*` optional package fallback to WASM |
 | 7.3 | Rust crate (`turbotoken`) -- thin FFI wrapper | `TODO` | |
 | 7.4 | Go module (`turbotoken-go`) -- cgo wrapper | `TODO` | |
 | 7.5 | Swift package -- direct Metal integration | `TODO` | iOS/macOS apps |
@@ -234,7 +234,7 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 - Added cffi-based native bridge loading and rank-file cache/download plumbing for all planned encoding names.
 - Expanded Python compatibility scaffold with additional `Encoding` methods and test coverage (29 passing tests in local venv).
 - Replaced Python UTF-8 placeholder tokenization with real regex+BPE encoding/decoding driven by downloaded `.tiktoken` mergeable ranks (61 passing tests locally with `tiktoken` installed; compatibility smoke corpus matches `tiktoken` for `o200k_base`/`cl100k_base`/`p50k_base`/`r50k_base`).
-- Added adapted upstream public tests (`python/tests/upstream/test_tiktoken_adapted_public.py`) and deterministic parity fuzz checks versus `tiktoken`; current local run is 145 passing tests.
+- Added adapted upstream public tests (`wrappers/python/tests/upstream/test_tiktoken_adapted_public.py`) and deterministic parity fuzz checks versus `tiktoken`; current local run is 145 passing tests.
 - Ran full Hyperfine benchmark suite via `bun run bench` and regenerated chart summary with real benchmark artifacts in `bench/results/` and `bench/charts/summary.md`.
 - Fixed wasm target builds by skipping shared-library install on `wasm32-freestanding`; wasm and binary-size benchmark steps now complete successfully.
 - Added wheel-build orchestration (`scripts/build-wheels.ts` + `scripts/repack-wheel.py`) to produce platform-tagged wheels with bundled target native libs in one command (`bun run build:wheels`).
@@ -257,7 +257,7 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 - Refactored encoder merge internals to share a reusable merged-node path and added `Encoder.countWithRanks` to avoid output token-slice allocation during scalar counting.
 - Updated C ABI rank-based encode/decode exports to call through the scalar backend wrapper instead of direct encoder/decoder calls.
 - Added Zig executable resolution in Bun scripts (`scripts/_lib.ts`) to prefer a real toolchain binary over broken shims in local environments.
-- Started Phase 2 Metal implementation: added Objective-C host bridge (`gpu/metal/metal_bridge.m`) with cached compute pipelines/reusable buffers, experimental Python GPU bridge APIs in `python/turbotoken/_gpu.py`, and real `bench-gpu` measurements (`bench/results/bench-gpu-20260225-160631.json`) showing large-batch count wins over pure Python while NEON remains faster for byte-path encode.
+- Started Phase 2 Metal implementation: added Objective-C host bridge (`gpu/metal/metal_bridge.m`) with cached compute pipelines/reusable buffers, experimental Python GPU bridge APIs in `wrappers/python/turbotoken/_gpu.py`, and real `bench-gpu` measurements (`bench/results/bench-gpu-20260225-160631.json`) showing large-batch count wins over pure Python while NEON remains faster for byte-path encode.
 - Landed Metal byte-path tuning pass `metal-byte-path-v3`: encode kernel now processes `256` bytes/thread with unrolled `uint4` stores, count kernel uses SIMD-group reduction + 4x unrolled strided accumulation, and host dispatch now applies adaptive count lanes plus dedicated encode threadgroup sizing.
 - Landed follow-up tuning pass `metal-byte-path-v4`: encode bytes/thread now `512` with unrolled `uchar4 -> uint4` widening loops, count kernel now runs 8x unrolled accumulation with a single-simdgroup fast path, and count lane heuristics favor lower-lane launches for mid-size segments; latest v4 `bench-gpu` run improved Metal means versus v3 by `~0.37%` (encode) and `~2.72%` (count).
 - Added GPU crossover matrix benchmark (latest standard artifact: `bench/results/bench-gpu-crossover-1772035615674.json`) and auto-route calibration cache (`~/.cache/turbotoken/metal/autoroute-v1.json`, schema `v4`) to choose backend thresholds from measured data.

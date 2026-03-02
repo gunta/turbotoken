@@ -238,7 +238,7 @@ const spaces = input == @as(@Vector(16, u8), @splat(' '));
 - [ ] Build Zig WASM, measure binary size with `ReleaseSmall`
 - [ ] Build Zig WASM, measure binary size with `ReleaseFast`
 - [ ] Test WASM SIMD via `@Vector(16, u8)` on wasm32 target
-- [ ] Write JS/TS wrapper (`js/wasm-loader.ts`) that loads Zig WASM
+- [ ] Write JS/TS wrapper (`wrappers/js/wasm-loader.ts`) that loads Zig WASM
 - [ ] Build browser benchmark page
 - [ ] Optionally: build MoonBit WASM for binary size comparison
 - [ ] Optionally: build Emscripten WASM for perf comparison

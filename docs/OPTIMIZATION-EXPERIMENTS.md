@@ -228,7 +228,7 @@ Fix Metal autoroute BPE calibration so long-piece BPE rows are actually measured
 
 ### Implementation
 
-- Updated `python/turbotoken/_gpu.py` calibration path:
+- Updated `wrappers/python/turbotoken/_gpu.py` calibration path:
   - after `enc.load_mergeable_ranks()`, call `enc._ensure_rank_payload()` when `_rank_payload_cache` is empty.
   - this addresses payload reset behavior that previously left `bpe_rows` empty with `bpe_reason` set.
 
@@ -259,7 +259,7 @@ Move hybrid NEON+Metal byte encode split orchestration from Python threadpool ov
 ### Implementation
 
 - Added `turbotoken_metal_encode_utf8_bytes_hybrid(...)` in `gpu/metal/metal_bridge.m`.
-- Added CFFI binding + wrapper in `python/turbotoken/_gpu.py`, and route `encode_utf8_bytes_hybrid(...)` to this symbol first.
+- Added CFFI binding + wrapper in `wrappers/python/turbotoken/_gpu.py`, and route `encode_utf8_bytes_hybrid(...)` to this symbol first.
 - Updated `scripts/bench-gpu.ts` hybrid row to call the native hybrid bridge symbol.
 
 ### Commands
@@ -287,7 +287,7 @@ Ship a first true on-GPU BPE merge route behind a strict parity guard, benchmark
 
 ### Implementation
 
-- Added direct-route attempt in `python/turbotoken/_gpu.py` (`_encode_bpe_direct_metal`) to call `encode_bpe_from_bytes(...)` before stitched fallback.
+- Added direct-route attempt in `wrappers/python/turbotoken/_gpu.py` (`_encode_bpe_direct_metal`) to call `encode_bpe_from_bytes(...)` before stitched fallback.
 - Added route controls:
   - `TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`
   - `TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`
@@ -348,7 +348,7 @@ Prototype NEON-like ASCII boundary classification for pretokenizer chunk plannin
   - `turbotoken_count_ascii_class_boundaries_utf8`
   - `turbotoken_count_ascii_class_boundaries_utf8_scalar`
   - `turbotoken_count_ascii_class_boundaries_utf8_neon`
-- Added Python bridge wrappers and tests (`python/turbotoken/_native.py`, `python/tests/test_native_bridge.py`).
+- Added Python bridge wrappers and tests (`wrappers/python/turbotoken/_native.py`, `wrappers/python/tests/test_native_bridge.py`).
 - Added benchmark runner: `scripts/bench-boundary-classifier.ts`.
 
 ### Commands
@@ -439,14 +439,14 @@ Add a real training path (not inference-only) and optimize first-pass training t
 
 ### Implementation
 
-- Added new training module: `python/turbotoken/training.py`
+- Added new training module: `wrappers/python/turbotoken/training.py`
   - `train_mergeable_ranks_from_iterator(...)`
   - `train_encoding_from_iterator(...)`
 - Algorithm:
   - regex chunk counting over input iterator
   - unique-chunk weighted corpus (`chunk -> count`)
   - incremental pair-count updates with lazy heap refresh in merge loop
-- Added Zig trainer prototype in `src/trainer.zig` and C ABI export `turbotoken_train_bpe_from_chunk_counts(...)`, wired via `python/turbotoken/_native.py`
+- Added Zig trainer prototype in `src/trainer.zig` and C ABI export `turbotoken_train_bpe_from_chunk_counts(...)`, wired via `wrappers/python/turbotoken/_native.py`
 - Added backend routing control: `TURBOTOKEN_TRAINING_BACKEND=auto|native|python`
 - Added allocator and heap-path tuning in Zig trainer:
   - arena-backed scratch allocation in `trainMergesFromChunkCounts`
@@ -462,10 +462,10 @@ Add a real training path (not inference-only) and optimize first-pass training t
 - Training module import/route cleanup:
   - removed eager registry pattern dependency from training path by inlining default O200K training pattern
   - lazy import of native bridge in training route
-  - lazy package exports in `python/turbotoken/__init__.py` to avoid eager `core` import on `turbotoken.training` import path
+  - lazy package exports in `wrappers/python/turbotoken/__init__.py` to avoid eager `core` import on `turbotoken.training` import path
   - added ASCII fast chunking path in `training.py` using stdlib `re` for default/GPT4-known patterns
   - delayed `regex` import to non-ASCII/custom-pattern fallback paths
-- Added tests: `python/tests/test_training.py`.
+- Added tests: `wrappers/python/tests/test_training.py`.
 - Added benchmark runner: `scripts/bench-training.ts` (+ `bench:training` script entry).
 
 ### Commands
@@ -544,20 +544,20 @@ Close remaining competitor gaps in short-lived Python process benchmarks (especi
 
 ### Implementation
 
-- Added persistent decoder cache in `python/turbotoken/_rank_files.py`:
+- Added persistent decoder cache in `wrappers/python/turbotoken/_rank_files.py`:
   - `load_decoder_only(...)`
   - metadata validation (`size`, `mtime_ns`, cache version) before reuse
-- Added persistent piece-token cache in `python/turbotoken/_rank_files.py`:
+- Added persistent piece-token cache in `wrappers/python/turbotoken/_rank_files.py`:
   - `load_piece_bpe_cache(...)`
   - `save_piece_bpe_cache(...)`
   - metadata validation and bounded cache growth guard
-- Wired core to use these caches in `python/turbotoken/core.py`:
+- Wired core to use these caches in `wrappers/python/turbotoken/core.py`:
   - `_ensure_decoder()` now loads decoder cache directly (when mergeable ranks are not already in-memory)
   - large ASCII encode/count paths seed from persisted piece cache and persist newly learned short ASCII piece entries
   - optimized decode hot loop in `decode_bytes(...)` to reduce Python overhead
   - optimized repeated-piece count branch with frequency aggregation
 - Added tests:
-  - `python/tests/test_rank_files.py` now covers decoder cache build/load and piece-cache roundtrip.
+  - `wrappers/python/tests/test_rank_files.py` now covers decoder cache build/load and piece-cache roundtrip.
 
 ### Commands
 
@@ -738,13 +738,13 @@ Reduce Python overhead in the Metal stitched BPE path by removing per-token Pyth
   - `turbotoken_filter_tokens_by_keep_flags(...)`
 - Wired symbol in `src/main.zig`.
 - Added Python native bridge wrapper:
-  - `NativeBridge.filter_tokens_by_keep_flags(...)` in `python/turbotoken/_native.py`
-- Updated Metal stitched route in `python/turbotoken/_gpu.py`:
+  - `NativeBridge.filter_tokens_by_keep_flags(...)` in `wrappers/python/turbotoken/_native.py`
+- Updated Metal stitched route in `wrappers/python/turbotoken/_gpu.py`:
   - after `chunk_owner_flags(...)`, use native filter helper first
   - keep existing Python loop fallback when symbol/path unavailable
 - Added tests:
   - `src/exports.zig` (`filter tokens export compacts by keep flags`)
-  - `python/tests/test_native_bridge.py` (`test_native_bridge_filter_tokens_wrapper_when_available`)
+  - `wrappers/python/tests/test_native_bridge.py` (`test_native_bridge_filter_tokens_wrapper_when_available`)
 
 ### Commands
 
@@ -836,7 +836,7 @@ Remove text/base64 rank parsing overhead from cold native BPE calls by feeding a
   - header with version/flags/source file metadata/counts
   - dense rank stream with missing-rank sentinel (`0xFFFFFFFF`)
   - `loadFromBytes(...)` now auto-detects binary payloads and loads via `loadFromBinaryPayload(...)`
-- Added Python native payload cache in `python/turbotoken/_rank_files.py`:
+- Added Python native payload cache in `wrappers/python/turbotoken/_rank_files.py`:
   - `read_rank_file_native_payload(...)`
   - emits `*.tiktoken.native.bin` alongside the text rank file
   - validates cache via header metadata (`size`, `mtime_ns`) and rebuilds when stale
@@ -844,7 +844,7 @@ Remove text/base64 rank parsing overhead from cold native BPE calls by feeding a
   - switched to `read_rank_file_native_payload('o200k_base')`
 - Added tests:
   - `src/rank_loader.zig`: binary payload format decode test
-  - `python/tests/test_rank_files.py`: native payload cache build/reuse test
+  - `wrappers/python/tests/test_rank_files.py`: native payload cache build/reuse test
 
 ### Commands
 
@@ -891,16 +891,16 @@ Speed up native batch/range BPE encode/count paths by parallelizing independent 
     - `TURBOTOKEN_NATIVE_BPE_PARALLEL_ENABLE=1` (force on)
     - `TURBOTOKEN_NATIVE_BPE_PARALLEL_DISABLE=1` (force off)
   - auto mode remains default with conservative thresholds.
-- Updated `python/turbotoken/_native.py`:
+- Updated `wrappers/python/turbotoken/_native.py`:
   - added `NativeBridge.count_bpe_ranges_from_ranks(...)` using `out_tokens=NULL` range export path.
-- Updated `python/turbotoken/core.py`:
+- Updated `wrappers/python/turbotoken/core.py`:
   - added optional native range-batch encode/count route (guarded):
     - `TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE=1` to enable
     - `TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE=1` to force disable
   - left default behavior unchanged after regression checks (route is opt-in only).
 - Added tests:
   - `src/exports.zig`: range count-only mode test
-  - `python/tests/test_native_bridge.py`: range count wrapper test
+  - `wrappers/python/tests/test_native_bridge.py`: range count wrapper test
 
 ### Commands
 
@@ -953,17 +953,17 @@ Reduce Python-side overhead in rank-BPE hot paths and improve developer ergonomi
 ### Implementation
 
 - Added rank-bound native session abstraction:
-  - `python/turbotoken/_native.py`
+  - `wrappers/python/turbotoken/_native.py`
   - `NativeBridge.rank_session(rank_payload)` with payload-identity caching
   - `NativeRankSession` helpers for encode/count/decode/ranges/chunked/ascii-o200k calls
 - Refactored `Encoding` native paths to use session objects instead of repeated bridge+payload plumbing:
-  - `python/turbotoken/core.py`
+  - `wrappers/python/turbotoken/core.py`
   - native range encode/count, large-piece encode/count, native o200k full encode/count, GPU strict-verify baseline path
 - Switched rank payload preference to compiled native blobs by default:
   - `_ensure_rank_payload()` now prefers `read_rank_file_native_payload(...)`
   - opt-out: `TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`
 - Extended rank payload parser compatibility:
-  - `python/turbotoken/_rank_files.py` now parses both text `.tiktoken` and native binary payloads (`TTKRBIN1`) via `parse_rank_file_bytes(...)`
+  - `wrappers/python/turbotoken/_rank_files.py` now parses both text `.tiktoken` and native binary payloads (`TTKRBIN1`) via `parse_rank_file_bytes(...)`
   - Added Python test coverage for binary parse path.
 - Decode experiment:
   - added native decode route in `Encoding.decode_bytes(...)`
@@ -1046,8 +1046,8 @@ Cut allocator overhead in native full-ASCII BPE routes (`o200k` and `cl100k` let
 
 ```bash
 zig build test
-.venv/bin/python -m pytest -q python/tests/test_encoding.py python/tests/test_native_bridge.py
-bun test js/tests/smoke.test.ts
+.venv/bin/python -m pytest -q wrappers/python/tests/test_encoding.py wrappers/python/tests/test_native_bridge.py
+bun test wrappers/js/tests/smoke.test.ts
 hyperfine --warmup 3 --min-runs 12 \
   --export-json bench/results/bench-cl100k-native-full-toggle-20260228-035411.json \
   "TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE=1 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('cl100k_base').count(text)\"" \
@@ -1089,7 +1089,7 @@ Reduce Python↔native overhead for inference hot paths by removing extra size-p
 
 ### Implementation
 
-- Updated `python/turbotoken/_native.py` one-shot encode wrappers:
+- Updated `wrappers/python/turbotoken/_native.py` one-shot encode wrappers:
   - `encode_bpe_from_ranks(...)`
   - `encode_bpe_ascii_o200k_from_ranks(...)`
   - `encode_bpe_ascii_letter_space_from_ranks(...)`
@@ -1103,8 +1103,8 @@ Reduce Python↔native overhead for inference hot paths by removing extra size-p
 
 ```bash
 zig build test
-.venv/bin/python -m pytest -q python/tests/test_native_bridge.py python/tests/test_training.py python/tests/test_encoding.py
-bun test js/tests/smoke.test.ts
+.venv/bin/python -m pytest -q wrappers/python/tests/test_native_bridge.py wrappers/python/tests/test_training.py wrappers/python/tests/test_encoding.py
+bun test wrappers/js/tests/smoke.test.ts
 bun run scripts/bench-scalar-fallback.ts
 hyperfine --warmup 3 --min-runs 12 \
   --export-json bench/results/bench-cl100k-native-full-toggle-20260228-050607.json \
@@ -1159,7 +1159,7 @@ Speed up native training by parallelizing initial pair-state construction in Zig
 
 ```bash
 zig build test
-.venv/bin/python -m pytest -q python/tests/test_training.py python/tests/test_native_bridge.py python/tests/test_encoding.py
+.venv/bin/python -m pytest -q wrappers/python/tests/test_training.py wrappers/python/tests/test_native_bridge.py wrappers/python/tests/test_encoding.py
 hyperfine --warmup 2 --min-runs 8 \
   --export-json bench/results/bench-training-direct-toggle-20260228-050720.json \
   "TURBOTOKEN_TRAINING_BACKEND=native TURBOTOKEN_NATIVE_TRAINING_FORCE=1 TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1 TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=0 .venv/bin/python -c \"import pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();_,r=train_mergeable_ranks_from_iterator([text],vocab_size=320,pattern=None,min_frequency=2);assert len(r)>=256\"" \

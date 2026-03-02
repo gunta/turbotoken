@@ -5,10 +5,12 @@ import { resolve } from "node:path";
 import { join } from "node:path";
 import { expect, test } from "bun:test";
 import {
+  clearNativeCache,
   clearWasmCache,
   encodingForModel,
   getEncoding,
   getEncodingAsync,
+  loadNative,
   loadWasm,
   trainBpeFromChunkCounts,
   trainBpeFromChunks,
@@ -103,6 +105,40 @@ test("wasm utf8 byte path works when wasm artifact exists", async () => {
   const tokens = bridge.encodeUtf8Bytes(text);
   const bytes = bridge.decodeUtf8Bytes(tokens);
   expect(new TextDecoder().decode(bytes)).toBe(text);
+});
+
+test("native utf8 byte path works when host shared library exists", async () => {
+  const ext = process.platform === "darwin" ? "dylib" : process.platform === "linux" ? "so" : process.platform === "win32" ? "dll" : null;
+  if (!ext) {
+    return;
+  }
+  const nativeName = ext === "dll" ? "turbotoken.dll" : `libturbotoken.${ext}`;
+  const nativePath = resolve(process.cwd(), `zig-out/lib/${nativeName}`);
+  if (!existsSync(nativePath)) {
+    return;
+  }
+
+  clearNativeCache();
+  const bridge = await loadNative({ nativeLibPath: nativePath, forceReload: true });
+  const text = "hello native";
+  const tokens = bridge.encodeUtf8Bytes(text);
+  const bytes = bridge.decodeUtf8Bytes(tokens);
+  expect(new TextDecoder().decode(bytes)).toBe(text);
+});
+
+test("encoding auto backend prefers native when available", async () => {
+  const ext = process.platform === "darwin" ? "dylib" : process.platform === "linux" ? "so" : process.platform === "win32" ? "dll" : null;
+  if (!ext) {
+    return;
+  }
+  const nativeName = ext === "dll" ? "turbotoken.dll" : `libturbotoken.${ext}`;
+  const nativePath = resolve(process.cwd(), `zig-out/lib/${nativeName}`);
+  if (!existsSync(nativePath)) {
+    return;
+  }
+
+  const enc = await getEncodingAsync("o200k_base");
+  expect(enc.backendKind()).toBe("native");
 });
 
 test("wasm bpe path works with explicit ranks when wasm artifact exists", async () => {

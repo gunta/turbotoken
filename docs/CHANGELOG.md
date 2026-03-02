@@ -9,12 +9,20 @@
 ## [Unreleased]
 
 ### Added
+- JS native backend loader (`wrappers/js/src/native-loader.ts`) using Bun FFI with `backend: "auto" | "native" | "wasm" | "js"` routing in `Encoding`; `auto` now prefers optional native packages when available and falls back to WASM.
+- Optional native npm package pipeline:
+  - `scripts/build-native-packages.ts`
+  - `scripts/pack-native-packages.ts`
+  - `scripts/publish-native-packages.ts`
+  for scoped platform packages (`@turbotoken/native-*`) and root `optionalDependencies`.
+- `scripts/smoke-npm-install-native-optional.ts` to verify auto-native backend resolution when host optional native package is installed.
+- `scripts/bench-js-backends.ts` (`bun run bench:js-backends`) to benchmark Bun native bridge vs WASM bridge on UTF-8 and BPE workloads.
 - WASM Phase 3 packaging/comparison tooling:
   - npm-minimal WASM entry (`src/main_wasm_npm.zig`) and dual WASM outputs from `zig build wasm` (`turbotoken.wasm` + `turbotoken-npm.wasm`).
   - `scripts/optimize-wasm.ts` for `wasm-opt -Oz` pipeline with `<150KB` npm-WASM size gate (default `TURBOTOKEN_NPM_WASM_MAX_BYTES=153600`).
   - `scripts/build-wasm-comparisons.ts` and comparison source trees under `bench/wasm/moonbit` and `bench/wasm/emscripten`.
   - browser competitor benchmark page (`bench/browser/wasm-competitors.html`) + headless runner (`scripts/bench-browser-competitors.ts`).
-  - npm auto-load verification hardening in `js/src/wasm-loader.ts`, `scripts/verify-npm-package.ts`, and `scripts/smoke-npm-install.ts`.
+  - npm auto-load verification hardening in `wrappers/js/src/wasm-loader.ts`, `scripts/verify-npm-package.ts`, and `scripts/smoke-npm-install.ts`.
 - x86_64 runtime dispatch backend in Zig (`src/arch/x86_64.zig`) for UTF-8 byte encode/decode/count paths with AVX-512 -> AVX2 -> SSE4.2 -> scalar selection.
 - wasm32 SIMD-capable backend in Zig (`src/arch/wasm.zig`) and dispatch wiring in pretokenizer/decoder/exports.
 - CI benchmark governance additions:
@@ -99,7 +107,7 @@
 - Script runtime now resolves a concrete Zig executable path via `scripts/_lib.ts` (`zigExecutable`) to avoid environment shim/plugin failures
 - Added `upstream/tiktoken` as a real git submodule (`.gitmodules`) for compatibility oracle tracking
 - Python CLI coverage for `turbotoken bench` and `turbotoken info`
-- Native bridge probe in `python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
+- Native bridge probe in `wrappers/python/turbotoken/_native.py` for loading Zig C ABI symbols when a shared library is present
 - Native bridge wrappers for rank-based BPE encode/decode C ABI exports (`turbotoken_encode_bpe_from_ranks`, `turbotoken_decode_bpe_from_ranks`) with graceful fallback when symbols are unavailable
 - Native token-limit + cache-control C ABI exports:
   - `turbotoken_is_within_token_limit_bpe_from_ranks(...)`
@@ -120,25 +128,25 @@
 - Training APIs in Python:
   - `train_mergeable_ranks_from_iterator(...)`
   - `train_encoding_from_iterator(...)`
-  implemented in `python/turbotoken/training.py` with incremental pair-count updates and lazy heap refresh
+  implemented in `wrappers/python/turbotoken/training.py` with incremental pair-count updates and lazy heap refresh
 - Native training bridge export `turbotoken_train_bpe_from_chunk_counts(...)` (Zig C ABI) plus Python bridge wrapper `NativeBridge.train_bpe_from_chunk_counts(...)`
 - Experimental native ASCII O200K training bridge exports:
   - `turbotoken_pretokenize_ascii_o200k_ranges(...)`
   - `turbotoken_train_bpe_ascii_o200k(...)`
   - `turbotoken_train_bpe_ascii_o200k_multi(...)`
   plus Python bridge wrappers (`NativeBridge.pretokenize_ascii_o200k_ranges`, `NativeBridge.train_bpe_ascii_o200k`)
-- Training unit tests in `python/tests/test_training.py`
+- Training unit tests in `wrappers/python/tests/test_training.py`
 - Native bridge wrappers for rank-based BPE batch/range/chunk-stitch C ABI exports (`turbotoken_encode_bpe_batch_from_ranks`, `turbotoken_encode_bpe_ranges_from_ranks`, `turbotoken_encode_bpe_chunked_stitched_from_ranks`)
 - Native bridge wrappers for Metal stitch owner-mask C ABI export (`turbotoken_metal_chunk_owner_flags`) plus stitch profiling counters
 - Native bridge wrappers for UTF-8 byte C ABI exports (`turbotoken_encode_utf8_bytes`, `turbotoken_decode_utf8_bytes`)
 - Native bridge wrappers for ARM64 feature/kernel introspection and non-ASCII count variants (`auto`/`scalar`/`neon`/`dotprod`)
 - Shared Zig library artifact installed by `zig build` (`libturbotoken`), with exported placeholder C ABI symbols for count/encode/decode byte paths
-- Rank-file cache/download support in `python/turbotoken/_rank_files.py` (`~/.cache/turbotoken/*.tiktoken`)
-- Optional tiktoken parity smoke tests in `python/tests/test_tiktoken_parity_smoke.py` (auto-skips when `tiktoken` is not installed)
-- Deterministic tiktoken parity fuzz tests in `python/tests/test_tiktoken_parity_fuzz.py`
-- Adapted upstream public test coverage in `python/tests/upstream/test_tiktoken_adapted_public.py`
-- Additional adapted upstream misc/compat coverage in `python/tests/upstream/test_tiktoken_adapted_misc.py`
-- Added selected `gpt-tokenizer` reference vectors to local encoding parity tests (`python/tests/test_encoding.py`)
+- Rank-file cache/download support in `wrappers/python/turbotoken/_rank_files.py` (`~/.cache/turbotoken/*.tiktoken`)
+- Optional tiktoken parity smoke tests in `wrappers/python/tests/test_tiktoken_parity_smoke.py` (auto-skips when `tiktoken` is not installed)
+- Deterministic tiktoken parity fuzz tests in `wrappers/python/tests/test_tiktoken_parity_fuzz.py`
+- Adapted upstream public test coverage in `wrappers/python/tests/upstream/test_tiktoken_adapted_public.py`
+- Additional adapted upstream misc/compat coverage in `wrappers/python/tests/upstream/test_tiktoken_adapted_misc.py`
+- Added selected `gpt-tokenizer` reference vectors to local encoding parity tests (`wrappers/python/tests/test_encoding.py`)
 - Multi-target build steps in `build.zig` for `aarch64-macos`, `aarch64-linux`, `x86_64-linux`, and `wasm32-freestanding`
 - 4MB flat pair-cache scaffold implementation in Zig (`src/pair_cache.zig`) with `put/get/clear` tests
 - Merge-table-derived pair-cache seeding (`populateFromRankTable`) with coverage for split-derived pair mappings
@@ -151,10 +159,10 @@
   - force-all non-strict mode now also falls back to CPU when pretokenized range count exceeds `TURBOTOKEN_METAL_FORCE_ALL_CPU_FALLBACK_MAX_RANGES` (default `128`) to avoid pathological many-piece Metal dispatch.
   - single-chunk exact pieces in Metal-many path now use native range batching instead of per-piece native encode calls.
 - Metal bridge Python wrappers now use one-shot output buffers for `encode_utf8_bytes(...)` and `encode_bpe_from_bytes(...)` (no separate probe call).
-- `python/turbotoken/core.py` GPU routing fallback behavior:
+- `wrappers/python/turbotoken/core.py` GPU routing fallback behavior:
   - `encode_gpu(device="auto", strict_verify=False)` now returns the regular CPU encode path immediately when whole-text autoroute resolves to native.
   - GPU range-batch overflow fallback now keeps native range batching in chunks instead of dropping to per-piece Python BPE.
-- `python/turbotoken/_gpu.py` route-threshold lookup now caches resolved thresholds by env/profile tuple, removing repeated per-piece route-cache file reads in hot loops.
+- `wrappers/python/turbotoken/_gpu.py` route-threshold lookup now caches resolved thresholds by env/profile tuple, removing repeated per-piece route-cache file reads in hot loops.
 - Metal direct-route default minimum bytes tuned to `262_144` (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) so medium normal-text lanes can use direct GPU by default while low-entropy guardrails remain active.
 - Profiled Metal gate floor raised to `40 MiB/s` for direct 1MB throughput (`macos-arm64-metal.minBpeDirectEncodeMiBPerSec`), with parity gate still mandatory.
 - Refreshed relative CI baselines from latest full-profile passing artifacts (`scripts/refresh-ci-gates-baselines.ts --speed=full ...`), including updated Metal direct throughput/memory baselines and CPU profile baselines.
@@ -203,7 +211,7 @@
   - MoonBit and Emscripten retained as comparison builds only
 - WASM-EXPLORATION.md updated: Zig primary, MoonBit/Emscripten comparison only
 - `package.json` scripts now run real test/bench/build helpers instead of TODO placeholders
-- `js/tests/smoke.test.ts` now uses Bun test assertions instead of side-effect checks
+- `wrappers/js/tests/smoke.test.ts` now uses Bun test assertions instead of side-effect checks
 - Python `Encoding` now runs real regex+BPE tokenization using downloaded `.tiktoken` mergeable ranks (including `allowed_special`/`disallowed_special`, batch helpers, decode APIs, numpy export, and token-byte lookup)
 - Python `Encoding` native range-batch route remains explicitly controlled:
   - `TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE=1` to force native route
@@ -221,7 +229,7 @@
   - `encode_bpe_from_ranks(...)`
   - `encode_bpe_ascii_o200k_from_ranks(...)`
   - `encode_bpe_ascii_letter_space_from_ranks(...)`
-  reducing Python/native round-trips in hot paths (`python/turbotoken/_native.py`).
+  reducing Python/native round-trips in hot paths (`wrappers/python/turbotoken/_native.py`).
 - Native CFFI training wrappers now use one-shot output buffers sized by `vocab_size - 256` (single FFI call) for:
   - `train_bpe_from_chunk_counts(...)`
   - `train_bpe_ascii_o200k(...)`
@@ -265,7 +273,7 @@
 - Python package now exposes first-pass BPE training APIs for custom tokenizer creation (training path is CPU-only at this stage)
 - Training route selection now supports `TURBOTOKEN_TRAINING_BACKEND=auto|native|python` (`auto` currently favors Python route based on measured throughput in this environment)
 - Training module now uses a local default O200K pattern constant (no eager registry lookup in `_compile_pattern`) and lazily imports native bridge symbols in native-only routes
-- `python/turbotoken/__init__.py` now uses lazy exports (`__getattr__`) so importing `turbotoken.training` no longer eagerly imports heavy `core` module paths
+- `wrappers/python/turbotoken/__init__.py` now uses lazy exports (`__getattr__`) so importing `turbotoken.training` no longer eagerly imports heavy `core` module paths
 - Training chunk counting now has an ASCII fast path for known default/GPT4 patterns and delays importing `regex` until non-ASCII/custom-pattern fallback is needed; latest training artifacts show Python-backend training ahead of `rustbpe` on tracked 100KB/1MB fixtures (`bench/results/bench-training-python-20260226-001016.json`, `bench/results/bench-training-python-20260226-000533.json`)
 - Training path now includes optional experimental native toggles (off by default):
   - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1`
@@ -313,7 +321,7 @@
 - Rank loader now precomputes single-byte token ranks (`single_byte_ranks`) and scalar rank-BPE merged-node initialization uses direct byte-rank lookup to avoid per-byte hash-map probes; `encodeWithRanks` now pre-sizes output capacity to reduce append-growth overhead (`bench/results/bench-scalar-fallback-20260227-142803.json`)
 - Scalar rank-BPE queue hot path now skips overflow-heap checks when overflow mode is disabled (`full-bucket`), keeping the optimization and dropping a regressing prefetch variant after A/B reruns (`bench/results/bench-scalar-fallback-20260227-145659.json`)
 - Metal autoroute calibration now ensures the O200K rank payload before BPE threshold probing, so crossover artifacts include populated BPE calibration rows (`bench/results/bench-gpu-crossover-1772204438191.json`, `bpe_use_metal_min_piece_bytes=1048576`)
-- Added native bridge hybrid export `turbotoken_metal_encode_utf8_bytes_hybrid(...)` and switched hybrid benchmark coverage from Python threadpool orchestration to native bridge orchestration (`gpu/metal/metal_bridge.m`, `python/turbotoken/_gpu.py`, `scripts/bench-gpu.ts`, `bench/results/bench-gpu-20260227-150010.json`)
+- Added native bridge hybrid export `turbotoken_metal_encode_utf8_bytes_hybrid(...)` and switched hybrid benchmark coverage from Python threadpool orchestration to native bridge orchestration (`gpu/metal/metal_bridge.m`, `wrappers/python/turbotoken/_gpu.py`, `scripts/bench-gpu.ts`, `bench/results/bench-gpu-20260227-150010.json`)
 - Added canonical benchmark scorecard generator (`scripts/bench-scorecard.ts`, `bun run bench:scorecard`) and wired it into full bench runs (`scripts/bench-all.ts`) to emit a single consolidated artifact (`bench/results/bench-scorecard-*.json`) plus Markdown summary (`bench/charts/scorecard.md`)
 - Added benchmark governance CI workflow + gate runner (`.github/workflows/benchmark.yml`, `scripts/ci-benchmark.ts`) with CUDA kept off by default and explicit on-demand execution
 - `scripts/ci-benchmark.ts` now supports relative regression gates (baseline + allowed drift) in addition to absolute thresholds, wired through `bench/ci-gates.json`
@@ -324,13 +332,13 @@
 - Wheels and WASM workflows now include artifact smoke-install checks (`bun run smoke:wheel-install`, `bun run smoke:npm-install`) and upload smoke JSON artifacts
 - Metal autoroute cache schema is now `v5` with large-crossover routing floors so small/medium BPE pieces remain on CPU/native by default unless explicitly forced (`TURBOTOKEN_METAL_FORCE_ALL_PIECES=1`)
 - `Encoding.encode_gpu(...)` now has a large-input CPU+GPU overlap pretokenize pipeline (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, `TURBOTOKEN_GPU_OVERLAP_MIN_TEXT_BYTES`, `TURBOTOKEN_GPU_OVERLAP_PREFETCH_PIECES`) while preserving baseline token output
-- Metal stitched owner-flag routing (`python/turbotoken/_gpu.py`) now uses deterministic one-batch lookahead overlap, so CPU batch prep/layout can run while GPU owner-flag filtering handles the previous batch (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, optional `TURBOTOKEN_GPU_OVERLAP_MIN_BATCHES`)
+- Metal stitched owner-flag routing (`wrappers/python/turbotoken/_gpu.py`) now uses deterministic one-batch lookahead overlap, so CPU batch prep/layout can run while GPU owner-flag filtering handles the previous batch (`TURBOTOKEN_GPU_OVERLAP_ENABLE`, optional `TURBOTOKEN_GPU_OVERLAP_MIN_BATCHES`)
 - `Encoding.encode_gpu(...)` now includes an optional range-batched GPU route for large texts with Metal-eligible pieces (`TURBOTOKEN_GPU_RANGE_BATCH_*`), plus multi-range chunk-stitch helper (`encode_bpe_chunked_stitched_many`) and parity tests
 - `scripts/bench-gpu-overlap.ts` now defaults to a stitched stress workload (`"a"`-repeated single-piece payload, `chunk_bytes=1024`) and records per-row max GPU memory telemetry fields from `_gpu.profile_last()`
 - `scripts/build-wheels.ts` now clears stale wheel outputs and verifies that each repacked wheel embeds the exact expected native library bytes (SHA-256 check)
-- Core native BPE calls now use a reusable native rank session abstraction (`NativeBridge.rank_session(...)` / `NativeRankSession`) to reduce repeated Python-side bridge plumbing and keep rank-payload-bound calls more direct (`python/turbotoken/_native.py`, `python/turbotoken/core.py`)
-- `_ensure_rank_payload()` now prefers compiled native rank payload blobs by default (`*.tiktoken.native.bin`) with opt-out (`TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`), and rank parsing now supports both text `.tiktoken` payloads and native binary payloads through a unified parser (`python/turbotoken/_rank_files.py`)
-- Added native decode session path in `Encoding.decode_bytes(...)` but kept it opt-in (`TURBOTOKEN_NATIVE_DECODE_ENABLE=1`) after benchmark checks showed default-on regressions on current decode workloads; fallback Python decode semantics (including `ValueError` on unknown token id) are preserved (`python/turbotoken/core.py`, `python/tests/test_encoding.py`)
+- Core native BPE calls now use a reusable native rank session abstraction (`NativeBridge.rank_session(...)` / `NativeRankSession`) to reduce repeated Python-side bridge plumbing and keep rank-payload-bound calls more direct (`wrappers/python/turbotoken/_native.py`, `wrappers/python/turbotoken/core.py`)
+- `_ensure_rank_payload()` now prefers compiled native rank payload blobs by default (`*.tiktoken.native.bin`) with opt-out (`TURBOTOKEN_NATIVE_RANK_PAYLOAD_DISABLE=1`), and rank parsing now supports both text `.tiktoken` payloads and native binary payloads through a unified parser (`wrappers/python/turbotoken/_rank_files.py`)
+- Added native decode session path in `Encoding.decode_bytes(...)` but kept it opt-in (`TURBOTOKEN_NATIVE_DECODE_ENABLE=1`) after benchmark checks showed default-on regressions on current decode workloads; fallback Python decode semantics (including `ValueError` on unknown token id) are preserved (`wrappers/python/turbotoken/core.py`, `wrappers/python/tests/test_encoding.py`)
 - Added native ASCII boundary-classification exports/wrappers (`turbotoken_count_ascii_class_boundaries_utf8` + scalar/neon variants) and benchmark coverage (`bench/results/bench-boundary-classifier-20260225-181856.json`)
 - Recorded and rolled back first-pass GPU optimization trials for wide-load encode variants and BPE loop dispatch/min-rank changes after crossover regressions (`bench/results/bench-gpu-20260225-182512.json`, `bench/results/bench-gpu-crossover-1772043937345.json`, `bench/results/bench-gpu-20260225-182816.json`, `bench/results/bench-gpu-crossover-1772044096004.json`)
 - Launch bundle milestone is now explicitly marked postponed in planning docs (`LAUNCH: PyPI + GitHub + HN + Twitter`)

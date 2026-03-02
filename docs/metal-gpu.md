@@ -11,7 +11,7 @@
   - `Encoding.encode_gpu()` / `Encoding.count_gpu()`
   - default `encode_gpu(device="auto")` keeps exact CPU/native rank-BPE path
   - experimental chunked stitch path is opt-in via `encode_gpu(device="metal", strict_verify=False)` and now uses a Metal owner-mask kernel plus boundary-repair/exactness guards before native/Python fallbacks
-  - byte-path auto-route helpers in `python/turbotoken/_gpu.py`
+  - byte-path auto-route helpers in `wrappers/python/turbotoken/_gpu.py`
 - Implemented (experimental, parity-gated):
   - on-device BPE merge loop with rank-table lookup kernels (`find -> mark -> apply`)
   - iterative active-index compaction on GPU (`tt_bpe_compact_active_indices`)
@@ -28,7 +28,7 @@ This backend should still be treated as experimental and fallback-first. It now 
 ## Runtime Design
 
 - Host runtime: `gpu/metal/metal_bridge.m` (Objective-C + C ABI).
-- Python bridge: `python/turbotoken/_gpu.py`.
+- Python bridge: `wrappers/python/turbotoken/_gpu.py`.
 - Build model: on-demand compile via `xcrun clang` into `~/.cache/turbotoken/metal/`.
 - Pipelines are compiled once and cached per process.
 - Shared `MTLBuffer` pools are reused and grown geometrically to avoid per-call allocations.

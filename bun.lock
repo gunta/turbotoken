@@ -9,6 +9,14 @@
         "playwright": "^1.58.2",
         "typescript": "^5.9.3",
       },
+      "optionalDependencies": {
+        "@turbotoken/native-darwin-arm64": "0.1.0-dev",
+        "@turbotoken/native-linux-arm64-gnu": "0.1.0-dev",
+        "@turbotoken/native-linux-arm64-musl": "0.1.0-dev",
+        "@turbotoken/native-linux-x64-gnu": "0.1.0-dev",
+        "@turbotoken/native-linux-x64-musl": "0.1.0-dev",
+        "@turbotoken/native-win32-x64-gnu": "0.1.0-dev",
+      },
     },
   },
   "packages": {

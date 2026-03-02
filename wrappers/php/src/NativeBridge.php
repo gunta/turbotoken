@@ -82,7 +82,7 @@ CDEF;
         }
 
         // 3. zig-out/lib/ relative to project root
-        $zigOut = __DIR__ . '/../../zig-out/lib';
+        $zigOut = __DIR__ . '/../../../zig-out/lib';
         foreach ($names as $name) {
             $path = $zigOut . '/' . $name;
             if (file_exists($path)) {

@@ -1,4 +1,5 @@
 import {
+  type BackendMode,
   Encoding,
   type ChatMessage,
   type ChatOptions,
@@ -8,14 +9,18 @@ import {
 } from "./encoding";
 import { listEncodingNames, modelToEncoding } from "./registry";
 import { clearWasmCache, loadWasm, type BpeMerge, type WasmLoadOptions, type WasmBridge } from "./wasm-loader";
+import { clearNativeCache, loadNative, type NativeBridge, type NativeLoadOptions } from "./native-loader";
 
-export { Encoding, listEncodingNames, loadWasm, clearWasmCache };
+export { Encoding, listEncodingNames, loadWasm, clearWasmCache, loadNative, clearNativeCache };
 export type {
+  BackendMode,
   ChatMessage,
   ChatOptions,
   ChatTemplate,
   ChatTemplateMode,
   EncodingOptions,
+  NativeLoadOptions,
+  NativeBridge,
   WasmLoadOptions,
   WasmBridge,
   BpeMerge,

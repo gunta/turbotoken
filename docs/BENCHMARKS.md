@@ -120,6 +120,39 @@ Local benchmark host details (from `sysctl` / `uname`):
 
 ---
 
+## Latest Update (2026-03-02, JS native backend in npm package)
+
+Recent artifacts:
+- `bench/results/bench-js-backends-1772458983416.json`
+- `dist/native-packages/build-native-packages-1772458839425.json`
+- `dist/native-packages/pack-native-packages-1772458867924.json`
+- `dist/native-packages/publish-native-packages-1772458880006.json`
+- `dist/npm/smoke-npm-install-native-optional-1772458812611.json`
+- `dist/npm/verify-npm-package-1772458424783.json`
+- `dist/npm/smoke-npm-install-1772458424862.json`
+
+What changed:
+- Added Bun native bridge backend (`wrappers/js/src/native-loader.ts`) and `Encoding` backend routing (`auto|native|wasm|js`).
+- Added optional multi-platform native package flow:
+  - `@turbotoken/native-darwin-arm64`
+  - `@turbotoken/native-linux-x64-gnu`
+  - `@turbotoken/native-linux-x64-musl`
+  - `@turbotoken/native-linux-arm64-gnu`
+  - `@turbotoken/native-linux-arm64-musl`
+  - `@turbotoken/native-win32-x64-gnu`
+- Root package now declares optional native dependencies and relies on native-loader package resolution (`native -> wasm -> js`).
+- Added staging/pack/publish scripts for native packages and a dedicated optional-native smoke install benchmark path.
+
+Measured outcomes (`bench-js-backends-1772458983416.json`, Bun runtime):
+- UTF-8 encode 1MB:
+  - native: `9.83 ms` (`101.75 MiB/s`)
+  - wasm: `9.84 ms` (`101.59 MiB/s`)
+- BPE encode 100KB:
+  - native: `12.02 ms` (`8.12 MiB/s`)
+  - wasm: `13.75 ms` (`7.10 MiB/s`)
+
+---
+
 ## Latest Update (2026-03-02, WASM Phase 3 completion pass)
 
 Recent artifacts:
@@ -166,12 +199,12 @@ Recent artifacts:
 - `bench/results/bench-gpu-overlap-1772453446855.json`
 
 What changed:
-- `python/turbotoken/_gpu.py`
+- `wrappers/python/turbotoken/_gpu.py`
   - lowered default direct-route minimum to `262_144` bytes (`TURBOTOKEN_METAL_BPE_DIRECT_MIN_BYTES`) to allow medium normal-text lanes to engage direct GPU when eligible.
   - extended low-entropy guard to the multi-range Metal-many direct branch, not only the single-piece direct branch.
   - overlap adaptive selector now cold-starts with serial sampling and alternates until both overlap/serial baselines exist.
   - overlap candidate gate now includes minimum average piece size (`TURBOTOKEN_GPU_OVERLAP_MIN_AVG_PIECE_BYTES`, default `2048`).
-- `python/turbotoken/core.py`
+- `wrappers/python/turbotoken/core.py`
   - force-all non-strict mode now has a piece-count CPU fallback guard (`TURBOTOKEN_METAL_FORCE_ALL_CPU_FALLBACK_MAX_RANGES`, default `128`) to avoid catastrophic many-piece dispatch paths.
 
 Measured outcomes:
@@ -247,11 +280,11 @@ Recent artifacts:
 
 What changed:
 - Short-lane Metal path tuning:
-  - `python/turbotoken/_gpu.py`
+  - `wrappers/python/turbotoken/_gpu.py`
     - cached direct/full route settings parsing (env -> parsed config) to reduce per-call overhead in hot loops.
     - `encode_bpe_chunked_stitched_metal_many` now hoists direct/full thresholds out of per-piece loops.
     - rank-table initialization for full-piece/direct checks is now lazy (only when a piece is eligible), avoiding unnecessary setup work for exact/native-only batches.
-  - `python/turbotoken/core.py`
+  - `wrappers/python/turbotoken/core.py`
     - added ASCII fast path for UTF-8 byte-length checks (`_utf8_len_fast`) in GPU route logic.
 - Direct A/B benchmark stability:
   - `scripts/bench-gpu-crossover.ts` quick profile now uses higher BPE loop counts (`min=8`, `max=32`, base `4 MiB`) to reduce short-lane timing noise.
@@ -359,8 +392,8 @@ Recent artifacts:
 What changed:
 - WASM path:
   - `src/arch/wasm.zig`: SIMD byte encode/decode loops now use vector widen/truncate + block copies (removes per-lane writes in hot loops).
-  - `js/src/wasm-loader.ts`: rank payload is now cached in WASM memory across BPE calls (no per-call rank re-copy), and UTF-8/BPE encode paths use one-shot output buffers.
-  - `js/src/encoding.ts`: when WASM bridge is loaded, non-BPE byte-path `encode/decode/count` now uses bridge APIs (thinner JS wrapper path, less JS-side processing).
+  - `wrappers/js/src/wasm-loader.ts`: rank payload is now cached in WASM memory across BPE calls (no per-call rank re-copy), and UTF-8/BPE encode paths use one-shot output buffers.
+  - `wrappers/js/src/encoding.ts`: when WASM bridge is loaded, non-BPE byte-path `encode/decode/count` now uses bridge APIs (thinner JS wrapper path, less JS-side processing).
 - Metal merge loop:
   - `gpu/metal/metal_bridge.m`: default large-input direct BPE batch size changed to `24` rounds/submit (from `16`) to reduce submit overhead while keeping convergence stable.
 - Overlap benchmark:
@@ -423,10 +456,10 @@ Recent artifacts:
 - `bench/results/bench-scorecard-1772428019154.json`
 
 What changed in code:
-- `python/turbotoken/core.py`
+- `wrappers/python/turbotoken/core.py`
   - `encode_gpu(device="auto", strict_verify=False)` now early-exits to the regular CPU encode path when whole-text autoroute is native.
   - GPU range-batch fallback now keeps native range batching (chunked by range-count limit) instead of dropping to per-piece Python BPE.
-- `python/turbotoken/_gpu.py`
+- `wrappers/python/turbotoken/_gpu.py`
   - route-threshold resolution is now in-memory cached by env/profile tuple to avoid repeated route-cache file reads in per-piece loops.
 
 Measured outcomes (quick profile, `normal-text`, 262,144 bytes):
@@ -458,11 +491,11 @@ Recent artifacts:
 - `bench/results/bench-scorecard-1772432887151.json`
 
 What changed in code:
-- `python/turbotoken/_gpu.py`
+- `wrappers/python/turbotoken/_gpu.py`
   - added full-piece GPU lower bound (`TURBOTOKEN_METAL_BPE_FULL_MIN_BYTES`, default `4096`) so tiny regex pieces avoid per-piece GPU dispatch overhead.
   - single-chunk exact pieces in Metal-many path are now batched through native range encode instead of per-piece native calls.
   - Metal bridge wrappers now use one-shot output buffers for `encode_utf8_bytes` and `encode_bpe_from_bytes` (no probe call).
-- `python/turbotoken/core.py`
+- `wrappers/python/turbotoken/core.py`
   - added force-all safety guard for sub-direct-size texts:
     - when `TURBOTOKEN_METAL_FORCE_ALL_PIECES=1` and text is below direct route minimum, route falls back to regular CPU encode unless `TURBOTOKEN_METAL_FORCE_ALL_PIECES_STRICT=1`.
 
@@ -892,7 +925,7 @@ Wheel build artifact:
 | TokenDagger (`tokendagger`) | 499.7 ms | 507.4 ms | 493.8 ms | 493.6 ms | 2.03 | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
 | gpt-tokenizer (Bun) | 164.8 ms | 169.1 ms | 170.4 ms | 185.7 ms | 5.38 | `bun add --dev gpt-tokenizer` |
 | HuggingFace tokenizers | PENDING | PENDING | PENDING | PENDING | PENDING | `tokenizers` package installed, but no stable built-in `o200k_base` entry-point |
-| turbotoken (default CPU path) | 68.0 ms | 44.1 ms | 45.9 ms | 76.5 ms | 13.08 | local editable package (`python/`) |
+| turbotoken (default CPU path) | 68.0 ms | 44.1 ms | 45.9 ms | 76.5 ms | 13.08 | local editable package (`wrappers/python/`) |
 | turbotoken (Metal GPU route) | 98.2 ms | 100.3 ms | 123.6 ms | 182.0 ms | 5.50 | `Encoding.encode_gpu(device="metal", strict_verify=False)` |
 
 ### Python Tokenizers (decode, o200k_base)
@@ -1001,7 +1034,7 @@ WASM artifact reference:
 |-----------|-----------|-----------|-------|
 | tiktoken (Python) | 208.6 ms | 211.8 ms | Rust extension load + merge table |
 | rs-bpe (Python) | 68.7 ms | 65.6 ms | `openai.o200k_base().encode("hello")` |
-| turbotoken (Python) | 69.7 ms | 66.4 ms | local editable package (`python/`) |
+| turbotoken (Python) | 69.7 ms | 66.4 ms | local editable package (`wrappers/python/`) |
 | TokenDagger (`tokendagger`) | 489.7 ms | 485.3 ms | rebuilt from cleaned sdist via `bun run deps:token-dagger` |
 | gpt-tokenizer (Bun) | 158.4 ms | 159.2 ms | `encode("hello")` via Bun ESM import |
 | tiktoken (npm) | PENDING | PENDING | WASM instantiation |

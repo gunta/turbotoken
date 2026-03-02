@@ -1,5 +1,6 @@
 import { getEncodingSpec, type EncodingSpec } from "./registry";
 import { loadWasm, type WasmBridge, type WasmLoadOptions } from "./wasm-loader";
+import { loadNative, type NativeBridge, type NativeLoadOptions } from "./native-loader";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -7,11 +8,17 @@ const rankPayloadCache = new Map<string, Promise<Uint8Array>>();
 
 export interface EncodingOptions {
   wasm?: WasmLoadOptions;
+  native?: NativeLoadOptions;
   rankPayload?: Uint8Array;
   rankUrlOverride?: string;
   enableWasmBpe?: boolean;
   eagerLoad?: boolean;
+  backend?: BackendMode;
 }
+
+export type BackendMode = "auto" | "native" | "wasm" | "js";
+type BackendKind = "native" | "wasm" | "js";
+type TokenBridge = WasmBridge | NativeBridge;
 
 export interface ChatMessage {
   role?: string;
@@ -97,6 +104,25 @@ function encodeByteFallback(text: string): number[] {
   return Array.from(encoder.encode(text));
 }
 
+function resolveBackendMode(explicit: BackendMode | undefined): BackendMode {
+  if (explicit) {
+    return explicit;
+  }
+  if (typeof process === "undefined") {
+    return "auto";
+  }
+  const raw = (process.env.TURBOTOKEN_BACKEND ?? "").trim().toLowerCase();
+  switch (raw) {
+    case "native":
+    case "wasm":
+    case "js":
+    case "auto":
+      return raw;
+    default:
+      return "auto";
+  }
+}
+
 async function readUtf8File(path: string): Promise<string> {
   if (typeof Bun !== "undefined") {
     return Bun.file(path).text();
@@ -108,10 +134,12 @@ async function readUtf8File(path: string): Promise<string> {
 export class Encoding {
   private readonly spec: EncodingSpec;
   private readonly wasmOptions: WasmLoadOptions;
+  private readonly nativeOptions: NativeLoadOptions;
   private readonly rankUrlOverride?: string;
   private readonly enableWasmBpe: boolean;
+  private readonly backendMode: BackendMode;
 
-  private bridge: WasmBridge | null = null;
+  private bridge: TokenBridge | null = null;
   private rankPayload: Uint8Array | null = null;
   private loadPromise: Promise<void> | null = null;
 
@@ -136,9 +164,14 @@ export class Encoding {
   constructor(public readonly name: string, options: EncodingOptions = {}) {
     this.spec = getEncodingSpec(name);
     this.wasmOptions = options.wasm ?? {};
+    this.nativeOptions = options.native ?? {};
     this.rankUrlOverride = options.rankUrlOverride;
     this.rankPayload = options.rankPayload ?? null;
     this.enableWasmBpe = options.enableWasmBpe ?? false;
+    this.backendMode = resolveBackendMode(options.backend);
+    if (this.backendMode === "js" && this.enableWasmBpe) {
+      throw new Error("backend='js' does not support BPE mode; use backend='wasm', 'native', or 'auto'");
+    }
 
     if (options.eagerLoad) {
       void this.ready();
@@ -152,10 +185,20 @@ export class Encoding {
   }
 
   isReady(): boolean {
+    if (this.backendMode === "js") {
+      return !this.enableWasmBpe;
+    }
     if (!this.enableWasmBpe) {
       return this.bridge !== null;
     }
     return this.bridge !== null && this.rankPayload !== null;
+  }
+
+  backendKind(): BackendKind {
+    if (this.bridge === null) {
+      return "js";
+    }
+    return this.bridge.kind;
   }
 
   async ready(): Promise<void> {
@@ -169,14 +212,33 @@ export class Encoding {
   }
 
   private async load(): Promise<void> {
-    const bridgePromise = loadWasm(this.wasmOptions);
+    if (this.backendMode === "js") {
+      this.bridge = null;
+      this.rankPayload = null;
+      return;
+    }
+
+    let bridge: TokenBridge | null = null;
+    if (this.backendMode === "native" || this.backendMode === "auto") {
+      try {
+        bridge = await loadNative(this.nativeOptions);
+      } catch (error) {
+        if (this.backendMode === "native") {
+          throw new Error(`native backend requested but unavailable: ${String(error)}`);
+        }
+      }
+    }
+    if (bridge === null) {
+      bridge = await loadWasm(this.wasmOptions);
+    }
+
     const rankPromise: Promise<Uint8Array | null> = this.enableWasmBpe
       ? this.rankPayload !== null
         ? Promise.resolve(this.rankPayload)
         : cachedRankPayload(this.rankUrlOverride ?? this.spec.rankFileUrl)
       : Promise.resolve(this.rankPayload);
 
-    const [bridge, rankPayload] = await Promise.all([bridgePromise, rankPromise]);
+    const rankPayload = await rankPromise;
     this.bridge = bridge;
     this.rankPayload = rankPayload;
   }

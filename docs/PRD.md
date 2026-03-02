@@ -138,7 +138,7 @@ turbotoken
 |   +-- [Phase 3] Zig -> WebAssembly (UNIFIED -- same codebase!)
 |   |   +-- build.zig target: wasm32-freestanding
 |   |   +-- src/arch/wasm.zig       -- WASM-specific optimizations
-|   |   +-- js/wasm-loader.ts       -- JS wrapper, ES module
+|   |   +-- wrappers/js/wasm-loader.ts       -- JS wrapper, ES module
 |   |   +-- (MoonBit & Emscripten as comparison builds only)
 |   |
 |   +-- [Phase 4] x86_64 AVX2/AVX-512
@@ -409,7 +409,7 @@ GPU:       Apple M4 Max (40-core, 128GB unified)
 This is the primary dev target: Apple M4 Max. We optimize for what we have in hand.
 
 **Week 1: Core Zig + ARM64 Assembly**
-- [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `python/`, `bench/`, `scripts/`, `build.zig`
+- [x] Scaffold project: `src/`, `src/arch/`, `asm/arm64/`, `wrappers/python/`, `bench/`, `scripts/`, `build.zig`
 - [x] Implement flat pair-cache array (4MB, cache-aligned, `comptime`-generated) from merge table files
 - [x] Implement O(n) backtracking BPE encoder in Zig (reference: GitHub `bpe` crate + rs-bpe)
 - [x] Write NEON pre-tokenizer via Zig `@Vector(16, u8)` + hand-written ARM64 `.S` for hottest paths
@@ -456,7 +456,7 @@ The browser/edge play. **Zig's killer advantage: same codebase compiles to nativ
 - [ ] WASM-specific optimizations in `src/arch/wasm.zig` (no SIMD, scalar BPE)
 - [ ] Explore WASM SIMD (128-bit) via Zig's `@Vector(16, u8)` on wasm32
 - [ ] Target: <150KB WASM binary (Zig's zero-runtime advantage)
-- [ ] JS/TS wrapper: `js/wasm-loader.ts` with ES module export
+- [ ] JS/TS wrapper: `wrappers/js/wasm-loader.ts` with ES module export
 - [ ] npm package: `turbotoken` with WASM auto-loaded
 - [ ] Browser benchmark page: turbotoken vs tiktoken.js vs gpt-tokenizer vs wasm-tokenizer
 
@@ -898,7 +898,7 @@ turbotoken/
 |       +-- batch_encode.cu
 |       +-- batch_count.cu
 |
-+-- python/                         # Python package
++-- wrappers/python/                         # Python package
 |   +-- turbotoken/
 |   |   +-- __init__.py
 |   |   +-- core.py                 # Encoding class (tiktoken-compatible)
@@ -913,7 +913,7 @@ turbotoken/
 |       +-- test_edge_cases.py      # Unicode, emoji, empty, huge
 |       +-- test_benchmark.py       # Performance regression
 |
-+-- js/                             # JavaScript/TypeScript package
++-- wrappers/js/                    # JavaScript/TypeScript package
 |   +-- src/
 |   |   +-- index.ts
 |   |   +-- encoding.ts

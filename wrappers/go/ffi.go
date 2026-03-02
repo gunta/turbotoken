@@ -2,7 +2,7 @@ package turbotoken
 
 /*
 #cgo LDFLAGS: -lturbotoken
-#cgo CFLAGS: -I../include
+#cgo CFLAGS: -I../../include
 #include "turbotoken.h"
 #include <stdlib.h>
 */

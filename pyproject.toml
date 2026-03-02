@@ -26,7 +26,7 @@ dev = [
 turbotoken = "turbotoken.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["python/turbotoken"]
+packages = ["wrappers/python/turbotoken"]
 
 [tool.pytest.ini_options]
-testpaths = ["python/tests"]
+testpaths = ["wrappers/python/tests"]

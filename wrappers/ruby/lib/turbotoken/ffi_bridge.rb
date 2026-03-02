@@ -13,7 +13,7 @@ module TurboToken
       ENV["TURBOTOKEN_NATIVE_LIB"],
       File.join(__dir__, "libturbotoken"),
       "turbotoken",
-      File.expand_path("../../../zig-out/lib/libturbotoken", __dir__),
+      File.expand_path("../../../../zig-out/lib/libturbotoken", __dir__),
     ].compact
 
     ffi_lib LIB_SEARCH_PATHS

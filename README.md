@@ -8,6 +8,8 @@ SIMD backends, and a compatibility-focused Python API.
 ## Status
 
 - Early implementation, actively under development.
+- Language bindings are organized under `wrappers/` (see `wrappers/README.md`).
+- Each wrapper package has its own `README.md` with language-specific setup/usage notes.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
 - Native Zig CPU acceleration is available for key byte-path primitives, with x86 runtime dispatch (AVX-512/AVX2/SSE4.2/scalar) now wired in `src/arch/x86_64.zig`.
 - Apple Metal backend now includes an experimental on-device BPE merge loop (`find -> mark -> apply` + active compaction + GPU emit), but remains parity-guarded/experimental and is not the default route.
@@ -46,7 +48,7 @@ Notes:
 ## JS + WASM (First Pass)
 
 ```ts
-import { getEncodingAsync, trainBpeFromChunks } from "./js/src/index";
+import { getEncodingAsync, trainBpeFromChunks } from "./wrappers/js/src/index";
 
 const enc = await getEncodingAsync("o200k_base", {
   wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
@@ -73,9 +75,31 @@ bun run build:wasm
 ```
 
 Notes:
+- JS backend routing now supports `backend: "auto" | "native" | "wasm" | "js"` (default `auto`).
+- In Bun runtime, `auto` now prefers optional native packages (`@turbotoken/native-*`) and falls back to WASM when native is unavailable.
+- You can force backend globally with `TURBOTOKEN_BACKEND=native|wasm|js|auto`.
 - `enableWasmBpe` is currently experimental and off by default.
 - Without it, JS methods fall back to UTF-8 byte behavior while still using the real WASM loader for byte-path primitives.
 - WASM training helpers are available via `trainBpeFromChunkCounts` and `trainBpeFromChunks`.
+
+Build host native package artifact (Bun native backend):
+
+```bash
+bun run build:native:host
+```
+
+Build/pack optional multi-platform native packages:
+
+```bash
+bun run build:native:packages
+bun run pack:native:packages
+# dry-run publish
+TURBOTOKEN_NATIVE_PUBLISH_DRY_RUN=1 bun run publish:native:packages
+```
+
+Publish order recommendation:
+1. publish `@turbotoken/native-*` packages
+2. publish root `turbotoken` package
 
 ## Quick Start
 
@@ -99,6 +123,7 @@ Benchmark entrypoints:
 
 ```bash
 bun run bench       # default local suite (CUDA excluded)
+bun run bench:js-backends  # Bun native vs WASM backend comparison
 bun run bench:cuda  # include local CUDA rows explicitly
 bun run bench:scorecard  # consolidate latest artifacts into a canonical scorecard
 bun run bench:modal:cuda  # paid remote Modal CUDA run (explicitly confirmed)

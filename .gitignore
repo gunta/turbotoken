@@ -46,95 +46,96 @@ zig-pkg/
 compile_commands.json
 
 # C / C++
-c/build/
-cpp/build/
-c/CMakeFiles/
-cpp/CMakeFiles/
-c/CMakeCache.txt
-cpp/CMakeCache.txt
-c/cmake_install.cmake
-cpp/cmake_install.cmake
-c/CTestTestfile.cmake
-cpp/CTestTestfile.cmake
+wrappers/c/build/
+wrappers/cpp/build/
+wrappers/c/CMakeFiles/
+wrappers/cpp/CMakeFiles/
+wrappers/c/CMakeCache.txt
+wrappers/cpp/CMakeCache.txt
+wrappers/c/cmake_install.cmake
+wrappers/cpp/cmake_install.cmake
+wrappers/c/CTestTestfile.cmake
+wrappers/cpp/CTestTestfile.cmake
 
 # C#
-csharp/**/bin/
-csharp/**/obj/
-csharp/**/TestResults/
-csharp/*.user
-csharp/*.suo
-csharp/*.userprefs
-csharp/*.csproj.user
+wrappers/csharp/**/bin/
+wrappers/csharp/**/obj/
+wrappers/csharp/**/TestResults/
+wrappers/csharp/*.user
+wrappers/csharp/*.suo
+wrappers/csharp/*.userprefs
+wrappers/csharp/*.csproj.user
 
 # Elixir / Erlang / Gleam
-elixir/_build/
-elixir/deps/
-elixir/.elixir_ls/
-elixir/erl_crash.dump
-gleam/build/
-gleam/.gleam/
+wrappers/elixir/_build/
+wrappers/elixir/deps/
+wrappers/elixir/.elixir_ls/
+wrappers/elixir/erl_crash.dump
+wrappers/gleam/build/
+wrappers/gleam/.gleam/
 *.beam
 
 # Go
-go/bin/
-go/pkg/
-go/coverage.out
-go/*.test
+wrappers/go/bin/
+wrappers/go/pkg/
+wrappers/go/coverage.out
+wrappers/go/*.test
 
 # Java / Kotlin / Gradle
-kotlin/**/.gradle/
-kotlin/**/build/
-java/**/target/
-react-native/android/.gradle/
-react-native/android/**/build/
-react-native/android/.cxx/
+wrappers/kotlin/**/.gradle/
+wrappers/kotlin/**/build/
+wrappers/java/**/target/
+wrappers/react-native/android/.gradle/
+wrappers/react-native/android/**/build/
+wrappers/react-native/android/.cxx/
 
 # Flutter / Dart
-flutter/**/.dart_tool/
-flutter/**/build/
-flutter/**/.packages
-flutter/**/.flutter-plugins
-flutter/**/.flutter-plugins-dependencies
-flutter/**/.pub/
+wrappers/flutter/**/.dart_tool/
+wrappers/flutter/**/build/
+wrappers/flutter/**/.packages
+wrappers/flutter/**/.flutter-plugins
+wrappers/flutter/**/.flutter-plugins-dependencies
+wrappers/flutter/**/.pub/
 
 # React Native / iOS
-react-native/lib/
-react-native/ios/build/
-react-native/ios/Pods/
-react-native/ios/*.xcworkspace/
-react-native/ios/DerivedData/
-react-native/android/local.properties
+wrappers/react-native/lib/
+wrappers/react-native/ios/build/
+wrappers/react-native/ios/Pods/
+wrappers/react-native/ios/*.xcworkspace/
+wrappers/react-native/ios/DerivedData/
+wrappers/react-native/android/local.properties
 *.xcuserstate
 **/*.xcuserdata/
 
 # Lua / Luarocks
-lua/.luarocks/
-lua/lua_modules/
-lua/*.rock
+wrappers/lua/.luarocks/
+wrappers/lua/lua_modules/
+wrappers/lua/*.rock
 
 # PHP / Composer
-php/vendor/
-php/.phpunit.result.cache
+wrappers/php/vendor/
+wrappers/php/.phpunit.result.cache
 
 # Ruby
-ruby/.bundle/
-ruby/vendor/bundle/
-ruby/pkg/
-ruby/coverage/
-ruby/.yardoc/
-ruby/.rspec_status
+wrappers/ruby/.bundle/
+wrappers/ruby/vendor/bundle/
+wrappers/ruby/pkg/
+wrappers/ruby/coverage/
+wrappers/ruby/.yardoc/
+wrappers/ruby/.rspec_status
 
 # Rust
-rust/target/
+wrappers/rust/target/
 
 # Swift
-swift/.build/
-swift/.swiftpm/
+wrappers/swift/.build/
+wrappers/swift/.swiftpm/
 
 # Shared caches / generated outputs
 dist/
 .cache/
 .dmux/
+wrappers/js/native/host/
 
 # Bench outputs
 bench/results/*.json
