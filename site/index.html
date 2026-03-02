@@ -1140,8 +1140,8 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         ARM64, Metal GPU, WASM, AVX, CUDA, RISC-V. One library, every platform.
       </span>
       <span data-lang="ja">
-        tiktokenの完全互換ドロップインリプレイスメント。Zig + 手書きアセンブリ。
-        ARM64、Metal GPU、WASM、AVX、CUDA、RISC-V。1つのライブラリで全プラットフォーム対応。
+        tiktokenをそのまま置き換えるだけ。中身はZigと手書きアセンブリ。
+        ARM64、Metal GPU、WASM、AVX、CUDA、RISC-V。たった1つのライブラリで全プラットフォームに対応。
       </span>
     </p>
 
@@ -1170,11 +1170,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
     <div class="narrative-header fade-up">
       <h2>
         <span data-lang="en">Why Tokenization Matters</span>
-        <span data-lang="ja">なぜトークナイゼーションが重要なのか</span>
+        <span data-lang="ja">トークナイゼーションが世界を変える理由</span>
       </h2>
       <p>
         <span data-lang="en">Every message you send to ChatGPT, Claude, or Gemini must be converted into numbers before the AI can read it. That conversion is called <strong style="color:var(--text)">tokenization</strong>. It happens on every single API call, billions of times a day, across the entire industry.</span>
-        <span data-lang="ja">ChatGPT、Claude、Geminiに送るすべてのメッセージは、AIが読める数値に変換する必要があります。その変換が<strong style="color:var(--text)">トークナイゼーション</strong>です。すべてのAPIコールで実行され、業界全体で1日に数十億回行われています。</span>
+        <span data-lang="ja">ChatGPTやClaude、Geminiにメッセージを送るたび、文章はまずAIが理解できる「数値」に変換されます。これが<strong style="color:var(--text)">トークナイゼーション</strong>。すべてのAIリクエストの入口であり、1日に数百億回、世界中で実行されている処理です。</span>
       </p>
     </div>
 
@@ -1185,13 +1185,16 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">The Scale</span>
-          <span data-lang="ja">その規模</span>
+          <span data-lang="ja">圧倒的な処理量</span>
         </h3>
         <p>
           <span data-lang="en">The world processes over 50 trillion tokens per day. OpenAI alone handles 6 billion tokens per minute. Google processes 1.3 quadrillion tokens per month. Every single one goes through a tokenizer.</span>
-          <span data-lang="ja">世界では1日に50兆トークン以上が処理されています。OpenAIだけで毎分60億トークン。Googleは毎月1.3京トークンを処理。そのすべてがトークナイザーを通過します。</span>
+          <span data-lang="ja">世界全体で1日あたり50兆トークン以上が処理されています。OpenAIだけで毎分60億トークン、Googleに至っては月間1.3京トークン。この膨大な処理のすべてが、トークナイザーを通っています。</span>
         </p>
-        <span class="nc-stat">50T+ tokens/day globally</span>
+        <span class="nc-stat">
+          <span data-lang="en">50T+ tokens/day globally</span>
+          <span data-lang="ja">全世界で1日50兆トークン以上</span>
+        </span>
       </div>
 
       <div class="narrative-card fade-up">
@@ -1200,13 +1203,16 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">The Cost</span>
-          <span data-lang="ja">そのコスト</span>
+          <span data-lang="ja">削減できるコスト</span>
         </h3>
         <p>
           <span data-lang="en">AI inference is a $106B market. 6.75x faster tokenization means ~62 million CPU-hours freed per year globally. On GPU instances where tokenization blocks the pipeline, that translates to $50-200M in recoverable infrastructure cost.</span>
-          <span data-lang="ja">AI推論市場は1,060億ドル規模。6.75倍高速なトークナイゼーションは、年間約6,200万CPU時間の解放を意味します。GPU上でトークナイゼーションがボトルネックとなる場合、5,000万〜2億ドルのインフラコスト削減に相当します。</span>
+          <span data-lang="ja">AI推論は約16兆円規模の市場です。トークナイゼーションが6.75倍速くなるだけで、年間約6,200万CPU時間が不要に。GPUパイプラインのボトルネック解消分を含めると、年間75億〜300億円規模のインフラコスト削減につながります。</span>
         </p>
-        <span class="nc-stat green">~62M CPU-hours saved/year</span>
+        <span class="nc-stat green">
+          <span data-lang="en">~62M CPU-hours saved/year</span>
+          <span data-lang="ja">年間約6,200万CPU時間を削減</span>
+        </span>
       </div>
 
       <div class="narrative-card fade-up">
@@ -1215,20 +1221,23 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">The Energy</span>
-          <span data-lang="ja">そのエネルギー</span>
+          <span data-lang="ja">環境へのインパクト</span>
         </h3>
         <p>
           <span data-lang="en">AI data centers consume 415 TWh per year globally, and 80-90% of that is inference. Faster tokenization at full adoption could save millions of tonnes of CO2 per year. Performance is sustainability.</span>
-          <span data-lang="ja">AIデータセンターは年間415TWhを消費し、その80〜90%が推論です。高速トークナイゼーションの全面採用で、年間数百万トンのCO2削減が可能に。パフォーマンスはサステナビリティです。</span>
+          <span data-lang="ja">世界のAIデータセンターは年間415TWhの電力を消費し、その8〜9割が推論処理です。トークナイゼーションの高速化を全面的に導入すれば、年間数百万トン規模のCO2削減が見込めます。速さは、そのまま環境への貢献です。</span>
         </p>
-        <span class="nc-stat blue">415 TWh/year in AI inference</span>
+        <span class="nc-stat blue">
+          <span data-lang="en">415 TWh/year in AI inference</span>
+          <span data-lang="ja">AI推論だけで年間415TWh消費</span>
+        </span>
       </div>
     </div>
 
     <div class="narrative-explainer fade-up">
       <p>
         <span data-lang="en"><strong>Think of it this way:</strong> tokenization is the toll booth on the highway to AI. Every request stops there. Making the toll booth 6.75x faster means the entire highway moves faster. For every person using AI, for every API call, for every company building on top of LLMs.</span>
-        <span data-lang="ja"><strong>わかりやすく言えば：</strong>トークナイゼーションはAIへの高速道路の料金所です。すべてのリクエストがそこで止まります。料金所を6.75倍速くすれば、高速道路全体が速くなります。AIを使うすべての人、すべてのAPIコール、LLMの上に構築するすべての企業のために。</span>
+        <span data-lang="ja"><strong>たとえるなら。</strong>トークナイゼーションは、AIにつながる高速道路の料金所です。どんなリクエストも、必ずここを通る。この料金所を6.75倍速くすれば、道路全体の流れが変わります。AIを使うすべての人、すべての企業、すべてのサービスの体験が変わるのです。</span>
       </p>
     </div>
   </section>
@@ -1247,15 +1256,15 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
           When the feedback loop is airtight, AI writes code that beats the best hand-tuned implementations in the world. <span class="story-highlight">Everything has changed.</span>
         </span>
         <span data-lang="ja">
-          手書きのZig、ARM64 NEONアセンブリ、Metal GPUシェーダー、AVX-512、CUDA、RISC-Vベクター。このようなプロジェクトは通常、<span class="story-highlight">専門チームが何年もかけて構築するもの</span>です。
-          秘訣は、<span class="story-highlight">厳密なテスト、執念のベンチマーキング、そしてAIコードエージェント</span>。
-          何千回ものhyperfine実行。tiktokenとのバイト単位の完全互換テスト。エージェントに反復させ、すべてを計測し、あらゆるマイクロ秒を追い詰める。
-          フィードバックループが完璧なら、AIは世界最高の手書き実装すら超えるコードを書く。<span class="story-highlight">すべてが変わった。</span>
+          Zigの最適化、ARM64 NEONアセンブリ、Metal GPUシェーダー、AVX-512、CUDA、RISC-Vベクター演算。これだけの規模のプロジェクトは普通、<span class="story-highlight">専門チームが何年もかけてようやく完成させるもの</span>です。
+          鍵を握ったのは、<span class="story-highlight">徹底したテスト、際限のないベンチマーク、そしてAIコードエージェント</span>。
+          hyperfineを何千回も回し、tiktokenとのバイト単位の完全一致を検証し続ける。エージェントにひたすら反復させ、すべてを計測し、1マイクロ秒の無駄も許さない。
+          このフィードバックループが完璧に回ったとき、AIは世界最高峰の手書き実装すら超えるコードを生み出した。<span class="story-highlight">時代が変わった。</span>
         </span>
       </div>
       <div class="story-attribution">
         <span data-lang="en">Tests + Benchmarks + AI Agents = the fastest code on Earth</span>
-        <span data-lang="ja">テスト + ベンチマーク + AIエージェント = 地球上最速のコード</span>
+        <span data-lang="ja">テスト + ベンチマーク + AIエージェント = 世界最速のコード</span>
       </div>
     </div>
   </section>
@@ -1369,7 +1378,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </h3>
         <p>
           <span data-lang="en">Linear-time backtracking BPE, not tiktoken's O(n&sup2;) greedy approach.</span>
-          <span data-lang="ja">線形時間バックトラッキングBPE。tiktokenのO(n&sup2;)貪欲法とは異なります。</span>
+          <span data-lang="ja">線形時間のバックトラッキングBPE。tiktokenのO(n&sup2;)貪欲法とは根本的に違います。</span>
         </p>
         <div class="algo-compare">
           <div class="algo-box good">
@@ -1402,7 +1411,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </h3>
         <p>
           <span data-lang="en">One codebase, native acceleration everywhere.</span>
-          <span data-lang="ja">1つのコードベースで、あらゆる場所でネイティブアクセラレーション。</span>
+          <span data-lang="ja">ひとつのコードベースから、すべてのプラットフォームでネイティブ高速化。</span>
         </p>
         <div class="platforms-grid">
           <div class="platform-chip active"><span class="chip-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><path d="M6 1v3M10 1v3M14 1v3"/></svg></span> ARM64 NEON</div>
@@ -1421,11 +1430,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">Drop-in Replacement</span>
-          <span data-lang="ja">ドロップインリプレイスメント</span>
+          <span data-lang="ja">そのまま差し替え可能</span>
         </h3>
         <p>
           <span data-lang="en">Same API as tiktoken. Change one import line and get instant speedup. Byte-perfect output guaranteed.</span>
-          <span data-lang="ja">tiktokenと同じAPI。インポートを1行変更するだけで即座に高速化。バイト完全互換を保証。</span>
+          <span data-lang="ja">tiktokenとまったく同じAPI。import文を1行書き換えるだけで、即座に高速化。出力はバイト単位で完全一致を保証します。</span>
         </p>
         <div class="code-block">
           <span class="cmt"># Before</span><br>
@@ -1447,7 +1456,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">Parity Verified</span>
-          <span data-lang="ja">パリティ検証済み</span>
+          <span data-lang="ja">互換性を完全検証済み</span>
         </h3>
         <ul class="compat-list">
           <li><span class="check">&#10003;</span> o200k_base <span style="color:var(--text-dim);font-size:12px">(GPT-4o)</span></li>
@@ -1468,7 +1477,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </h3>
         <p>
           <span data-lang="en">Same Zig core compiles to wasm32. Runs in any browser, edge function, or serverless worker.</span>
-          <span data-lang="ja">同じZigコアがwasm32にコンパイル。ブラウザ、エッジ関数、サーバーレスワーカーで動作。</span>
+          <span data-lang="ja">同じZigコアがそのままwasm32にコンパイル。ブラウザでもエッジでもサーバーレスでも動きます。</span>
         </p>
         <div class="wasm-stat">
           <span class="big">&lt;150</span>
@@ -1491,7 +1500,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         <h3>Zig + Assembly</h3>
         <p>
           <span data-lang="en">Zero-overhead core. comptime-generated merge tables. Hand-written NEON/AVX hot loops for the last 5% of perf.</span>
-          <span data-lang="ja">ゼロオーバーヘッドコア。コンパイル時生成マージテーブル。性能の最後の5%のためのNEON/AVXホットループ手書き。</span>
+          <span data-lang="ja">オーバーヘッドゼロの設計。マージテーブルはコンパイル時に生成。残り5%の性能を絞り出すためにNEON/AVXのホットループは手書き。</span>
         </p>
         <div style="margin-top:16px;padding:12px 16px;background:rgba(255,255,255,0.03);border-radius:var(--radius-sm);border:1px solid var(--border);">
           <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim)">
@@ -1510,11 +1519,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">27 Language Wrappers</span>
-          <span data-lang="ja">27の言語ラッパー</span>
+          <span data-lang="ja">27言語に対応</span>
         </h3>
         <p>
           <span data-lang="en">Native bindings for every major language and runtime.</span>
-          <span data-lang="ja">全主要言語とランタイムのネイティブバインディング。</span>
+          <span data-lang="ja">主要な言語とランタイムすべてにネイティブバインディングを提供。</span>
         </p>
         <div class="lang-grid">
           <span class="lang-chip">Python</span>
@@ -1554,11 +1563,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">Custom BPE Training</span>
-          <span data-lang="ja">カスタムBPEトレーニング</span>
+          <span data-lang="ja">独自語彙のBPEトレーニング</span>
         </h3>
         <p>
           <span data-lang="en">Train your own tokenizer vocabularies. Beats rustbpe and minbpe on benchmarked workloads.</span>
-          <span data-lang="ja">独自のトークナイザー語彙をトレーニング。ベンチマークでrustbpeとminbpeを上回ります。</span>
+          <span data-lang="ja">自前のトークナイザー語彙をトレーニング可能。ベンチマークではrustbpeもminbpeも上回ります。</span>
         </p>
         <div class="code-block">
           <span class="kw">from</span> <span class="fn">turbotoken</span> <span class="kw">import</span> train_encoding_from_iterator<br>
@@ -1578,11 +1587,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         </div>
         <h3>
           <span data-lang="en">Metal GPU Acceleration</span>
-          <span data-lang="ja">Metal GPUアクセラレーション</span>
+          <span data-lang="ja">Metal GPU高速化</span>
         </h3>
         <p>
           <span data-lang="en">Production-grade compute shaders for Apple Silicon. On-device BPE merge loop with active compaction.</span>
-          <span data-lang="ja">Apple Silicon向けプロダクショングレードのコンピュートシェーダー。アクティブコンパクション付きオンデバイスBPEマージループ。</span>
+          <span data-lang="ja">Apple Silicon向けの本番品質コンピュートシェーダー。アクティブコンパクション付きのオンデバイスBPEマージを実現。</span>
         </p>
         <div style="display:flex;gap:16px;margin-top:18px;flex-wrap:wrap;">
           <div style="padding:14px 18px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.15);border-radius:var(--radius-sm);flex:1;min-width:140px;">
@@ -1614,7 +1623,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
       </h2>
       <p>
         <span data-lang="en">Every number measured with Hyperfine. No hand-waving. No "approximately".</span>
-        <span data-lang="ja">すべての数値はHyperfineで計測。推測なし。「おおよそ」なし。</span>
+        <span data-lang="ja">すべての数値はHyperfineで実測。推測なし。曖昧な表現なし。</span>
       </p>
     </div>
 
@@ -1715,7 +1724,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
 
     <p style="text-align:center;margin-top:20px;font-size:13px;color:var(--text-dim);">
       <span data-lang="en">All benchmarks: Apple M4 Max (16-core, 40 GPU), macOS Sequoia, Hyperfine v1.19+</span>
-      <span data-lang="ja">全ベンチマーク: Apple M4 Max (16コア, 40 GPU), macOS Sequoia, Hyperfine v1.19+</span>
+      <span data-lang="ja">全ベンチマーク: Apple M4 Max（16コア、GPU 40基）、macOS Sequoia、Hyperfine v1.19+</span>
     </p>
   </section>
 
@@ -1726,7 +1735,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
         <h3 style="margin-bottom:4px;">Python</h3>
         <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px;">
           <span data-lang="en">Identical to tiktoken API</span>
-          <span data-lang="ja">tiktoken APIと同一</span>
+          <span data-lang="ja">tiktoken APIとまったく同じ</span>
         </p>
         <div class="code-block">
           <span class="kw">import</span> <span class="fn">turbotoken</span> <span class="kw">as</span> tiktoken<br>
@@ -1759,11 +1768,11 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
     <div class="fade-up" style="background:linear-gradient(135deg, rgba(255,92,26,0.07) 0%, rgba(0,212,228,0.05) 50%, rgba(183,148,255,0.04) 100%);border:1px solid rgba(255,92,26,0.15);border-radius:28px;padding:68px 48px;max-width:720px;margin:0 auto;position:relative;overflow:hidden;box-shadow:0 0 100px rgba(255,92,26,0.08);">
       <h2 style="font-family:var(--display);font-size:2.4rem;font-weight:800;letter-spacing:-0.03em;margin-bottom:16px;">
         <span data-lang="en">Ready to go <span style="color:var(--accent)">turbo</span>?</span>
-        <span data-lang="ja"><span style="color:var(--accent)">ターボ</span>の準備はできましたか？</span>
+        <span data-lang="ja"><span style="color:var(--accent)">ターボ</span>、始めませんか？</span>
       </h2>
       <p style="color:var(--text-muted);margin-bottom:32px;font-size:16px;">
         <span data-lang="en">One line change. Instant speedup. Byte-perfect compatibility.</span>
-        <span data-lang="ja">1行の変更。即座の高速化。バイト完全互換。</span>
+        <span data-lang="ja">変更はたった1行。即座に高速化。出力は完全互換。</span>
       </p>
       <div class="install-bar" style="margin:0 auto;">
         <code>pip install turbotoken</code>
@@ -1778,7 +1787,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
   <div class="wip-banner fade-up">
     <p>
       <span data-lang="en"><strong>Work in Progress.</strong> turbotoken is under active development. APIs may change. ARM64 NEON and Metal GPU backends are production-grade. WASM is functional. AVX, CUDA, and RISC-V are in progress. Follow the <a href="https://github.com/gunta/turbotoken" style="color:#fbbf24;text-decoration:underline;">GitHub repo</a> for updates.</span>
-      <span data-lang="ja"><strong>開発中。</strong> turbotokenは活発に開発中です。APIは変更される可能性があります。ARM64 NEONとMetal GPUバックエンドは本番品質。WASMは動作可能。AVX、CUDA、RISC-Vは開発中。最新情報は<a href="https://github.com/gunta/turbotoken" style="color:#fbbf24;text-decoration:underline;">GitHubリポジトリ</a>をフォローしてください。</span>
+      <span data-lang="ja"><strong>現在開発中です。</strong> turbotokenは活発に開発が進んでいます。APIは今後変更される場合があります。ARM64 NEONとMetal GPUは本番レベルの品質に到達済み。WASMは動作確認済み。AVX、CUDA、RISC-Vは現在実装中です。最新情報は<a href="https://github.com/gunta/turbotoken" style="color:#fbbf24;text-decoration:underline;">GitHubリポジトリ</a>でご確認ください。</span>
     </p>
   </div>
 
@@ -1786,7 +1795,7 @@ body:not(.ja) .bench-card span[data-lang="ja"] { display: none; }
   <footer class="footer">
     <p>
       <span data-lang="en">Built with Zig, Assembly, and obsessive benchmarking.</span>
-      <span data-lang="ja">Zig、アセンブリ、そして執念のベンチマーキングで構築。</span>
+      <span data-lang="ja">Zigとアセンブリ、そして執念のベンチマークから生まれた。</span>
     </p>
     <p style="margin-top:8px;">
       <a href="https://github.com/turbo-tools/turbotoken">GitHub</a> &middot;
