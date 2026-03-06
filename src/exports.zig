@@ -1832,8 +1832,34 @@ const AsciiO200kCountCacheEntry = struct {
     count: usize,
 };
 
+const AsciiEncodeCacheTokens = union(enum) {
+    single: u32,
+    heap: []u32,
+
+    fn tokenLen(self: @This()) usize {
+        return switch (self) {
+            .single => 1,
+            .heap => |tokens| tokens.len,
+        };
+    }
+
+    fn copyInto(self: @This(), out: []u32) void {
+        switch (self) {
+            .single => |token| out[0] = token,
+            .heap => |tokens| @memcpy(out[0..tokens.len], tokens),
+        }
+    }
+
+    fn deinit(self: @This(), allocator: std.mem.Allocator) void {
+        switch (self) {
+            .single => {},
+            .heap => |tokens| allocator.free(tokens),
+        }
+    }
+};
+
 const AsciiO200kEncodeCacheEntry = struct {
-    tokens: []u32,
+    tokens: AsciiEncodeCacheTokens,
 };
 
 const AsciiO200kSmallCountCacheEntry = struct {
@@ -1843,7 +1869,7 @@ const AsciiO200kSmallCountCacheEntry = struct {
 
 const AsciiO200kSmallEncodeCacheEntry = struct {
     piece: []const u8,
-    tokens: []u32,
+    tokens: AsciiEncodeCacheTokens,
 };
 
 const ascii_o200k_small_cache_cap: usize = 64;
@@ -1934,7 +1960,7 @@ fn encodeBpeAsciiO200kFromTable(
     var small_cache_len: usize = 0;
     defer {
         for (small_cache[0..small_cache_len]) |entry| {
-            allocator.free(entry.tokens);
+            entry.tokens.deinit(allocator);
         }
     }
 
@@ -1942,7 +1968,7 @@ fn encodeBpeAsciiO200kFromTable(
     defer {
         var it = piece_cache.iterator();
         while (it.next()) |entry| {
-            allocator.free(entry.value_ptr.tokens);
+            entry.value_ptr.tokens.deinit(allocator);
         }
         piece_cache.deinit(allocator);
     }
@@ -1957,11 +1983,12 @@ fn encodeBpeAsciiO200kFromTable(
         while (small_idx < small_cache_len) : (small_idx += 1) {
             const cached = small_cache[small_idx];
             if (cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
-                if (cached.tokens.len > out_cap -| total_tokens) {
+                const cached_len = cached.tokens.tokenLen();
+                if (cached_len > out_cap -| total_tokens) {
                     return error.OutOfMemory;
                 }
-                @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
-                total_tokens += cached.tokens.len;
+                cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
+                total_tokens += cached_len;
                 handled = true;
                 break;
             }
@@ -1972,11 +1999,12 @@ fn encodeBpeAsciiO200kFromTable(
 
         if (small_cache_len >= ascii_o200k_small_cache_cap) {
             if (piece_cache.get(piece)) |cached| {
-                if (cached.tokens.len > out_cap -| total_tokens) {
+                const cached_len = cached.tokens.tokenLen();
+                if (cached_len > out_cap -| total_tokens) {
                     return error.OutOfMemory;
                 }
-                @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
-                total_tokens += cached.tokens.len;
+                cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
+                total_tokens += cached_len;
                 continue;
             }
         }
@@ -1985,25 +2013,30 @@ fn encodeBpeAsciiO200kFromTable(
         const written = try backend.encoder.encodeWithRanksReusableInto(allocator, piece, table, reusable_cache, &scratch, token_slice);
         total_tokens += written;
 
-        const token_copy = try allocator.alloc(u32, written);
-        errdefer allocator.free(token_copy);
-        @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
+        const cached_tokens: AsciiEncodeCacheTokens = if (written == 1)
+            AsciiEncodeCacheTokens{ .single = out_tokens[total_tokens - 1] }
+        else blk: {
+            const token_copy = try allocator.alloc(u32, written);
+            errdefer allocator.free(token_copy);
+            @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
+            break :blk AsciiEncodeCacheTokens{ .heap = token_copy };
+        };
 
         if (small_cache_len < ascii_o200k_small_cache_cap) {
             small_cache[small_cache_len] = .{
                 .piece = piece,
-                .tokens = token_copy,
+                .tokens = cached_tokens,
             };
             small_cache_len += 1;
             continue;
         }
 
         if (piece_cache.count() < ascii_o200k_piece_cache_cap) {
-            try piece_cache.put(allocator, piece, .{ .tokens = token_copy });
+            try piece_cache.put(allocator, piece, .{ .tokens = cached_tokens });
             continue;
         }
 
-        allocator.free(token_copy);
+        cached_tokens.deinit(allocator);
     }
 
     if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
@@ -2133,7 +2166,7 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
     defer {
         var it = piece_cache.iterator();
         while (it.next()) |entry| {
-            allocator.free(entry.value_ptr.tokens);
+            entry.value_ptr.tokens.deinit(allocator);
         }
         piece_cache.deinit(allocator);
     }
@@ -2144,11 +2177,12 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
         const piece = in_slice[range.start..range.end];
 
         if (piece_cache.get(piece)) |cached| {
-            if (cached.tokens.len > out_cap -| total_tokens) {
+            const cached_len = cached.tokens.tokenLen();
+            if (cached_len > out_cap -| total_tokens) {
                 return -1;
             }
-            @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
-            total_tokens += cached.tokens.len;
+            cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
+            total_tokens += cached_len;
             continue;
         }
 
@@ -2157,10 +2191,15 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
         total_tokens += written;
 
         if (piece_cache.count() < ascii_letter_space_piece_cache_cap) {
-            const token_copy = allocator.alloc(u32, written) catch return -1;
-            errdefer allocator.free(token_copy);
-            @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
-            piece_cache.put(allocator, piece, .{ .tokens = token_copy }) catch return -1;
+            const cached_tokens: AsciiEncodeCacheTokens = if (written == 1)
+                AsciiEncodeCacheTokens{ .single = out_tokens[total_tokens - 1] }
+            else blk: {
+                const token_copy = allocator.alloc(u32, written) catch return -1;
+                errdefer allocator.free(token_copy);
+                @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
+                break :blk AsciiEncodeCacheTokens{ .heap = token_copy };
+            };
+            piece_cache.put(allocator, piece, .{ .tokens = cached_tokens }) catch return -1;
         }
     }
 
