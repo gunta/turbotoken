@@ -51,7 +51,7 @@ function commandForMinbpeTraining(path: string): string {
   const maybePath = existsSync(minbpeLocalPath)
     ? `import sys;sys.path.insert(0,'${minbpeLocalPath}');`
     : "";
-  return `TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib;${maybePath}from minbpe import RegexTokenizer;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();tok=RegexTokenizer();tok.train(text,${vocabSize});assert len(tok.vocab)>=256"`;
+  return `TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib,sys,types;sys.modules.setdefault('tiktoken', types.ModuleType('tiktoken'));${maybePath}from minbpe import RegexTokenizer;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();tok=RegexTokenizer();tok.train(text,${vocabSize});assert len(tok.vocab)>=256"`;
 }
 
 function commandForRustbpeTraining(path: string): string {
