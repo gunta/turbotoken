@@ -1,7 +1,8 @@
-"""Native bridge utilities for loading Zig C ABI exports via cffi."""
+"""Native bridge utilities for loading Zig C ABI exports via ctypes/cffi."""
 
 from __future__ import annotations
 
+import ctypes
 import os
 import platform
 from dataclasses import dataclass
@@ -63,6 +64,40 @@ def _unpack_u32(ffi: Any, out: Any, written: int) -> list[int]:
         return [int(out[idx]) for idx in range(written)]
 
 
+def _configure_fast_ctypes(lib: Any) -> None:
+    void_p = ctypes.c_void_p
+    size_t = ctypes.c_size_t
+    long_t = ctypes.c_long
+    u32_p = ctypes.POINTER(ctypes.c_uint32)
+    u8_p = ctypes.POINTER(ctypes.c_ubyte)
+
+    lib.turbotoken_version.argtypes = []
+    lib.turbotoken_version.restype = ctypes.c_char_p
+
+    lib.turbotoken_pretokenize_ascii_letter_space_ranges.argtypes = [void_p, size_t, u32_p, u32_p, size_t]
+    lib.turbotoken_pretokenize_ascii_letter_space_ranges.restype = long_t
+    lib.turbotoken_pretokenize_ascii_o200k_ranges.argtypes = [void_p, size_t, u32_p, u32_p, size_t]
+    lib.turbotoken_pretokenize_ascii_o200k_ranges.restype = long_t
+
+    lib.turbotoken_count_bpe_from_ranks.argtypes = [void_p, size_t, void_p, size_t]
+    lib.turbotoken_count_bpe_from_ranks.restype = long_t
+    lib.turbotoken_encode_bpe_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, size_t]
+    lib.turbotoken_encode_bpe_from_ranks.restype = long_t
+
+    lib.turbotoken_count_bpe_ascii_letter_space_from_ranks.argtypes = [void_p, size_t, void_p, size_t]
+    lib.turbotoken_count_bpe_ascii_letter_space_from_ranks.restype = long_t
+    lib.turbotoken_encode_bpe_ascii_letter_space_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, size_t]
+    lib.turbotoken_encode_bpe_ascii_letter_space_from_ranks.restype = long_t
+
+    lib.turbotoken_count_bpe_ascii_o200k_from_ranks.argtypes = [void_p, size_t, void_p, size_t]
+    lib.turbotoken_count_bpe_ascii_o200k_from_ranks.restype = long_t
+    lib.turbotoken_encode_bpe_ascii_o200k_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, size_t]
+    lib.turbotoken_encode_bpe_ascii_o200k_from_ranks.restype = long_t
+
+    lib.turbotoken_decode_bpe_from_ranks.argtypes = [void_p, size_t, u32_p, size_t, u8_p, size_t]
+    lib.turbotoken_decode_bpe_from_ranks.restype = long_t
+
+
 @dataclass(slots=True)
 class NativeBridge:
     _lib: Any | None = None
@@ -70,8 +105,108 @@ class NativeBridge:
     _error: str | None = None
     _rank_payload_ref: bytes | None = None
     _rank_payload_buf: Any | None = None
+    _fast_lib: Any | None = None
+    _fast_error: str | None = None
+    _fast_rank_payload_ref: bytes | None = None
+    _fast_rank_payload_buf: Any | None = None
     _rank_session_payload_ref: bytes | None = None
     _rank_session_cache: "NativeRankSession | None" = None
+
+    def _load_fast_lib(self) -> Any | None:
+        if self._fast_lib is not None:
+            return self._fast_lib
+        if self._fast_error is not None:
+            return None
+
+        last_error: str | None = None
+        for path in _candidate_library_paths():
+            if not path.exists():
+                continue
+            try:
+                lib = ctypes.CDLL(str(path))
+                _configure_fast_ctypes(lib)
+                self._fast_lib = lib
+                return lib
+            except OSError as exc:
+                last_error = f"failed to load {path}: {exc}"
+                break
+
+        self._fast_error = last_error or "native library not found"
+        return None
+
+    def _fast_rank_payload_ptr(self, rank_payload: bytes) -> Any | None:
+        if self._load_fast_lib() is None:
+            return None
+        if self._fast_rank_payload_ref is not rank_payload or self._fast_rank_payload_buf is None:
+            self._fast_rank_payload_ref = rank_payload
+            self._fast_rank_payload_buf = ctypes.create_string_buffer(rank_payload)
+        return self._fast_rank_payload_buf
+
+    @staticmethod
+    def _fast_bytes_buffer(data: bytes) -> Any:
+        return ctypes.create_string_buffer(data)
+
+    def _fast_pretokenize_ranges(self, symbol: str, data: bytes) -> list[tuple[int, int]] | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+
+        in_buf = self._fast_bytes_buffer(data)
+        try:
+            needed = int(getattr(lib, symbol)(in_buf, len(data), None, None, 0))
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return []
+
+        starts = (ctypes.c_uint32 * needed)()
+        ends = (ctypes.c_uint32 * needed)()
+        try:
+            written = int(getattr(lib, symbol)(in_buf, len(data), starts, ends, needed))
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return [(int(starts[idx]), int(ends[idx])) for idx in range(written)]
+
+    def _fast_count_from_ranks(self, symbol: str, rank_payload: bytes, data: bytes) -> int | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        in_buf = self._fast_bytes_buffer(data)
+        try:
+            result = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, len(data)))
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def _fast_encode_from_ranks(self, symbol: str, rank_payload: bytes, data: bytes) -> list[int] | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        if not data:
+            return []
+
+        in_buf = self._fast_bytes_buffer(data)
+        out = (ctypes.c_uint32 * len(data))()
+        try:
+            written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, len(data), out, len(data)))
+        except (AttributeError, OverflowError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return [int(out[idx]) for idx in range(written)]
 
     def load(self) -> None:
         if self._lib is not None or self._error is not None:
@@ -354,15 +489,24 @@ class NativeBridge:
 
     @property
     def available(self) -> bool:
-        self.load()
-        return self._lib is not None
+        return self._load_fast_lib() is not None or self._load_cffi_available()
 
     @property
     def error(self) -> str | None:
+        if self.available:
+            return None
+        return self._fast_error or self._error
+
+    def _load_cffi_available(self) -> bool:
         self.load()
-        return self._error
+        return self._lib is not None
 
     def version(self) -> str | None:
+        fast = self._load_fast_lib()
+        if fast is not None:
+            raw = fast.turbotoken_version()
+            return raw.decode("utf-8") if raw is not None else None
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -392,15 +536,14 @@ class NativeBridge:
         return raw
 
     def rank_session(self, rank_payload: bytes) -> "NativeRankSession | None":
-        self.load()
-        if self._lib is None:
+        if not self.available:
             return None
         if (
             self._rank_session_cache is not None
             and self._rank_session_payload_ref is rank_payload
         ):
             return self._rank_session_cache
-        if self._rank_payload_ptr(rank_payload) is None:
+        if self._fast_rank_payload_ptr(rank_payload) is None and self._rank_payload_ptr(rank_payload) is None:
             return None
         session = NativeRankSession(_bridge=self, _rank_payload=rank_payload)
         self._rank_session_payload_ref = rank_payload
@@ -431,6 +574,10 @@ class NativeBridge:
         self,
         data: bytes,
     ) -> list[tuple[int, int]] | None:
+        fast = self._fast_pretokenize_ranges("turbotoken_pretokenize_ascii_letter_space_ranges", data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -474,6 +621,10 @@ class NativeBridge:
         self,
         data: bytes,
     ) -> list[tuple[int, int]] | None:
+        fast = self._fast_pretokenize_ranges("turbotoken_pretokenize_ascii_o200k_ranges", data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -705,6 +856,10 @@ class NativeBridge:
         return bytes(self._ffi.buffer(out, written))
 
     def encode_bpe_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
+        fast = self._fast_encode_from_ranks("turbotoken_encode_bpe_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1236,6 +1391,10 @@ class NativeBridge:
         return _unpack_u32(self._ffi, out, written)
 
     def count_bpe_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
+        fast = self._fast_count_from_ranks("turbotoken_count_bpe_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None:
             return None
@@ -1404,6 +1563,10 @@ class NativeBridge:
         return result
 
     def count_bpe_ascii_letter_space_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
+        fast = self._fast_count_from_ranks("turbotoken_count_bpe_ascii_letter_space_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1428,6 +1591,10 @@ class NativeBridge:
         return result
 
     def encode_bpe_ascii_letter_space_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
+        fast = self._fast_encode_from_ranks("turbotoken_encode_bpe_ascii_letter_space_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1459,6 +1626,10 @@ class NativeBridge:
         return _unpack_u32(self._ffi, out, written)
 
     def count_bpe_ascii_o200k_from_ranks(self, rank_payload: bytes, data: bytes) -> int | None:
+        fast = self._fast_count_from_ranks("turbotoken_count_bpe_ascii_o200k_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1483,6 +1654,10 @@ class NativeBridge:
         return result
 
     def encode_bpe_ascii_o200k_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
+        fast = self._fast_encode_from_ranks("turbotoken_encode_bpe_ascii_o200k_from_ranks", rank_payload, data)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
