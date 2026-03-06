@@ -776,6 +776,10 @@ class Encoding:
     def _encode_ordinary_cold_native(self, text: str) -> list[int] | None:
         if self._mergeable_ranks_cache is not None or not text.isascii():
             return None
+        import threading
+
+        if threading.current_thread() is not threading.main_thread():
+            return None
         max_bytes = self._native_cold_small_text_max_bytes()
         if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
             return None
@@ -799,6 +803,10 @@ class Encoding:
 
     def _count_ordinary_cold_native(self, text: str) -> int | None:
         if self._mergeable_ranks_cache is not None or not text.isascii():
+            return None
+        import threading
+
+        if threading.current_thread() is not threading.main_thread():
             return None
         max_bytes = self._native_cold_small_text_max_bytes()
         if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
