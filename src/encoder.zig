@@ -480,6 +480,81 @@ pub const Encoder = struct {
         return resolved_rank;
     }
 
+    fn byteToken(table: *const rank_loader.RankTable, byte: u8) !u32 {
+        if (table.singleByteTokenRank(byte)) |rank| {
+            return rank;
+        }
+        const single = [_]u8{byte};
+        return table.get(single[0..]) orelse error.UnknownToken;
+    }
+
+    fn encodeTinyPieceWithRanks(
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+        out_tokens: []u32,
+    ) !?usize {
+        if (text.len == 0) {
+            return 0;
+        }
+        if (text.len > 3) {
+            return null;
+        }
+        if (out_tokens.len < text.len) {
+            return error.OutOfMemory;
+        }
+
+        const token0 = try byteToken(table, text[0]);
+        if (text.len == 1) {
+            out_tokens[0] = token0;
+            return 1;
+        }
+
+        const token1 = try byteToken(table, text[1]);
+        if (text.len == 2) {
+            if (try pairRank(allocator, table, cache, scratch, token0, token1)) |merged| {
+                out_tokens[0] = merged;
+                return 1;
+            }
+            out_tokens[0] = token0;
+            out_tokens[1] = token1;
+            return 2;
+        }
+
+        const token2 = try byteToken(table, text[2]);
+        const pair01 = try pairRank(allocator, table, cache, scratch, token0, token1);
+        const pair12 = try pairRank(allocator, table, cache, scratch, token1, token2);
+
+        if (pair01 == null and pair12 == null) {
+            out_tokens[0] = token0;
+            out_tokens[1] = token1;
+            out_tokens[2] = token2;
+            return 3;
+        }
+
+        if (pair12 == null or (pair01 != null and pair01.? <= pair12.?)) {
+            const merged_left = pair01.?;
+            if (try pairRank(allocator, table, cache, scratch, merged_left, token2)) |merged_all| {
+                out_tokens[0] = merged_all;
+                return 1;
+            }
+            out_tokens[0] = merged_left;
+            out_tokens[1] = token2;
+            return 2;
+        }
+
+        const merged_right = pair12.?;
+        if (try pairRank(allocator, table, cache, scratch, token0, merged_right)) |merged_all| {
+            out_tokens[0] = merged_all;
+            return 1;
+        }
+        out_tokens[0] = token0;
+        out_tokens[1] = merged_right;
+        return 2;
+    }
+
     fn enqueueCandidate(
         allocator: std.mem.Allocator,
         queue: *BucketQueue,
@@ -798,6 +873,13 @@ pub const Encoder = struct {
             return out;
         }
 
+        var tiny_out: [3]u32 = undefined;
+        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, tiny_out[0..])) |written| {
+            const out = try allocator.alloc(u32, written);
+            @memcpy(out, tiny_out[0..written]);
+            return out;
+        }
+
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
@@ -858,6 +940,10 @@ pub const Encoder = struct {
             return 1;
         }
 
+        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, out_tokens)) |written| {
+            return written;
+        }
+
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
@@ -915,6 +1001,11 @@ pub const Encoder = struct {
 
         if (directRankForText(table, text) != null) {
             return 1;
+        }
+
+        var tiny_out: [3]u32 = undefined;
+        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, tiny_out[0..])) |written| {
+            return written;
         }
 
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
@@ -1082,6 +1173,40 @@ test "encodeWithRanksReusableInto writes tokens without intermediate slice alloc
     const written = try enc.encodeWithRanksReusableInto(allocator, "abc", &table, cache, &scratch, out[0..]);
     try std.testing.expectEqual(@as(usize, 1), written);
     try std.testing.expectEqualSlices(u32, &[_]u32{4}, out[0..written]);
+}
+
+test "tiny reusable path preserves 2-byte and 3-byte merge behavior" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\Yw== 2
+        \\YWI= 3
+        \\YmM= 4
+        \\YWJj 5
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    const cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(cache);
+    enc.preparePairCache(cache, &table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
+    var out_ab: [2]u32 = undefined;
+    const written_ab = try enc.encodeWithRanksReusableInto(allocator, "ab", &table, cache, &scratch, out_ab[0..]);
+    try std.testing.expectEqual(@as(usize, 1), written_ab);
+    try std.testing.expectEqualSlices(u32, &[_]u32{3}, out_ab[0..written_ab]);
+
+    var out_abc: [3]u32 = undefined;
+    const written_abc = try enc.encodeWithRanksReusableInto(allocator, "abc", &table, cache, &scratch, out_abc[0..]);
+    try std.testing.expectEqual(@as(usize, 1), written_abc);
+    try std.testing.expectEqualSlices(u32, &[_]u32{5}, out_abc[0..written_abc]);
+    try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abc", &table, cache, &scratch));
 }
 
 test "directRankForText returns exact whole-token hits" {
