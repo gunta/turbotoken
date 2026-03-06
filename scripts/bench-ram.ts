@@ -92,7 +92,7 @@ const commands: MemoryCommand[] = [
   {
     name: "python-ram-turbotoken-encode-1mb",
     command:
-      `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').encode(text)"`,
+      `${python} -c "import pathlib;from turbotoken import get_encoding;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text();get_encoding('o200k_base').encode(text)"`,
   },
   {
     name: "python-ram-turbotoken-cli-encode-1mb",

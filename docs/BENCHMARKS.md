@@ -101,7 +101,6 @@
   - Metal direct-objective sweep (A/B artifact optimization): `bun run scripts/bench-gpu-direct-sweep.ts`
   - Single crossover profile run: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=normal-text bun run scripts/bench-gpu-crossover.ts`
   - fast competitors mode keeps mandatory `python-encode-1mb-turbotoken` / `python-count-1mb-turbotoken` rows so CI 1MB gates remain measurable.
-  - the `python-encode-1mb-turbotoken` competitors row now explicitly opts into `TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1`; smaller encode fixtures remain on the default wrapper route.
 - Packaging smoke checks are now CI-wired:
   - wheels workflow installs the host wheel into an isolated venv and verifies import + native bridge load.
   - wasm workflow packs npm tarball, installs it into a temp project, and validates installed WASM roundtrip.

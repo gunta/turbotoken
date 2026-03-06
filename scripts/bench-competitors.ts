@@ -52,7 +52,7 @@ const availability = {
 };
 
 const metalProbe = runShell(
-  `${python} -c "import sys;sys.path.insert(0,'python');from turbotoken import _gpu;raise SystemExit(0 if _gpu.backend_info().get('available') else 1)"`,
+  `${python} -c "from turbotoken import _gpu;raise SystemExit(0 if _gpu.backend_info().get('available') else 1)"`,
   { allowFailure: true },
 );
 const metalAvailable = metalProbe.code === 0;
@@ -71,7 +71,7 @@ function ensureDecodeFixture() {
 
   section(`Generating decode fixture: ${decodeFixturePath}`);
   runShell(
-    `${python} -c "import importlib.util,json,pathlib,sys;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text()\nif importlib.util.find_spec('tiktoken'):\n import tiktoken;enc=tiktoken.get_encoding('o200k_base')\nelse:\n sys.path.insert(0,'python');from turbotoken import get_encoding;enc=get_encoding('o200k_base')\ntokens=enc.encode(text);pathlib.Path('${decodeFixturePath}').write_text(json.dumps(tokens),encoding='utf-8')"`,
+    `${python} -c "import importlib.util,json,pathlib;text=pathlib.Path('bench/fixtures/english-1mb.txt').read_text()\nif importlib.util.find_spec('tiktoken'):\n import tiktoken;enc=tiktoken.get_encoding('o200k_base')\nelse:\n from turbotoken import get_encoding;enc=get_encoding('o200k_base')\ntokens=enc.encode(text);pathlib.Path('${decodeFixturePath}').write_text(json.dumps(tokens),encoding='utf-8')"`,
   );
 }
 
@@ -82,16 +82,12 @@ function decodeFixtureTokenCount(): number {
   return Number.parseInt(result.stdout.trim(), 10);
 }
 
-function encodeCommandForTurbotoken(
-  path: string,
-  { nativeO200kFull = false }: { nativeO200kFull?: boolean } = {},
-): string {
-  const envPrefix = nativeO200kFull ? "TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1 " : "";
-  return `${envPrefix}${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode(text)"`;
+function encodeCommandForTurbotoken(path: string): string {
+  return `${python} -c "import pathlib;from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode(text)"`;
 }
 
 function encodeCommandForTurbotokenMetal(path: string): string {
-  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode_gpu([text],device='metal',strict_verify=False)[0]"`;
+  return `${python} -c "import pathlib;from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode_gpu([text],device='metal',strict_verify=False)[0]"`;
 }
 
 function encodeCommandForTiktoken(path: string): string {
@@ -111,7 +107,7 @@ function encodeCommandForGptTokenizer(path: string): string {
 }
 
 function decodeCommandForTurbotoken(tokens: number): string {
-  return `${python} -c "import json,pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];get_encoding('o200k_base').decode(vals)"`;
+  return `${python} -c "import json,pathlib;from turbotoken import get_encoding;vals=json.loads(pathlib.Path('${decodeFixturePath}').read_text(encoding='utf-8'))[:${tokens}];get_encoding('o200k_base').decode(vals)"`;
 }
 
 function decodeCommandForTiktoken(tokens: number): string {
@@ -131,7 +127,7 @@ function decodeCommandForGptTokenizer(tokens: number): string {
 }
 
 function countCommandForTurbotoken(path: string): string {
-  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').count(text)"`;
+  return `${python} -c "import pathlib;from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').count(text)"`;
 }
 
 function countCommandForTiktoken(path: string): string {
@@ -154,9 +150,7 @@ const encodeCommands: BenchCommand[] = [];
 for (const fixture of textFixtures) {
   encodeCommands.push({
     name: `python-encode-${fixture.id}-turbotoken`,
-    command: encodeCommandForTurbotoken(fixture.path, {
-      nativeO200kFull: fixture.id === "1mb",
-    }),
+    command: encodeCommandForTurbotoken(fixture.path),
   });
   if (metalAvailable) {
     encodeCommands.push({
@@ -193,7 +187,7 @@ if (fastMode) {
   // Keep CI governance metrics available in fast mode without re-enabling the full matrix.
   encodeCommands.push({
     name: `python-encode-${ciRequiredFixture.id}-turbotoken`,
-    command: encodeCommandForTurbotoken(ciRequiredFixture.path, { nativeO200kFull: true }),
+    command: encodeCommandForTurbotoken(ciRequiredFixture.path),
   });
 }
 

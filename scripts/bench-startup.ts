@@ -31,7 +31,7 @@ const commands: BenchCommand[] = [
   {
     name: "python-startup-turbotoken",
     command:
-      `${python} -c "import sys;sys.path.insert(0,'python');import turbotoken;turbotoken.get_encoding('o200k_base').encode('hello')"`,
+      `${python} -c "import turbotoken;turbotoken.get_encoding('o200k_base').encode('hello')"`,
   },
   {
     name: "python-startup-turbotoken-cli",

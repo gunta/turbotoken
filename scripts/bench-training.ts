@@ -44,7 +44,7 @@ function commandForTurbotokenTraining(path: string): string {
 }
 
 function commandForTurbotokenTrainingPythonFallback(path: string): string {
-  return `TURBOTOKEN_TRAINING_BACKEND=python TURBOTOKEN_NATIVE_TRAINING_DISABLE=1 TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib,sys;sys.path.insert(0,'python');from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();_,ranks=train_mergeable_ranks_from_iterator([text],vocab_size=${vocabSize},pattern=None,min_frequency=${minFrequency});assert len(ranks)>=256"`;
+  return `TURBOTOKEN_TRAINING_BACKEND=python TURBOTOKEN_NATIVE_TRAINING_DISABLE=1 TURBOTOKEN_TRAIN_FIXTURE='${path}' ${python} -c "import os,pathlib;from turbotoken.training import train_mergeable_ranks_from_iterator;text=pathlib.Path(os.environ['TURBOTOKEN_TRAIN_FIXTURE']).read_text();_,ranks=train_mergeable_ranks_from_iterator([text],vocab_size=${vocabSize},pattern=None,min_frequency=${minFrequency});assert len(ranks)>=256"`;
 }
 
 function commandForMinbpeTraining(path: string): string {
