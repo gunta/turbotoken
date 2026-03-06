@@ -77,9 +77,17 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      TURBOTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/turbotoken
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Restore tokenizer rank cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/turbotoken
+          key: x86-ondemand-ranks-${{ runner.os }}-${{ hashFiles('upstream/gpt-tokenizer/data/*.tiktoken', 'bench/fixtures/o200k_base.tiktoken') }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -105,6 +113,13 @@ jobs:
           uv pip install --system -e .[dev] || python -m pip install -e .[dev]
           bun install --frozen-lockfile
 
+      - name: Seed tokenizer rank cache from repository fixtures
+        run: |
+          mkdir -p "$TURBOTOKEN_CACHE_DIR"
+          cp -f upstream/gpt-tokenizer/data/*.tiktoken "$TURBOTOKEN_CACHE_DIR"/
+          cp -f bench/fixtures/o200k_base.tiktoken "$TURBOTOKEN_CACHE_DIR"/o200k_base.tiktoken
+          ls -lh "$TURBOTOKEN_CACHE_DIR"
+
       - name: Install Linux benchmark extras
         if: ${{ matrix.id == 'linux' && inputs.run_cpu_gates }}
         run: |
@@ -119,6 +134,9 @@ jobs:
           zig version
           uname -a || true
 
+      - name: Build native library
+        run: zig build -Doptimize=ReleaseFast
+
       - name: Run Python tests
         run: python -m pytest -q
 
@@ -127,9 +145,6 @@ jobs:
 
       - name: Run Zig tests
         run: zig build test
-
-      - name: Build native library
-        run: zig build -Doptimize=ReleaseFast
 
       - name: Run Zig cross-target smoke build
         if: ${{ matrix.id == 'linux' }}
