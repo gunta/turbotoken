@@ -1071,12 +1071,11 @@ pub export fn turbotoken_train_bpe_from_chunk_counts(
     return @as(isize, @intCast(merges.len));
 }
 
-const AsciiChunkSmallCacheEntry = struct {
-    piece: []const u8,
-    idx: u32,
+const AsciiChunkEntry = struct {
+    start: u32,
+    end: u32,
+    count: u32,
 };
-
-const ascii_chunk_small_cache_cap: usize = 64;
 
 fn encodeMergeOutput(
     merges: []const trainer.Merge,
@@ -1138,15 +1137,13 @@ fn trainAsciiO200kFromTextSlices(
     const work_allocator = arena_state.allocator();
 
     var chunk_index: std.StringHashMapUnmanaged(u32) = .{};
-    var chunk_entries = std.ArrayListUnmanaged(trainer.CountedChunk){};
+    var chunk_entries = std.ArrayListUnmanaged(AsciiChunkEntry){};
     const estimated_unique_chunks = @max(
         text_offsets.len - 1,
-        @min(all_text.len / 64 + 1, @as(usize, 4_096)),
+        @min(all_text.len / 4 + 1, @as(usize, 65_536)),
     );
     try chunk_index.ensureTotalCapacity(work_allocator, @as(u32, @intCast(estimated_unique_chunks)));
     try chunk_entries.ensureTotalCapacityPrecise(work_allocator, estimated_unique_chunks);
-    var small_cache: [ascii_chunk_small_cache_cap]AsciiChunkSmallCacheEntry = undefined;
-    var small_cache_len: usize = 0;
 
     for (0..text_offsets.len - 1) |text_idx| {
         const text_start = @as(usize, @intCast(text_offsets[text_idx]));
@@ -1162,43 +1159,14 @@ fn trainAsciiO200kFromTextSlices(
             }
 
             const piece = text_slice[range.start..range.end];
-            if (small_cache_len < ascii_chunk_small_cache_cap) {
-                var handled = false;
-                var small_idx: usize = 0;
-                while (small_idx < small_cache_len) : (small_idx += 1) {
-                    const cached = small_cache[small_idx];
-                    if (cached.piece.len != piece.len or !std.mem.eql(u8, cached.piece, piece)) {
-                        continue;
-                    }
-                    const entry_idx = @as(usize, @intCast(cached.idx));
-                    const current = chunk_entries.items[entry_idx].count;
-                    const next = current + 1;
-                    if (next < current) {
-                        return error.InvalidInput;
-                    }
-                    chunk_entries.items[entry_idx].count = next;
-                    handled = true;
-                    break;
-                }
-                if (handled) {
-                    continue;
-                }
-            }
             const idx_entry = try chunk_index.getOrPut(work_allocator, piece);
             if (!idx_entry.found_existing) {
-                const entry_idx = @as(u32, @intCast(chunk_entries.items.len));
-                idx_entry.value_ptr.* = entry_idx;
+                idx_entry.value_ptr.* = @as(u32, @intCast(chunk_entries.items.len));
                 try chunk_entries.append(work_allocator, .{
-                    .bytes = all_text[abs_start..abs_end],
+                    .start = @as(u32, @intCast(abs_start)),
+                    .end = @as(u32, @intCast(abs_end)),
                     .count = 1,
                 });
-                if (small_cache_len < ascii_chunk_small_cache_cap) {
-                    small_cache[small_cache_len] = .{
-                        .piece = piece,
-                        .idx = entry_idx,
-                    };
-                    small_cache_len += 1;
-                }
             } else {
                 const entry_idx = @as(usize, @intCast(idx_entry.value_ptr.*));
                 const current = chunk_entries.items[entry_idx].count;
@@ -1211,9 +1179,19 @@ fn trainAsciiO200kFromTextSlices(
         }
     }
 
+    const counted_chunks = try work_allocator.alloc(trainer.CountedChunk, chunk_entries.items.len);
+    for (chunk_entries.items, 0..) |entry, idx| {
+        const start_usize = @as(usize, @intCast(entry.start));
+        const end_usize = @as(usize, @intCast(entry.end));
+        counted_chunks[idx] = .{
+            .bytes = all_text[start_usize..end_usize],
+            .count = entry.count,
+        };
+    }
+
     return trainer.trainMergesFromCountedChunks(
         allocator,
-        chunk_entries.items,
+        counted_chunks,
         vocab_size,
         min_frequency,
     );
