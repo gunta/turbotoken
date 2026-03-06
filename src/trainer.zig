@@ -489,6 +489,11 @@ const Word = struct {
     }
 };
 
+pub const CountedChunk = struct {
+    bytes: []const u8,
+    count: u32,
+};
+
 fn validateChunkInputs(
     chunks: []const u8,
     offsets: []const u32,
@@ -515,22 +520,15 @@ fn validateChunkInputs(
     }
 }
 
-pub fn trainMergesFromChunkCounts(
+fn trainPreparedWords(
     allocator: std.mem.Allocator,
-    chunks: []const u8,
-    offsets: []const u32,
+    work_allocator: std.mem.Allocator,
+    words: []Word,
     counts: []const u32,
+    total_bytes: usize,
     vocab_size: u32,
     min_frequency: u32,
 ) ![]Merge {
-    if (vocab_size < 256) {
-        return error.InvalidInput;
-    }
-    if (min_frequency == 0) {
-        return error.InvalidInput;
-    }
-    try validateChunkInputs(chunks, offsets, counts);
-
     const word_count = counts.len;
     if (word_count == 0) {
         return try allocator.alloc(Merge, 0);
@@ -539,23 +537,12 @@ pub fn trainMergesFromChunkCounts(
         return error.InvalidInput;
     }
 
-    // Training is allocation-heavy; use a scratch arena to amortize allocator overhead.
-    var arena_state = std.heap.ArenaAllocator.init(allocator);
-    defer arena_state.deinit();
-    const work_allocator = arena_state.allocator();
-
-    var words = try work_allocator.alloc(Word, word_count);
-    for (words) |*word| word.* = .{};
     var initial_pair_slots: usize = 0;
-    for (0..word_count) |idx| {
-        const start = offsets[idx];
-        const end = offsets[idx + 1];
-        words[idx] = try Word.initFromBytes(work_allocator, chunks[start..end]);
-        if (words[idx].ids.items.len > 1) {
-            initial_pair_slots +|= words[idx].ids.items.len - 1;
+    for (words) |word| {
+        if (word.ids.items.len > 1) {
+            initial_pair_slots +|= word.ids.items.len - 1;
         }
     }
-    defer for (words) |*word| word.deinit(work_allocator);
 
     const pair_map_reserve = @max(
         @as(usize, 1),
@@ -579,7 +566,7 @@ pub fn trainMergesFromChunkCounts(
         work_allocator,
         words,
         counts,
-        chunks.len,
+        total_bytes,
         &pair_counts,
         &where_to_update,
     );
@@ -725,6 +712,92 @@ pub fn trainMergesFromChunkCounts(
     const out = try allocator.alloc(Merge, merges.items.len);
     @memcpy(out, merges.items);
     return out;
+}
+
+pub fn trainMergesFromCountedChunks(
+    allocator: std.mem.Allocator,
+    counted_chunks: []const CountedChunk,
+    vocab_size: u32,
+    min_frequency: u32,
+) ![]Merge {
+    if (vocab_size < 256) {
+        return error.InvalidInput;
+    }
+    if (min_frequency == 0) {
+        return error.InvalidInput;
+    }
+    if (counted_chunks.len == 0) {
+        return try allocator.alloc(Merge, 0);
+    }
+    if (counted_chunks.len > std.math.maxInt(u32)) {
+        return error.InvalidInput;
+    }
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const work_allocator = arena_state.allocator();
+
+    var words = try work_allocator.alloc(Word, counted_chunks.len);
+    for (words) |*word| word.* = .{};
+    defer for (words) |*word| word.deinit(work_allocator);
+
+    const counts = try work_allocator.alloc(u32, counted_chunks.len);
+    var total_bytes: usize = 0;
+    for (counted_chunks, 0..) |chunk, idx| {
+        words[idx] = try Word.initFromBytes(work_allocator, chunk.bytes);
+        counts[idx] = chunk.count;
+        total_bytes +|= chunk.bytes.len;
+    }
+
+    return trainPreparedWords(
+        allocator,
+        work_allocator,
+        words,
+        counts,
+        total_bytes,
+        vocab_size,
+        min_frequency,
+    );
+}
+
+pub fn trainMergesFromChunkCounts(
+    allocator: std.mem.Allocator,
+    chunks: []const u8,
+    offsets: []const u32,
+    counts: []const u32,
+    vocab_size: u32,
+    min_frequency: u32,
+) ![]Merge {
+    if (vocab_size < 256) {
+        return error.InvalidInput;
+    }
+    if (min_frequency == 0) {
+        return error.InvalidInput;
+    }
+    try validateChunkInputs(chunks, offsets, counts);
+
+    var arena_state = std.heap.ArenaAllocator.init(allocator);
+    defer arena_state.deinit();
+    const work_allocator = arena_state.allocator();
+
+    const word_count = counts.len;
+    var words = try work_allocator.alloc(Word, word_count);
+    for (words) |*word| word.* = .{};
+    for (0..word_count) |idx| {
+        const start = offsets[idx];
+        const end = offsets[idx + 1];
+        words[idx] = try Word.initFromBytes(work_allocator, chunks[start..end]);
+    }
+    defer for (words) |*word| word.deinit(work_allocator);
+    return trainPreparedWords(
+        allocator,
+        work_allocator,
+        words,
+        counts,
+        chunks.len,
+        vocab_size,
+        min_frequency,
+    );
 }
 
 test "trainMergesFromChunkCounts learns repeated pair" {

@@ -1179,28 +1179,19 @@ fn trainAsciiO200kFromTextSlices(
         }
     }
 
-    var flat_chunks = std.ArrayListUnmanaged(u8){};
-    try flat_chunks.ensureTotalCapacity(work_allocator, all_text.len);
-    const offsets = try work_allocator.alloc(u32, chunk_entries.items.len + 1);
-    const counts = try work_allocator.alloc(u32, chunk_entries.items.len);
-
-    offsets[0] = 0;
+    const counted_chunks = try work_allocator.alloc(trainer.CountedChunk, chunk_entries.items.len);
     for (chunk_entries.items, 0..) |entry, idx| {
         const start_usize = @as(usize, @intCast(entry.start));
         const end_usize = @as(usize, @intCast(entry.end));
-        try flat_chunks.appendSlice(work_allocator, all_text[start_usize..end_usize]);
-        if (flat_chunks.items.len > std.math.maxInt(u32)) {
-            return error.InvalidInput;
-        }
-        offsets[idx + 1] = @as(u32, @intCast(flat_chunks.items.len));
-        counts[idx] = entry.count;
+        counted_chunks[idx] = .{
+            .bytes = all_text[start_usize..end_usize],
+            .count = entry.count,
+        };
     }
 
-    return trainer.trainMergesFromChunkCounts(
+    return trainer.trainMergesFromCountedChunks(
         allocator,
-        flat_chunks.items,
-        offsets,
-        counts,
+        counted_chunks,
         vocab_size,
         min_frequency,
     );
