@@ -26,8 +26,6 @@ pub const Encoder = struct {
 
     const NodeArena = struct {
         backing: []align(@alignOf(u32)) u8,
-        start: []u32,
-        end: []u32,
         token: []u32,
         prev: []NodeIndex,
         next: []NodeIndex,
@@ -35,16 +33,10 @@ pub const Encoder = struct {
 
         fn init(allocator: std.mem.Allocator, node_count: usize) !NodeArena {
             const elem_size = @sizeOf(u32) * node_count;
-            const total_size = elem_size * 6;
+            const total_size = elem_size * 4;
             const backing = try allocator.alignedAlloc(u8, .fromByteUnits(@alignOf(u32)), total_size);
 
             var offset: usize = 0;
-            const start_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
-            const start_slice = std.mem.bytesAsSlice(u32, start_bytes);
-            offset += elem_size;
-            const end_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
-            const end_slice = std.mem.bytesAsSlice(u32, end_bytes);
-            offset += elem_size;
             const token_bytes: []align(@alignOf(u32)) u8 = @alignCast(backing[offset .. offset + elem_size]);
             const token_slice = std.mem.bytesAsSlice(u32, token_bytes);
             offset += elem_size;
@@ -59,8 +51,6 @@ pub const Encoder = struct {
 
             return .{
                 .backing = backing,
-                .start = start_slice,
-                .end = end_slice,
                 .token = token_slice,
                 .prev = prev_slice,
                 .next = next_slice,
@@ -554,9 +544,6 @@ pub const Encoder = struct {
         if (table.hasAllSingleByteTokens()) {
             for (text, 0..) |byte, idx| {
                 const byte_token = table.singleByteTokenRank(byte).?;
-                const idx_u32 = @as(u32, @intCast(idx));
-                arena.start[idx] = idx_u32;
-                arena.end[idx] = idx_u32 + 1;
                 arena.token[idx] = byte_token;
                 arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
                 arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
@@ -565,9 +552,6 @@ pub const Encoder = struct {
         } else {
             for (text, 0..) |byte, idx| {
                 const byte_token = table.singleByteTokenRank(byte) orelse table.get(text[idx .. idx + 1]) orelse return error.UnknownToken;
-                const idx_u32 = @as(u32, @intCast(idx));
-                arena.start[idx] = idx_u32;
-                arena.end[idx] = idx_u32 + 1;
                 arena.token[idx] = byte_token;
                 arena.prev[idx] = if (idx == 0) null_index else @as(NodeIndex, @intCast(idx - 1));
                 arena.next[idx] = if (idx + 1 < text.len) @as(NodeIndex, @intCast(idx + 1)) else null_index;
@@ -627,7 +611,6 @@ pub const Encoder = struct {
                 prefetchRead(3, &cache.entries[next_rank_slot]);
             }
 
-            arena.end[left_idx] = arena.end[actual_right_usize];
             arena.token[left_idx] = candidate.rank;
             arena.next[left_idx] = next_next_idx;
             arena.version[left_idx] +%= 1;
@@ -718,6 +701,18 @@ pub const Encoder = struct {
         return written;
     }
 
+    fn directRankForText(table: *const rank_loader.RankTable, text: []const u8) ?u32 {
+        if (text.len == 0) {
+            return null;
+        }
+        if (text.len == 1) {
+            if (table.singleByteTokenRank(text[0])) |rank| {
+                return rank;
+            }
+        }
+        return table.get(text);
+    }
+
     pub fn init() Encoder {
         return .{};
     }
@@ -757,6 +752,12 @@ pub const Encoder = struct {
             return allocator.alloc(u32, 0);
         }
 
+        if (directRankForText(table, text)) |rank| {
+            const out = try allocator.alloc(u32, 1);
+            out[0] = rank;
+            return out;
+        }
+
         var merged = try buildMergedNodes(allocator, text, table);
         defer merged.arena.deinit(allocator);
         const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
@@ -791,6 +792,12 @@ pub const Encoder = struct {
             return allocator.alloc(u32, 0);
         }
 
+        if (directRankForText(table, text)) |rank| {
+            const out = try allocator.alloc(u32, 1);
+            out[0] = rank;
+            return out;
+        }
+
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
@@ -815,6 +822,14 @@ pub const Encoder = struct {
             return 0;
         }
 
+        if (directRankForText(table, text)) |rank| {
+            if (out_tokens.len == 0) {
+                return error.OutOfMemory;
+            }
+            out_tokens[0] = rank;
+            return 1;
+        }
+
         var merged = try buildMergedNodes(allocator, text, table);
         defer merged.arena.deinit(allocator);
         return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
@@ -835,6 +850,14 @@ pub const Encoder = struct {
             return 0;
         }
 
+        if (directRankForText(table, text)) |rank| {
+            if (out_tokens.len == 0) {
+                return error.OutOfMemory;
+            }
+            out_tokens[0] = rank;
+            return 1;
+        }
+
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
@@ -850,6 +873,10 @@ pub const Encoder = struct {
 
         if (text.len == 0) {
             return 0;
+        }
+
+        if (directRankForText(table, text) != null) {
+            return 1;
         }
 
         var merged = try buildMergedNodes(allocator, text, table);
@@ -884,6 +911,10 @@ pub const Encoder = struct {
 
         if (text.len == 0) {
             return 0;
+        }
+
+        if (directRankForText(table, text) != null) {
+            return 1;
         }
 
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
@@ -1051,6 +1082,21 @@ test "encodeWithRanksReusableInto writes tokens without intermediate slice alloc
     const written = try enc.encodeWithRanksReusableInto(allocator, "abc", &table, cache, &scratch, out[0..]);
     try std.testing.expectEqual(@as(usize, 1), written);
     try std.testing.expectEqualSlices(u32, &[_]u32{4}, out[0..written]);
+}
+
+test "directRankForText returns exact whole-token hits" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\YWI= 1
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(?u32, 0), Encoder.directRankForText(&table, "a"));
+    try std.testing.expectEqual(@as(?u32, 1), Encoder.directRankForText(&table, "ab"));
+    try std.testing.expectEqual(@as(?u32, null), Encoder.directRankForText(&table, "abc"));
 }
 
 test "resolveQueueConfig clamps short inputs away from full rank-space buckets" {
