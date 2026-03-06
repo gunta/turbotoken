@@ -256,36 +256,6 @@ def test_o200k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.Monke
     assert fast_count == slow_count == len(slow)
 
 
-def test_o200k_cold_small_ascii_path_prefers_native_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    enc = get_encoding("o200k_base")
-    text = "hello"
-
-    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
-    baseline_tokens = enc.encode(text)
-    baseline_count = enc.count(text)
-
-    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", raising=False)
-    calls = {"encode": 0, "count": 0}
-
-    class Session:
-        def encode_bpe_ascii_o200k(self, data: bytes) -> list[int]:
-            assert data == text.encode("ascii")
-            calls["encode"] += 1
-            return baseline_tokens
-
-        def count_bpe_ascii_o200k(self, data: bytes) -> int:
-            assert data == text.encode("ascii")
-            calls["count"] += 1
-            return baseline_count
-
-    monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
-    enc._mergeable_ranks_cache = None
-
-    assert enc.encode(text) == baseline_tokens
-    assert enc.count(text) == baseline_count
-    assert calls == {"encode": 1, "count": 1}
-
-
 def test_o200k_native_full_ascii_auto_path_stays_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     enc = get_encoding("o200k_base")
     text = ("Tokenizer speed matters for large ASCII corpora. " * 2048).strip()

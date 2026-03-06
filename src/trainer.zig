@@ -416,13 +416,16 @@ const Word = struct {
     ids: std.ArrayListUnmanaged(u32) = .{},
 
     fn initFromBytes(allocator: std.mem.Allocator, chunk: []const u8) !Word {
-        var word = Word{};
-        errdefer word.deinit(allocator);
-        try word.ids.ensureTotalCapacityPrecise(allocator, chunk.len);
-        for (chunk) |byte| {
-            word.ids.appendAssumeCapacity(@as(u32, byte));
+        const ids = try allocator.alloc(u32, chunk.len);
+        for (chunk, 0..) |byte, idx| {
+            ids[idx] = @as(u32, byte);
         }
-        return word;
+        return .{
+            .ids = .{
+                .items = ids,
+                .capacity = ids.len,
+            },
+        };
     }
 
     fn deinit(self: *Word, allocator: std.mem.Allocator) void {

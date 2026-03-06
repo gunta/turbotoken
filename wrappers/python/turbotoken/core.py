@@ -45,6 +45,7 @@ _CL100K_ASCII_PAT_STR = (
 )
 _O200K_ASCII_PAT_BYTES = _O200K_ASCII_PAT_STR.encode("ascii")
 _CL100K_ASCII_PAT_BYTES = _CL100K_ASCII_PAT_STR.encode("ascii")
+_ASCII_BYTES_FASTPATH_MIN_BYTES = 32_768
 _CHAT_START = "<|im_start|>"
 _CHAT_END = "<|im_end|>"
 _CHAT_TEMPLATE_TURBOTOKEN_V1 = "turbotoken_v1"
@@ -639,16 +640,6 @@ class Encoding:
             return 65_536
         return max(1, value)
 
-    def _native_cold_small_text_max_bytes(self) -> int:
-        raw = os.environ.get("TURBOTOKEN_NATIVE_COLD_SMALL_TEXT_MAX_BYTES", "").strip()
-        if not raw:
-            return 64
-        try:
-            value = int(raw, 10)
-        except ValueError:
-            return 64
-        return max(0, value)
-
     def _native_o200k_large_ascii_auto_enabled(self, text: str) -> bool:
         if self.name not in {"o200k_base", "o200k_harmony"}:
             return False
@@ -773,62 +764,6 @@ class Encoding:
         self._native_rank_payload_ref = rank_payload
         return session
 
-    def _encode_ordinary_cold_native(self, text: str) -> list[int] | None:
-        if self._mergeable_ranks_cache is not None or not text.isascii():
-            return None
-        import threading
-
-        if threading.current_thread() is not threading.main_thread():
-            return None
-        max_bytes = self._native_cold_small_text_max_bytes()
-        if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
-            return None
-        session = self._native_rank_session()
-        if session is None:
-            return None
-        data = text.encode("ascii")
-        if (
-            self.name == "cl100k_base"
-            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
-            not in {"1", "true", "yes"}
-        ):
-            return session.encode_bpe_ascii_letter_space(data)
-        if (
-            self.name in {"o200k_base", "o200k_harmony"}
-            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
-            not in {"1", "true", "yes"}
-        ):
-            return session.encode_bpe_ascii_o200k(data)
-        return None
-
-    def _count_ordinary_cold_native(self, text: str) -> int | None:
-        if self._mergeable_ranks_cache is not None or not text.isascii():
-            return None
-        import threading
-
-        if threading.current_thread() is not threading.main_thread():
-            return None
-        max_bytes = self._native_cold_small_text_max_bytes()
-        if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
-            return None
-        session = self._native_rank_session()
-        if session is None:
-            return None
-        data = text.encode("ascii")
-        if (
-            self.name == "cl100k_base"
-            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
-            not in {"1", "true", "yes"}
-        ):
-            return session.count_bpe_ascii_letter_space(data)
-        if (
-            self.name in {"o200k_base", "o200k_harmony"}
-            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
-            not in {"1", "true", "yes"}
-        ):
-            return session.count_bpe_ascii_o200k(data)
-        return None
-
     def _bpe_tokenize_piece(self, piece: bytes) -> tuple[int, ...]:
         if not piece:
             return ()
@@ -932,12 +867,57 @@ class Encoding:
             return []
         return list(self._bpe_tokenize_piece(data))
 
+    def _encode_ordinary_ascii_bytes_impl(self, data: bytes, ascii_regex: re.Pattern[bytes]) -> list[int]:
+        bpe_cache = self._bpe_cache
+        if len(data) >= 8192:
+            self._ensure_persistent_piece_cache()
+        pieces = [piece for piece in ascii_regex.findall(data) if piece]
+        if not pieces:
+            return []
+        new_persistent_entries: dict[bytes, tuple[int, ...]] = {}
+
+        if len(pieces) >= 4096:
+            unique_pieces = set(pieces)
+            if len(unique_pieces) * 4 <= len(pieces):
+                import itertools
+
+                unique_token_map: dict[bytes, tuple[int, ...]] = {}
+                for piece_bytes in unique_pieces:
+                    cached = bpe_cache.get(piece_bytes)
+                    if cached is None:
+                        cached = self._bpe_tokenize_piece(piece_bytes)
+                        if len(piece_bytes) <= 64:
+                            new_persistent_entries[piece_bytes] = cached
+                    unique_token_map[piece_bytes] = cached
+                out = list(itertools.chain.from_iterable(unique_token_map[piece] for piece in pieces))
+                if new_persistent_entries:
+                    self._persist_piece_entries(new_persistent_entries)
+                return out
+
+        out: list[int] = []
+        last_piece: bytes | None = None
+        last_tokens: tuple[int, ...] = ()
+        for piece_bytes in pieces:
+            if piece_bytes == last_piece:
+                out.extend(last_tokens)
+                continue
+
+            cached = bpe_cache.get(piece_bytes)
+            if cached is None:
+                cached = self._bpe_tokenize_piece(piece_bytes)
+                if len(piece_bytes) <= 64:
+                    new_persistent_entries[piece_bytes] = cached
+
+            out.extend(cached)
+            last_piece = piece_bytes
+            last_tokens = cached
+        if new_persistent_entries:
+            self._persist_piece_entries(new_persistent_entries)
+        return out
+
     def _encode_ordinary_impl(self, text: str) -> list[int]:
         if not text:
             return []
-        cold_native_tokens = self._encode_ordinary_cold_native(text)
-        if cold_native_tokens is not None:
-            return cold_native_tokens
         if (
             self.name == "cl100k_base"
             and text.isascii()
@@ -972,6 +952,9 @@ class Encoding:
             return native_range_tokens
 
         if text.isascii():
+            ascii_regex_bytes = self._ascii_piece_regex_bytes()
+            if ascii_regex_bytes is not None and len(text) >= _ASCII_BYTES_FASTPATH_MIN_BYTES:
+                return self._encode_ordinary_ascii_bytes_impl(text.encode("ascii"), ascii_regex_bytes)
             ascii_regex = self._ascii_piece_regex()
             if ascii_regex is not None:
                 return self._encode_ordinary_ascii_impl(text, ascii_regex)
@@ -1337,12 +1320,59 @@ class Encoding:
 
         return out
 
+    def _count_ordinary_ascii_bytes_impl(self, data: bytes, ascii_regex: re.Pattern[bytes]) -> int:
+        bpe_cache = self._bpe_cache
+        if len(data) >= 8192:
+            self._ensure_persistent_piece_cache()
+        pieces = [piece for piece in ascii_regex.findall(data) if piece]
+        if not pieces:
+            return 0
+        new_persistent_entries: dict[bytes, tuple[int, ...]] = {}
+
+        if len(pieces) >= 4096:
+            unique_pieces = set(pieces)
+            if len(unique_pieces) * 4 <= len(pieces):
+                from collections import Counter
+
+                piece_counts = Counter(pieces)
+                unique_len_map: dict[bytes, int] = {}
+                for piece_bytes in unique_pieces:
+                    cached = bpe_cache.get(piece_bytes)
+                    if cached is None:
+                        cached = self._bpe_tokenize_piece(piece_bytes)
+                        if len(piece_bytes) <= 64:
+                            new_persistent_entries[piece_bytes] = cached
+                    unique_len_map[piece_bytes] = len(cached)
+                total = sum(unique_len_map[piece] * count for piece, count in piece_counts.items())
+                if new_persistent_entries:
+                    self._persist_piece_entries(new_persistent_entries)
+                return total
+
+        count = 0
+        last_piece: bytes | None = None
+        last_cached_len = 0
+        for piece_bytes in pieces:
+            if piece_bytes == last_piece:
+                count += last_cached_len
+                continue
+
+            cached = bpe_cache.get(piece_bytes)
+            if cached is None:
+                cached = self._bpe_tokenize_piece(piece_bytes)
+                if len(piece_bytes) <= 64:
+                    new_persistent_entries[piece_bytes] = cached
+
+            cached_len = len(cached)
+            count += cached_len
+            last_piece = piece_bytes
+            last_cached_len = cached_len
+        if new_persistent_entries:
+            self._persist_piece_entries(new_persistent_entries)
+        return count
+
     def _count_ordinary_impl(self, text: str) -> int:
         if not text:
             return 0
-        cold_native_count = self._count_ordinary_cold_native(text)
-        if cold_native_count is not None:
-            return cold_native_count
         if (
             self.name == "cl100k_base"
             and text.isascii()
@@ -1377,6 +1407,9 @@ class Encoding:
             return native_range_count
 
         if text.isascii():
+            ascii_regex_bytes = self._ascii_piece_regex_bytes()
+            if ascii_regex_bytes is not None and len(text) >= _ASCII_BYTES_FASTPATH_MIN_BYTES:
+                return self._count_ordinary_ascii_bytes_impl(text.encode("ascii"), ascii_regex_bytes)
             ascii_regex = self._ascii_piece_regex()
             if ascii_regex is not None:
                 return self._count_ordinary_ascii_impl(text, ascii_regex)
