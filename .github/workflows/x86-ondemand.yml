@@ -138,36 +138,49 @@ jobs:
           uname -a || true
 
       - name: Build native library
-        run: zig build -Doptimize=ReleaseFast
+        env:
+          GHA_HEARTBEAT_LABEL: zig-build-release
+        run: scripts/gha-with-heartbeat.sh zig build -Doptimize=ReleaseFast
 
       - name: Run Python tests
-        run: python -m pytest -q
+        env:
+          GHA_HEARTBEAT_LABEL: python-pytest
+        run: scripts/gha-with-heartbeat.sh python -m pytest -q
 
       - name: Run JS smoke tests
-        run: bun test wrappers/js/tests/smoke.test.ts
+        env:
+          GHA_HEARTBEAT_LABEL: js-smoke
+        run: scripts/gha-with-heartbeat.sh bun test wrappers/js/tests/smoke.test.ts
 
       - name: Run Zig tests
-        run: zig build test
+        env:
+          GHA_HEARTBEAT_LABEL: zig-build-test
+        run: scripts/gha-with-heartbeat.sh zig build test
 
       - name: Run Zig cross-target smoke build
         if: ${{ matrix.id == 'linux' }}
-        run: zig build targets
+        env:
+          GHA_HEARTBEAT_LABEL: zig-build-targets
+        run: scripts/gha-with-heartbeat.sh zig build targets
 
       - name: Run Linux x86_64 CPU governance
         if: ${{ matrix.id == 'linux' && inputs.run_cpu_gates }}
         env:
+          GHA_HEARTBEAT_LABEL: linux-cpu-governance
           TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
           TURBOTOKEN_BENCH_SPEED: ${{ inputs.benchmark_speed }}
           TURBOTOKEN_CI_ARTIFACT_SPEED: ${{ inputs.benchmark_speed }}
         run: |
-          bun run scripts/ci-benchmark.ts \
+          scripts/gha-with-heartbeat.sh bun run scripts/ci-benchmark.ts \
             --mode=cpu \
             --profile=${{ matrix.cpu_gate_profile }} \
             --artifact-speed=${{ inputs.benchmark_speed }}
 
       - name: Run release readiness
         if: ${{ matrix.id == 'linux' && inputs.run_release_check }}
-        run: bun run release:check
+        env:
+          GHA_HEARTBEAT_LABEL: release-check
+        run: scripts/gha-with-heartbeat.sh bun run release:check
 
       - name: Upload Linux benchmark artifacts
         if: ${{ always() && matrix.id == 'linux' }}
