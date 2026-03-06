@@ -1803,6 +1803,17 @@ const AsciiO200kEncodeCacheEntry = struct {
     tokens: []u32,
 };
 
+const AsciiO200kSmallCountCacheEntry = struct {
+    piece: []const u8,
+    count: usize,
+};
+
+const AsciiO200kSmallEncodeCacheEntry = struct {
+    piece: []const u8,
+    tokens: []u32,
+};
+
+const ascii_o200k_small_cache_cap: usize = 64;
 const ascii_o200k_piece_cache_cap: usize = 65_536;
 const ascii_letter_space_piece_cache_cap: usize = 65_536;
 
@@ -1812,6 +1823,8 @@ fn countBpeAsciiO200kFromTable(
     in_slice: []const u8,
     table: *const rank_loader.RankTable,
 ) !usize {
+    var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallCountCacheEntry = undefined;
+    var small_cache_len: usize = 0;
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
     defer piece_cache.deinit(allocator);
 
@@ -1819,13 +1832,38 @@ fn countBpeAsciiO200kFromTable(
     var total_count: usize = 0;
     while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
         const piece = in_slice[range.start..range.end];
-        if (piece_cache.get(piece)) |cached| {
-            total_count += cached.count;
+        var handled = false;
+        var small_idx: usize = 0;
+        while (small_idx < small_cache_len) : (small_idx += 1) {
+            const cached = small_cache[small_idx];
+            if (cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+                total_count += cached.count;
+                handled = true;
+                break;
+            }
+        }
+        if (handled) {
             continue;
+        }
+
+        if (small_cache_len >= ascii_o200k_small_cache_cap) {
+            if (piece_cache.get(piece)) |cached| {
+                total_count += cached.count;
+                continue;
+            }
         }
 
         const piece_count = try backend.count(allocator, piece, table);
         total_count += piece_count;
+
+        if (small_cache_len < ascii_o200k_small_cache_cap) {
+            small_cache[small_cache_len] = .{
+                .piece = piece,
+                .count = piece_count,
+            };
+            small_cache_len += 1;
+            continue;
+        }
 
         if (piece_cache.count() >= ascii_o200k_piece_cache_cap) {
             continue;
@@ -1835,6 +1873,100 @@ fn countBpeAsciiO200kFromTable(
     }
 
     return total_count;
+}
+
+fn encodeBpeAsciiO200kFromTable(
+    allocator: std.mem.Allocator,
+    backend: *const ScalarBackend,
+    in_slice: []const u8,
+    table: *const rank_loader.RankTable,
+    out_tokens: [*c]u32,
+    out_cap: usize,
+) !isize {
+    var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallEncodeCacheEntry = undefined;
+    var small_cache_len: usize = 0;
+    defer {
+        for (small_cache[0..small_cache_len]) |entry| {
+            allocator.free(entry.tokens);
+        }
+    }
+
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
+    defer {
+        var it = piece_cache.iterator();
+        while (it.next()) |entry| {
+            allocator.free(entry.value_ptr.tokens);
+        }
+        piece_cache.deinit(allocator);
+    }
+
+    var idx: usize = 0;
+    var total_tokens: usize = 0;
+    while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
+        const piece = in_slice[range.start..range.end];
+
+        var handled = false;
+        var small_idx: usize = 0;
+        while (small_idx < small_cache_len) : (small_idx += 1) {
+            const cached = small_cache[small_idx];
+            if (cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+                if (cached.tokens.len > out_cap -| total_tokens) {
+                    return error.OutOfMemory;
+                }
+                @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
+                total_tokens += cached.tokens.len;
+                handled = true;
+                break;
+            }
+        }
+        if (handled) {
+            continue;
+        }
+
+        if (small_cache_len >= ascii_o200k_small_cache_cap) {
+            if (piece_cache.get(piece)) |cached| {
+                if (cached.tokens.len > out_cap -| total_tokens) {
+                    return error.OutOfMemory;
+                }
+                @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
+                total_tokens += cached.tokens.len;
+                continue;
+            }
+        }
+
+        const encoded = try backend.encode(allocator, piece, table);
+        defer allocator.free(encoded);
+        if (encoded.len > out_cap -| total_tokens) {
+            return error.OutOfMemory;
+        }
+        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
+        total_tokens += encoded.len;
+
+        const token_copy = try allocator.alloc(u32, encoded.len);
+        errdefer allocator.free(token_copy);
+        @memcpy(token_copy, encoded);
+
+        if (small_cache_len < ascii_o200k_small_cache_cap) {
+            small_cache[small_cache_len] = .{
+                .piece = piece,
+                .tokens = token_copy,
+            };
+            small_cache_len += 1;
+            continue;
+        }
+
+        if (piece_cache.count() < ascii_o200k_piece_cache_cap) {
+            try piece_cache.put(allocator, piece, .{ .tokens = token_copy });
+            continue;
+        }
+
+        allocator.free(token_copy);
+    }
+
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return error.OutOfMemory;
+    }
+    return @as(isize, @intCast(total_tokens));
 }
 
 pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
@@ -1851,16 +1983,9 @@ pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
-    var ranges = allocAsciiO200kRanges(allocator, in_slice) catch return -1;
-    defer ranges.deinit(allocator);
+    const backend = ScalarBackend.init();
 
-    const token_count = countBpeRangesFromTable(
-        allocator,
-        in_slice,
-        ranges.starts,
-        ranges.ends,
-        table,
-    ) catch return -1;
+    const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
     if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
@@ -2008,32 +2133,16 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
-    var ranges = allocAsciiO200kRanges(allocator, in_slice) catch return -1;
-    defer ranges.deinit(allocator);
+    const backend = ScalarBackend.init();
 
     if (out_tokens == null) {
-        const token_count = countBpeRangesFromTable(
-            allocator,
-            in_slice,
-            ranges.starts,
-            ranges.ends,
-            table,
-        ) catch return -1;
+        const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
         if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
             return -1;
         }
         return @as(isize, @intCast(token_count));
     }
-    return encodeBpeRangesFromTable(
-        allocator,
-        in_slice,
-        ranges.starts,
-        ranges.ends,
-        table,
-        out_tokens,
-        out_cap,
-        null,
-    );
+    return encodeBpeAsciiO200kFromTable(allocator, &backend, in_slice, table, out_tokens, out_cap) catch return -1;
 }
 
 pub export fn turbotoken_decode_bpe_from_ranks(
