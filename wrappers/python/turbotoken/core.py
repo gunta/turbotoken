@@ -639,23 +639,21 @@ class Encoding:
             return 65_536
         return max(1, value)
 
-    def _native_o200k_full_auto_enabled(self, text: str) -> bool:
+    def _native_o200k_large_ascii_auto_enabled(self, text: str) -> bool:
         if self.name not in {"o200k_base", "o200k_harmony"}:
             return False
         if not text.isascii():
             return False
-        if len(text) < self._native_o200k_full_min_bytes():
+        if _utf8_len_fast(text) < self._native_o200k_full_min_bytes():
             return False
+        # Keep the default route conservative until more hosts have dedicated tuning data.
         return _is_linux_x86_64_host()
 
+    def _native_o200k_full_auto_enabled(self, text: str) -> bool:
+        return self._native_o200k_large_ascii_auto_enabled(text)
+
     def _native_range_batch_auto_enabled(self, text: str) -> bool:
-        if self.name not in {"o200k_base", "o200k_harmony"}:
-            return False
-        if not text.isascii():
-            return False
-        if len(text) < self._native_o200k_full_min_bytes():
-            return False
-        return _is_linux_x86_64_host()
+        return self._native_o200k_large_ascii_auto_enabled(text)
 
     def _native_decode_min_tokens(self) -> int:
         raw = os.environ.get("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "").strip()

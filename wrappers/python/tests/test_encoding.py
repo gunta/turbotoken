@@ -262,7 +262,7 @@ def test_o200k_native_full_ascii_auto_path_activates_on_linux_x86(monkeypatch: p
 
     monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
     monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
-    baseline_tokens = enc.encode_ordinary(text)
+    baseline_tokens = enc.encode(text)
     baseline_count = enc.count(text)
 
     monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", raising=False)
@@ -285,7 +285,7 @@ def test_o200k_native_full_ascii_auto_path_activates_on_linux_x86(monkeypatch: p
 
     monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
 
-    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.encode(text) == baseline_tokens
     assert enc.count(text) == baseline_count
     assert calls == {"encode": 1, "count": 1}
 
@@ -296,7 +296,7 @@ def test_o200k_native_full_ascii_auto_path_respects_disable(monkeypatch: pytest.
 
     monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
     monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
-    baseline_tokens = enc.encode_ordinary(text)
+    baseline_tokens = enc.encode(text)
     baseline_count = enc.count(text)
 
     monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
@@ -311,7 +311,7 @@ def test_o200k_native_full_ascii_auto_path_respects_disable(monkeypatch: pytest.
 
     monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
 
-    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.encode(text) == baseline_tokens
     assert enc.count(text) == baseline_count
 
 
@@ -357,7 +357,7 @@ def test_native_range_batch_auto_path_activates_on_linux_x86(monkeypatch: pytest
 
     monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
     monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
-    baseline_tokens = enc.encode_ordinary(text)
+    baseline_tokens = enc.encode(text)
     baseline_count = enc.count(text)
 
     data = text.encode("ascii")
@@ -391,9 +391,48 @@ def test_native_range_batch_auto_path_activates_on_linux_x86(monkeypatch: pytest
 
     monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
 
-    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.encode(text) == baseline_tokens
     assert enc.count(text) == baseline_count
     assert calls == {"encode": 1, "count": 1}
+
+
+def test_o200k_native_auto_paths_stay_off_below_large_ascii_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Small ASCII payloads should stay on the wrapper fallback path. " * 8).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
+    baseline_tokens = enc.encode(text)
+    baseline_count = enc.count(text)
+
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", raising=False)
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", raising=False)
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", raising=False)
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE", raising=False)
+    monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(core_module.platform, "machine", lambda: "x86_64")
+
+    class Session:
+        def encode_bpe_ascii_o200k(self, _: bytes) -> list[int]:
+            raise AssertionError("native full path should not auto-enable below the large-input threshold")
+
+        def count_bpe_ascii_o200k(self, _: bytes) -> int:
+            raise AssertionError("native full path should not auto-enable below the large-input threshold")
+
+        def encode_bpe_ranges(
+            self,
+            _: bytes,
+            __: list[tuple[int, int]],
+        ) -> tuple[list[int], list[int]]:
+            raise AssertionError("native range path should not auto-enable below the large-input threshold")
+
+        def count_bpe_ranges(self, _: bytes, __: list[tuple[int, int]]) -> int:
+            raise AssertionError("native range path should not auto-enable below the large-input threshold")
+
+    monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
+
+    assert enc.encode(text) == baseline_tokens
+    assert enc.count(text) == baseline_count
 
 
 def test_decode_bytes_native_fast_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
