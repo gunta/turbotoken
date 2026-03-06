@@ -502,12 +502,12 @@ pub const Encoder = struct {
         if (text.len > 3) {
             return null;
         }
-        if (out_tokens.len < text.len) {
-            return error.OutOfMemory;
-        }
 
         const token0 = try byteToken(table, text[0]);
         if (text.len == 1) {
+            if (out_tokens.len < 1) {
+                return error.OutOfMemory;
+            }
             out_tokens[0] = token0;
             return 1;
         }
@@ -515,8 +515,14 @@ pub const Encoder = struct {
         const token1 = try byteToken(table, text[1]);
         if (text.len == 2) {
             if (try pairRank(allocator, table, cache, scratch, token0, token1)) |merged| {
+                if (out_tokens.len < 1) {
+                    return error.OutOfMemory;
+                }
                 out_tokens[0] = merged;
                 return 1;
+            }
+            if (out_tokens.len < 2) {
+                return error.OutOfMemory;
             }
             out_tokens[0] = token0;
             out_tokens[1] = token1;
@@ -528,6 +534,9 @@ pub const Encoder = struct {
         const pair12 = try pairRank(allocator, table, cache, scratch, token1, token2);
 
         if (pair01 == null and pair12 == null) {
+            if (out_tokens.len < 3) {
+                return error.OutOfMemory;
+            }
             out_tokens[0] = token0;
             out_tokens[1] = token1;
             out_tokens[2] = token2;
@@ -537,8 +546,14 @@ pub const Encoder = struct {
         if (pair12 == null or (pair01 != null and pair01.? <= pair12.?)) {
             const merged_left = pair01.?;
             if (try pairRank(allocator, table, cache, scratch, merged_left, token2)) |merged_all| {
+                if (out_tokens.len < 1) {
+                    return error.OutOfMemory;
+                }
                 out_tokens[0] = merged_all;
                 return 1;
+            }
+            if (out_tokens.len < 2) {
+                return error.OutOfMemory;
             }
             out_tokens[0] = merged_left;
             out_tokens[1] = token2;
@@ -547,8 +562,14 @@ pub const Encoder = struct {
 
         const merged_right = pair12.?;
         if (try pairRank(allocator, table, cache, scratch, token0, merged_right)) |merged_all| {
+            if (out_tokens.len < 1) {
+                return error.OutOfMemory;
+            }
             out_tokens[0] = merged_all;
             return 1;
+        }
+        if (out_tokens.len < 2) {
+            return error.OutOfMemory;
         }
         out_tokens[0] = token0;
         out_tokens[1] = merged_right;
