@@ -1,7 +1,42 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const hash = @import("hash.zig");
 
 pub const PairKey = u64;
+
+const aarch64_crc_supported = builtin.cpu.arch == .aarch64 and
+    std.Target.aarch64.featureSetHas(builtin.cpu.features, .crc);
+const x86_crc_supported = builtin.cpu.arch == .x86_64 and
+    std.Target.x86.featureSetHas(builtin.cpu.features, .sse4_2);
+
+extern fn turbotoken_arm64_hash_crc32_u64(key: u64) u64;
+extern fn turbotoken_x86_hash_crc32_u64(key: u64) u64;
+
+fn hashPairKey(key: PairKey) u64 {
+    if (comptime aarch64_crc_supported) {
+        return turbotoken_arm64_hash_crc32_u64(key);
+    }
+    if (comptime x86_crc_supported) {
+        return turbotoken_x86_hash_crc32_u64(key);
+    }
+    return hash.bytes(std.mem.asBytes(&key));
+}
+
+const PairKeyContext = struct {
+    pub fn hash(_: @This(), key: PairKey) u64 {
+        return hashPairKey(key);
+    }
+
+    pub fn eql(_: @This(), a: PairKey, b: PairKey) bool {
+        return a == b;
+    }
+};
+
+fn PairMap(comptime V: type) type {
+    return std.HashMapUnmanaged(PairKey, V, PairKeyContext, std.hash_map.default_max_load_percentage);
+}
+
+const PairSet = PairMap(void);
 
 pub const Merge = struct {
     left: u32,
@@ -161,10 +196,10 @@ fn buildInitialPairStateSequential(
     allocator: std.mem.Allocator,
     words: []const Word,
     counts: []const u32,
-    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
-    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+    pair_counts: *PairMap(i64),
+    where_to_update: *PairMap(std.AutoHashMapUnmanaged(u32, void)),
 ) !void {
-    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    var seen_pairs: PairSet = .{};
     defer seen_pairs.deinit(allocator);
 
     for (0..words.len) |word_idx| {
@@ -200,8 +235,8 @@ const PairInitShard = struct {
     words: []const Word,
     counts: []const u32,
     arena: std.heap.ArenaAllocator,
-    pair_counts: std.AutoHashMapUnmanaged(PairKey, i64) = .{},
-    where_to_update: std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)) = .{},
+    pair_counts: PairMap(i64) = .{},
+    where_to_update: PairMap(std.AutoHashMapUnmanaged(u32, void)) = .{},
     failed: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     fn init(
@@ -239,7 +274,7 @@ const PairInitShard = struct {
 
 fn pairInitShardWorker(shard: *PairInitShard) void {
     const allocator = shard.allocator();
-    var seen_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    var seen_pairs: PairSet = .{};
     defer seen_pairs.deinit(allocator);
 
     var word_idx = shard.start;
@@ -285,8 +320,8 @@ fn pairInitShardWorker(shard: *PairInitShard) void {
 fn mergePairInitShard(
     allocator: std.mem.Allocator,
     shard: *const PairInitShard,
-    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
-    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+    pair_counts: *PairMap(i64),
+    where_to_update: *PairMap(std.AutoHashMapUnmanaged(u32, void)),
 ) !void {
     var count_iter = shard.pair_counts.iterator();
     while (count_iter.next()) |entry| {
@@ -316,8 +351,8 @@ fn buildInitialPairState(
     words: []const Word,
     counts: []const u32,
     total_bytes: usize,
-    pair_counts: *std.AutoHashMapUnmanaged(PairKey, i64),
-    where_to_update: *std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)),
+    pair_counts: *PairMap(i64),
+    where_to_update: *PairMap(std.AutoHashMapUnmanaged(u32, void)),
 ) !void {
     if (builtin.single_threaded or builtin.os.tag == .freestanding) {
         try buildInitialPairStateSequential(allocator, words, counts, pair_counts, where_to_update);
@@ -527,11 +562,11 @@ pub fn trainMergesFromChunkCounts(
         @min(initial_pair_slots, training_pair_map_reserve_cap),
     );
 
-    var pair_counts: std.AutoHashMapUnmanaged(PairKey, i64) = .{};
+    var pair_counts: PairMap(i64) = .{};
     defer pair_counts.deinit(work_allocator);
     try pair_counts.ensureTotalCapacity(work_allocator, pair_map_reserve);
 
-    var where_to_update: std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)) = .{};
+    var where_to_update: PairMap(std.AutoHashMapUnmanaged(u32, void)) = .{};
     defer {
         var iter = where_to_update.valueIterator();
         while (iter.next()) |set_map| {
@@ -558,14 +593,14 @@ pub fn trainMergesFromChunkCounts(
     defer deltas.deinit(work_allocator);
     try deltas.ensureTotalCapacity(work_allocator, 8);
 
-    var seen_positive: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    var seen_positive: PairSet = .{};
     defer seen_positive.deinit(work_allocator);
     try seen_positive.ensureTotalCapacity(work_allocator, 128);
 
     var candidate_indices: std.ArrayListUnmanaged(u32) = .{};
     defer candidate_indices.deinit(work_allocator);
     try candidate_indices.ensureTotalCapacity(work_allocator, 256);
-    var local_changed_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
+    var local_changed_pairs: PairSet = .{};
     defer local_changed_pairs.deinit(work_allocator);
     try local_changed_pairs.ensureTotalCapacity(work_allocator, 256);
 

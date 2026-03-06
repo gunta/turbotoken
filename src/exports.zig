@@ -460,6 +460,81 @@ fn encodeBpeRangesFromTable(
     return @as(isize, @intCast(total_tokens));
 }
 
+fn countBpeRangesFromTable(
+    allocator: std.mem.Allocator,
+    in_slice: []const u8,
+    starts: []const u32,
+    ends: []const u32,
+    table: *const rank_loader.RankTable,
+) !usize {
+    if (starts.len != ends.len) {
+        return error.InvalidInput;
+    }
+
+    for (starts, ends) |start, finish| {
+        if (finish < start or finish > in_slice.len) {
+            return error.InvalidInput;
+        }
+    }
+
+    const counts = try allocator.alloc(usize, starts.len);
+    defer allocator.free(counts);
+    @memset(counts, 0);
+
+    const total_bytes = rangeTotalBytes(starts, ends);
+    const worker_count = chooseBpeWorkerCount(starts.len, total_bytes);
+    var count_ctx = CountRangesContext{
+        .in_slice = in_slice,
+        .starts = starts,
+        .ends = ends,
+        .table = table,
+        .counts = counts,
+    };
+
+    if (!runCountRangesParallel(allocator, &count_ctx, worker_count)) {
+        return error.OutOfMemory;
+    }
+
+    var total_tokens: usize = 0;
+    for (counts) |count| {
+        if (count > std.math.maxInt(usize) - total_tokens) {
+            return error.OutOfMemory;
+        }
+        total_tokens += count;
+    }
+    return total_tokens;
+}
+
+const PretokenizedRanges = struct {
+    starts: []u32,
+    ends: []u32,
+
+    fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        allocator.free(self.starts);
+        allocator.free(self.ends);
+        self.* = .{ .starts = &.{}, .ends = &.{} };
+    }
+};
+
+fn allocAsciiO200kRanges(allocator: std.mem.Allocator, in_slice: []const u8) !PretokenizedRanges {
+    const range_count = try pretokenizer.splitAsciiO200kRanges(in_slice, null, null);
+
+    const starts = try allocator.alloc(u32, range_count);
+    errdefer allocator.free(starts);
+    const ends = try allocator.alloc(u32, range_count);
+    errdefer allocator.free(ends);
+
+    const written = try pretokenizer.splitAsciiO200kRanges(in_slice, starts, ends);
+    if (written != range_count) {
+        return error.InvalidInput;
+    }
+
+    return .{
+        .starts = starts,
+        .ends = ends,
+    };
+}
+
 pub export fn turbotoken_version() [*c]const u8 {
     return "0.1.0-dev";
 }
@@ -1304,6 +1379,36 @@ pub export fn turbotoken_encode_bpe_ranges_from_ranks(
     );
 }
 
+pub export fn turbotoken_count_bpe_ranges_from_ranks(
+    rank_bytes: [*c]const u8,
+    rank_len: usize,
+    text: [*c]const u8,
+    text_len: usize,
+    range_starts: [*c]const u32,
+    range_ends: [*c]const u32,
+    ranges_len: usize,
+) isize {
+    if (rank_bytes == null or range_starts == null or range_ends == null) {
+        return -1;
+    }
+    if (text_len > 0 and text == null) {
+        return -1;
+    }
+
+    const in_slice: []const u8 = if (text_len == 0) &[_]u8{} else text[0..text_len];
+    const starts = range_starts[0..ranges_len];
+    const ends = range_ends[0..ranges_len];
+
+    const allocator = runtimeAllocator();
+    const rank_slice = rank_bytes[0..rank_len];
+    const table = ensureCachedRankTable(rank_slice) catch return -1;
+    const total_tokens = countBpeRangesFromTable(allocator, in_slice, starts, ends, table) catch return -1;
+    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        return -1;
+    }
+    return @as(isize, @intCast(total_tokens));
+}
+
 pub export fn turbotoken_bpe_ranges_token_layout_from_ranks(
     rank_bytes: [*c]const u8,
     rank_len: usize,
@@ -1746,9 +1851,16 @@ pub export fn turbotoken_count_bpe_ascii_o200k_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
-    const backend = ScalarBackend.init();
+    var ranges = allocAsciiO200kRanges(allocator, in_slice) catch return -1;
+    defer ranges.deinit(allocator);
 
-    const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
+    const token_count = countBpeRangesFromTable(
+        allocator,
+        in_slice,
+        ranges.starts,
+        ranges.ends,
+        table,
+    ) catch return -1;
     if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
@@ -1896,58 +2008,32 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
-    const backend = ScalarBackend.init();
+    var ranges = allocAsciiO200kRanges(allocator, in_slice) catch return -1;
+    defer ranges.deinit(allocator);
 
     if (out_tokens == null) {
-        const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
+        const token_count = countBpeRangesFromTable(
+            allocator,
+            in_slice,
+            ranges.starts,
+            ranges.ends,
+            table,
+        ) catch return -1;
         if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
             return -1;
         }
         return @as(isize, @intCast(token_count));
     }
-
-    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
-    defer {
-        var it = piece_cache.iterator();
-        while (it.next()) |entry| {
-            allocator.free(entry.value_ptr.tokens);
-        }
-        piece_cache.deinit(allocator);
-    }
-
-    var idx: usize = 0;
-    var total_tokens: usize = 0;
-    while ((pretokenizer.nextAsciiO200kRange(in_slice, &idx) catch return -1)) |range| {
-        const piece = in_slice[range.start..range.end];
-        if (piece_cache.get(piece)) |cached| {
-            if (cached.tokens.len > out_cap -| total_tokens) {
-                return -1;
-            }
-            @memcpy(out_tokens[total_tokens .. total_tokens + cached.tokens.len], cached.tokens);
-            total_tokens += cached.tokens.len;
-            continue;
-        }
-
-        const encoded = backend.encode(allocator, piece, table) catch return -1;
-        defer allocator.free(encoded);
-        if (encoded.len > out_cap -| total_tokens) {
-            return -1;
-        }
-        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
-        total_tokens += encoded.len;
-
-        if (piece_cache.count() < ascii_o200k_piece_cache_cap) {
-            const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
-            errdefer allocator.free(token_copy);
-            @memcpy(token_copy, encoded);
-            piece_cache.put(allocator, piece, .{ .tokens = token_copy }) catch return -1;
-        }
-    }
-
-    if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
-        return -1;
-    }
-    return @as(isize, @intCast(total_tokens));
+    return encodeBpeRangesFromTable(
+        allocator,
+        in_slice,
+        ranges.starts,
+        ranges.ends,
+        table,
+        out_tokens,
+        out_cap,
+        null,
+    );
 }
 
 pub export fn turbotoken_decode_bpe_from_ranks(
@@ -2496,6 +2582,30 @@ test "range bpe encode from ranks supports count-only mode" {
     );
     try std.testing.expectEqual(@as(isize, 4), needed);
     try std.testing.expectEqualSlices(u32, &[_]u32{ 0, 2, 4 }, &token_offsets);
+}
+
+test "range bpe count export returns total tokens" {
+    const ranks =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWI= 2
+        \\
+    ;
+
+    const text = "abbabb";
+    const starts = [_]u32{ 0, 0 };
+    const ends = [_]u32{ 3, 3 };
+
+    const counted = turbotoken_count_bpe_ranges_from_ranks(
+        ranks.ptr,
+        ranks.len,
+        text.ptr,
+        text.len,
+        &starts,
+        &ends,
+        starts.len,
+    );
+    try std.testing.expectEqual(@as(isize, 4), counted);
 }
 
 test "range bpe token layout export returns token starts and source chunks" {

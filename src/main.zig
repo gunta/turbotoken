@@ -33,6 +33,7 @@ comptime {
     _ = exports.turbotoken_train_bpe_ascii_o200k_multi;
     _ = exports.turbotoken_encode_bpe_batch_from_ranks;
     _ = exports.turbotoken_encode_bpe_ranges_from_ranks;
+    _ = exports.turbotoken_count_bpe_ranges_from_ranks;
     _ = exports.turbotoken_bpe_ranges_token_layout_from_ranks;
     _ = exports.turbotoken_filter_tokens_by_keep_flags;
     _ = exports.turbotoken_encode_bpe_chunked_stitched_from_ranks;

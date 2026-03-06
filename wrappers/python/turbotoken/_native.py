@@ -222,6 +222,15 @@ class NativeBridge:
                 uint32_t *out_token_offsets,
                 size_t out_token_offsets_len
             );
+            long turbotoken_count_bpe_ranges_from_ranks(
+                const char *rank_bytes,
+                size_t rank_len,
+                const char *text,
+                size_t text_len,
+                const uint32_t *range_starts,
+                const uint32_t *range_ends,
+                size_t ranges_len
+            );
             long turbotoken_bpe_ranges_token_layout_from_ranks(
                 const char *rank_bytes,
                 size_t rank_len,
@@ -1032,7 +1041,7 @@ class NativeBridge:
             starts_buf = self._ffi.new("uint32_t[]", starts)
             ends_buf = self._ffi.new("uint32_t[]", ends)
             result = int(
-                self._lib.turbotoken_encode_bpe_ranges_from_ranks(
+                self._lib.turbotoken_count_bpe_ranges_from_ranks(
                     rank_buf,
                     len(rank_payload),
                     in_buf,
@@ -1040,10 +1049,6 @@ class NativeBridge:
                     starts_buf,
                     ends_buf,
                     len(ranges),
-                    self._ffi.NULL,
-                    0,
-                    self._ffi.NULL,
-                    0,
                 )
             )
         except (AttributeError, OverflowError, TypeError):
