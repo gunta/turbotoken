@@ -116,7 +116,13 @@ jobs:
       - name: Seed tokenizer rank cache from repository fixtures
         run: |
           mkdir -p "$TURBOTOKEN_CACHE_DIR"
-          cp -f upstream/gpt-tokenizer/data/*.tiktoken "$TURBOTOKEN_CACHE_DIR"/
+          if compgen -G "node_modules/gpt-tokenizer/data/*.tiktoken" > /dev/null; then
+            cp -f node_modules/gpt-tokenizer/data/*.tiktoken "$TURBOTOKEN_CACHE_DIR"/
+          elif compgen -G "upstream/gpt-tokenizer/data/*.tiktoken" > /dev/null; then
+            cp -f upstream/gpt-tokenizer/data/*.tiktoken "$TURBOTOKEN_CACHE_DIR"/
+          else
+            echo "No bundled .tiktoken files found in node_modules or upstream mirror; relying on runtime fetches."
+          fi
           cp -f bench/fixtures/o200k_base.tiktoken "$TURBOTOKEN_CACHE_DIR"/o200k_base.tiktoken
           ls -lh "$TURBOTOKEN_CACHE_DIR"
 
