@@ -73,6 +73,8 @@ def _configure_fast_ctypes(lib: Any) -> None:
 
     lib.turbotoken_version.argtypes = []
     lib.turbotoken_version.restype = ctypes.c_char_p
+    lib.turbotoken_clear_rank_table_cache.argtypes = []
+    lib.turbotoken_clear_rank_table_cache.restype = None
 
     lib.turbotoken_pretokenize_ascii_letter_space_ranges.argtypes = [void_p, size_t, u32_p, u32_p, size_t]
     lib.turbotoken_pretokenize_ascii_letter_space_ranges.restype = long_t
@@ -83,6 +85,14 @@ def _configure_fast_ctypes(lib: Any) -> None:
     lib.turbotoken_count_bpe_from_ranks.restype = long_t
     lib.turbotoken_encode_bpe_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, size_t]
     lib.turbotoken_encode_bpe_from_ranks.restype = long_t
+    lib.turbotoken_is_within_token_limit_bpe_from_ranks.argtypes = [void_p, size_t, void_p, size_t, size_t]
+    lib.turbotoken_is_within_token_limit_bpe_from_ranks.restype = long_t
+    lib.turbotoken_encode_bpe_batch_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, size_t, u32_p, size_t, u32_p, size_t]
+    lib.turbotoken_encode_bpe_batch_from_ranks.restype = long_t
+    lib.turbotoken_encode_bpe_ranges_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, u32_p, size_t, u32_p, size_t, u32_p, size_t]
+    lib.turbotoken_encode_bpe_ranges_from_ranks.restype = long_t
+    lib.turbotoken_count_bpe_ranges_from_ranks.argtypes = [void_p, size_t, void_p, size_t, u32_p, u32_p, size_t]
+    lib.turbotoken_count_bpe_ranges_from_ranks.restype = long_t
 
     lib.turbotoken_count_bpe_ascii_letter_space_from_ranks.argtypes = [void_p, size_t, void_p, size_t]
     lib.turbotoken_count_bpe_ascii_letter_space_from_ranks.restype = long_t
@@ -207,6 +217,235 @@ class NativeBridge:
         if written < 0:
             return None
         return [int(out[idx]) for idx in range(written)]
+
+    def _fast_is_within_limit_from_ranks(
+        self,
+        rank_payload: bytes,
+        data: bytes,
+        token_limit: int,
+    ) -> int | bool | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        if token_limit < 0:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        in_buf = self._fast_bytes_buffer(data)
+        try:
+            result = int(
+                lib.turbotoken_is_within_token_limit_bpe_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                    token_limit,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result == -2:
+            return False
+        if result < 0:
+            return None
+        return result
+
+    def _fast_encode_batch_from_ranks(
+        self,
+        rank_payload: bytes,
+        data: bytes,
+        offsets: list[int],
+    ) -> tuple[list[int], list[int]] | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        if len(offsets) == 0 or len(data) > 0xFFFFFFFF:
+            return None
+        if offsets[0] != 0 or offsets[-1] != len(data):
+            return None
+        prev = 0
+        for value in offsets:
+            if value < prev or value < 0 or value > len(data) or value > 0xFFFFFFFF:
+                return None
+            prev = value
+
+        in_buf = self._fast_bytes_buffer(data)
+        offsets_buf = (ctypes.c_uint32 * len(offsets))(*offsets)
+        token_offsets = (ctypes.c_uint32 * len(offsets))()
+        out_cap = max(1, len(data))
+        out = (ctypes.c_uint32 * out_cap)()
+        try:
+            written = int(
+                lib.turbotoken_encode_bpe_batch_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                    offsets_buf,
+                    len(offsets),
+                    out,
+                    len(data),
+                    token_offsets,
+                    len(offsets),
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return (
+            [int(out[idx]) for idx in range(written)],
+            [int(token_offsets[idx]) for idx in range(len(offsets))],
+        )
+
+    def _fast_encode_ranges_from_ranks(
+        self,
+        rank_payload: bytes,
+        data: bytes,
+        ranges: list[tuple[int, int]],
+    ) -> tuple[list[int], list[int]] | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None or len(data) > 0xFFFFFFFF:
+            return None
+
+        starts: list[int] = []
+        ends: list[int] = []
+        upper_bound = 0
+        for start, end in ranges:
+            if start < 0 or end < start or end > len(data) or end > 0xFFFFFFFF:
+                return None
+            starts.append(start)
+            ends.append(end)
+            upper_bound += end - start
+            if upper_bound > 0x7FFFFFFF_FFFFFFFF:
+                return None
+
+        in_buf = self._fast_bytes_buffer(data)
+        starts_buf = (ctypes.c_uint32 * len(starts))(*starts)
+        ends_buf = (ctypes.c_uint32 * len(ends))(*ends)
+        token_offsets = (ctypes.c_uint32 * (len(ranges) + 1))()
+        out_cap = max(1, upper_bound)
+        out = (ctypes.c_uint32 * out_cap)()
+        try:
+            written = int(
+                lib.turbotoken_encode_bpe_ranges_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                    starts_buf,
+                    ends_buf,
+                    len(ranges),
+                    out,
+                    upper_bound,
+                    token_offsets,
+                    len(ranges) + 1,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return (
+            [int(out[idx]) for idx in range(written)],
+            [int(token_offsets[idx]) for idx in range(len(ranges) + 1)],
+        )
+
+    def _fast_count_ranges_from_ranks(
+        self,
+        rank_payload: bytes,
+        data: bytes,
+        ranges: list[tuple[int, int]],
+    ) -> int | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None or len(data) > 0xFFFFFFFF:
+            return None
+
+        starts: list[int] = []
+        ends: list[int] = []
+        for start, end in ranges:
+            if start < 0 or end < start or end > len(data) or end > 0xFFFFFFFF:
+                return None
+            starts.append(start)
+            ends.append(end)
+
+        in_buf = self._fast_bytes_buffer(data)
+        starts_buf = (ctypes.c_uint32 * len(starts))(*starts)
+        ends_buf = (ctypes.c_uint32 * len(ends))(*ends)
+        try:
+            result = int(
+                lib.turbotoken_count_bpe_ranges_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    in_buf,
+                    len(data),
+                    starts_buf,
+                    ends_buf,
+                    len(ranges),
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def _fast_decode_from_ranks(self, rank_payload: bytes, tokens: list[int]) -> bytes | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+
+        token_buf = (ctypes.c_uint32 * len(tokens))(*tokens)
+        try:
+            needed = int(
+                lib.turbotoken_decode_bpe_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    token_buf,
+                    len(tokens),
+                    None,
+                    0,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if needed < 0:
+            return None
+        if needed == 0:
+            return b""
+
+        out = (ctypes.c_ubyte * needed)()
+        try:
+            written = int(
+                lib.turbotoken_decode_bpe_from_ranks(
+                    rank_buf,
+                    len(rank_payload),
+                    token_buf,
+                    len(tokens),
+                    out,
+                    needed,
+                )
+            )
+        except (AttributeError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return bytes(out[:written])
 
     def load(self) -> None:
         if self._lib is not None or self._error is not None:
@@ -551,6 +790,14 @@ class NativeBridge:
         return session
 
     def clear_rank_table_cache(self) -> bool:
+        fast = self._load_fast_lib()
+        if fast is not None:
+            try:
+                fast.turbotoken_clear_rank_table_cache()
+            except (AttributeError, TypeError):
+                return False
+            return True
+
         self.load()
         if self._lib is None:
             return False
@@ -1055,6 +1302,10 @@ class NativeBridge:
         data: bytes,
         offsets: list[int],
     ) -> tuple[list[int], list[int]] | None:
+        fast = self._fast_encode_batch_from_ranks(rank_payload, data, offsets)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1113,6 +1364,10 @@ class NativeBridge:
         data: bytes,
         ranges: list[tuple[int, int]],
     ) -> tuple[list[int], list[int]] | None:
+        fast = self._fast_encode_ranges_from_ranks(rank_payload, data, ranges)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1174,6 +1429,10 @@ class NativeBridge:
         data: bytes,
         ranges: list[tuple[int, int]],
     ) -> int | None:
+        fast = self._fast_count_ranges_from_ranks(rank_payload, data, ranges)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
@@ -1423,6 +1682,10 @@ class NativeBridge:
         data: bytes,
         token_limit: int,
     ) -> int | bool | None:
+        fast = self._fast_is_within_limit_from_ranks(rank_payload, data, token_limit)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None:
             return None
@@ -1689,6 +1952,10 @@ class NativeBridge:
         return _unpack_u32(self._ffi, out, written)
 
     def decode_bpe_from_ranks(self, rank_payload: bytes, tokens: list[int]) -> bytes | None:
+        fast = self._fast_decode_from_ranks(rank_payload, tokens)
+        if fast is not None:
+            return fast
+
         self.load()
         if self._lib is None or self._ffi is None:
             return None
