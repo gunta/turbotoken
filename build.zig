@@ -63,6 +63,8 @@ fn addStaticLibraryCompat(
         if (enable_experimental_sme) {
             lib.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }
+    } else if (target.result.cpu.arch == .x86_64) {
+        lib.root_module.addAssemblyFile(b.path("asm/x86_64/hash_crc32.S"));
     }
 
     return lib;
@@ -100,6 +102,8 @@ fn addSharedLibraryCompat(
         if (enable_experimental_sme) {
             lib.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }
+    } else if (target.result.cpu.arch == .x86_64) {
+        lib.root_module.addAssemblyFile(b.path("asm/x86_64/hash_crc32.S"));
     }
 
     return lib;
@@ -134,6 +138,8 @@ fn addTestCompat(
         if (enable_experimental_sme) {
             tests.root_module.addAssemblyFile(b.path("asm/arm64/sme_pretokenizer.S"));
         }
+    } else if (target.result.cpu.arch == .x86_64) {
+        tests.root_module.addAssemblyFile(b.path("asm/x86_64/hash_crc32.S"));
     }
 
     return tests;

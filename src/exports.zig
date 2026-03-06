@@ -1063,6 +1063,12 @@ fn trainAsciiO200kFromTextSlices(
 
     var chunk_index: std.StringHashMapUnmanaged(u32) = .{};
     var chunk_entries = std.ArrayListUnmanaged(AsciiChunkEntry){};
+    const estimated_unique_chunks = @max(
+        text_offsets.len - 1,
+        @min(all_text.len / 4 + 1, @as(usize, 65_536)),
+    );
+    try chunk_index.ensureTotalCapacity(work_allocator, @as(u32, @intCast(estimated_unique_chunks)));
+    try chunk_entries.ensureTotalCapacityPrecise(work_allocator, estimated_unique_chunks);
 
     for (0..text_offsets.len - 1) |text_idx| {
         const text_start = @as(usize, @intCast(text_offsets[text_idx]));
@@ -1099,6 +1105,7 @@ fn trainAsciiO200kFromTextSlices(
     }
 
     var flat_chunks = std.ArrayListUnmanaged(u8){};
+    try flat_chunks.ensureTotalCapacity(work_allocator, all_text.len);
     const offsets = try work_allocator.alloc(u32, chunk_entries.items.len + 1);
     const counts = try work_allocator.alloc(u32, chunk_entries.items.len);
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import turbotoken.core as core_module
 from turbotoken import get_encoding, list_encoding_names
 
 
@@ -255,6 +256,65 @@ def test_o200k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.Monke
     assert fast_count == slow_count == len(slow)
 
 
+def test_o200k_native_full_ascii_auto_path_activates_on_linux_x86(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer speed matters for large ASCII corpora. " * 2048).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
+    baseline_tokens = enc.encode_ordinary(text)
+    baseline_count = enc.count(text)
+
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", raising=False)
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", raising=False)
+    monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(core_module.platform, "machine", lambda: "x86_64")
+
+    calls = {"encode": 0, "count": 0}
+
+    class Session:
+        def encode_bpe_ascii_o200k(self, data: bytes) -> list[int]:
+            assert data == text.encode("ascii")
+            calls["encode"] += 1
+            return baseline_tokens
+
+        def count_bpe_ascii_o200k(self, data: bytes) -> int:
+            assert data == text.encode("ascii")
+            calls["count"] += 1
+            return baseline_count
+
+    monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
+
+    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.count(text) == baseline_count
+    assert calls == {"encode": 1, "count": 1}
+
+
+def test_o200k_native_full_ascii_auto_path_respects_disable(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer speed matters for large ASCII corpora. " * 2048).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
+    baseline_tokens = enc.encode_ordinary(text)
+    baseline_count = enc.count(text)
+
+    monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(core_module.platform, "machine", lambda: "x86_64")
+
+    class Session:
+        def encode_bpe_ascii_o200k(self, _: bytes) -> list[int]:
+            raise AssertionError("native full path should stay disabled")
+
+        def count_bpe_ascii_o200k(self, _: bytes) -> int:
+            raise AssertionError("native full path should stay disabled")
+
+    monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
+
+    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.count(text) == baseline_count
+
+
 def test_cl100k_native_full_ascii_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     enc = get_encoding("cl100k_base")
     text = ("Tokenizer speed matters for large cl100k ASCII corpora. " * 2048).strip()
@@ -289,6 +349,51 @@ def test_native_range_batch_force_path_matches_fallback(monkeypatch: pytest.Monk
 
     assert auto_tokens == fallback_tokens
     assert auto_count == fallback_count == len(fallback_tokens)
+
+
+def test_native_range_batch_auto_path_activates_on_linux_x86(monkeypatch: pytest.MonkeyPatch) -> None:
+    enc = get_encoding("o200k_base")
+    text = ("Tokenizer speed matters for range-batch routing.\n" * 2048).strip()
+
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", "1")
+    baseline_tokens = enc.encode_ordinary(text)
+    baseline_count = enc.count(text)
+
+    data = text.encode("ascii")
+    midpoint = len(data) // 2
+    ranges = [(0, midpoint), (midpoint, len(data))]
+    token_offsets = [0, len(baseline_tokens) // 2, len(baseline_tokens)]
+    calls = {"encode": 0, "count": 0}
+
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_DISABLE", raising=False)
+    monkeypatch.delenv("TURBOTOKEN_NATIVE_RANGE_BATCH_ENABLE", raising=False)
+    monkeypatch.setattr(core_module.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(core_module.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(type(enc), "_ordinary_piece_ranges_bytes", lambda self, _: (data, ranges))
+
+    class Session:
+        def encode_bpe_ranges(
+            self,
+            batch_data: bytes,
+            batch_ranges: list[tuple[int, int]],
+        ) -> tuple[list[int], list[int]]:
+            assert batch_data == data
+            assert batch_ranges == ranges
+            calls["encode"] += 1
+            return baseline_tokens, token_offsets
+
+        def count_bpe_ranges(self, batch_data: bytes, batch_ranges: list[tuple[int, int]]) -> int:
+            assert batch_data == data
+            assert batch_ranges == ranges
+            calls["count"] += 1
+            return baseline_count
+
+    monkeypatch.setattr(type(enc), "_native_rank_session", lambda self: Session())
+
+    assert enc.encode_ordinary(text) == baseline_tokens
+    assert enc.count(text) == baseline_count
+    assert calls == {"encode": 1, "count": 1}
 
 
 def test_decode_bytes_native_fast_path_matches_fallback(monkeypatch: pytest.MonkeyPatch) -> None:

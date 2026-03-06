@@ -138,6 +138,10 @@ jobs:
           bun --version
           zig version
           uname -a || true
+          lscpu || true
+          sysctl -n machdep.cpu.brand_string 2>/dev/null || true
+          sysctl -n machdep.cpu.features 2>/dev/null || true
+          sysctl -n machdep.cpu.leaf7_features 2>/dev/null || true
 
       - name: Build native library
         env:

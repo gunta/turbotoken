@@ -102,6 +102,9 @@ fn pairRight(key: PairKey) u32 {
 
 const training_parallel_min_words: usize = 1_024;
 const training_parallel_min_bytes: usize = 1_048_576;
+const training_target_bytes_per_worker: usize = 256 * 1024;
+const training_target_words_per_worker: usize = 512;
+const training_pair_map_reserve_cap: usize = 131_072;
 
 fn trainingThreadOverride() ?usize {
     const allocator = std.heap.page_allocator;
@@ -117,6 +120,19 @@ fn trainingThreadOverride() ?usize {
     return parsed;
 }
 
+fn capTrainingWorkerTargetByCorpus(target: usize, word_count: usize, total_bytes: usize) usize {
+    const clamped_target = @max(@as(usize, 1), @min(target, word_count));
+    const max_by_words = @max(
+        @as(usize, 1),
+        (word_count + training_target_words_per_worker - 1) / training_target_words_per_worker,
+    );
+    const max_by_bytes = @max(
+        @as(usize, 1),
+        (total_bytes + training_target_bytes_per_worker - 1) / training_target_bytes_per_worker,
+    );
+    return @max(@as(usize, 1), @min(clamped_target, @min(max_by_words, max_by_bytes)));
+}
+
 fn chooseTrainingWorkerCount(word_count: usize, total_bytes: usize) usize {
     if (word_count == 0) {
         return 1;
@@ -128,10 +144,11 @@ fn chooseTrainingWorkerCount(word_count: usize, total_bytes: usize) usize {
     const cpu_count = std.Thread.getCpuCount() catch 1;
     const capped_cpu = @max(@as(usize, 1), cpu_count);
     if (trainingThreadOverride()) |override| {
-        // Explicit thread override is treated as an operator directive and bypasses
-        // the default size thresholds, while still respecting CPU/word bounds.
+        // Explicit thread override is treated as an operator upper bound rather than
+        // an unconditional spawn count. This keeps small corpora from paying
+        // pathological thread startup + shard merge overhead on hosted CI x64.
         const target = @max(@as(usize, 1), @min(override, capped_cpu));
-        return @max(@as(usize, 1), @min(target, word_count));
+        return capTrainingWorkerTargetByCorpus(target, word_count, total_bytes);
     }
 
     if (word_count < training_parallel_min_words or total_bytes < training_parallel_min_bytes) {
@@ -494,15 +511,25 @@ pub fn trainMergesFromChunkCounts(
 
     var words = try work_allocator.alloc(Word, word_count);
     for (words) |*word| word.* = .{};
+    var initial_pair_slots: usize = 0;
     for (0..word_count) |idx| {
         const start = offsets[idx];
         const end = offsets[idx + 1];
         words[idx] = try Word.initFromBytes(work_allocator, chunks[start..end]);
+        if (words[idx].ids.items.len > 1) {
+            initial_pair_slots +|= words[idx].ids.items.len - 1;
+        }
     }
     defer for (words) |*word| word.deinit(work_allocator);
 
+    const pair_map_reserve = @max(
+        @as(usize, 1),
+        @min(initial_pair_slots, training_pair_map_reserve_cap),
+    );
+
     var pair_counts: std.AutoHashMapUnmanaged(PairKey, i64) = .{};
     defer pair_counts.deinit(work_allocator);
+    try pair_counts.ensureTotalCapacity(work_allocator, pair_map_reserve);
 
     var where_to_update: std.AutoHashMapUnmanaged(PairKey, std.AutoHashMapUnmanaged(u32, void)) = .{};
     defer {
@@ -512,6 +539,7 @@ pub fn trainMergesFromChunkCounts(
         }
         where_to_update.deinit(work_allocator);
     }
+    try where_to_update.ensureTotalCapacity(work_allocator, pair_map_reserve);
     try buildInitialPairState(
         work_allocator,
         words,
@@ -528,14 +556,18 @@ pub fn trainMergesFromChunkCounts(
 
     var deltas = std.ArrayListUnmanaged(PairDelta){};
     defer deltas.deinit(work_allocator);
+    try deltas.ensureTotalCapacity(work_allocator, 8);
 
     var seen_positive: std.AutoHashMapUnmanaged(PairKey, void) = .{};
     defer seen_positive.deinit(work_allocator);
+    try seen_positive.ensureTotalCapacity(work_allocator, 128);
 
     var candidate_indices: std.ArrayListUnmanaged(u32) = .{};
     defer candidate_indices.deinit(work_allocator);
+    try candidate_indices.ensureTotalCapacity(work_allocator, 256);
     var local_changed_pairs: std.AutoHashMapUnmanaged(PairKey, void) = .{};
     defer local_changed_pairs.deinit(work_allocator);
+    try local_changed_pairs.ensureTotalCapacity(work_allocator, 256);
 
     var heap: MergeHeap = .{};
     defer heap.deinit(work_allocator);
@@ -585,12 +617,13 @@ pub fn trainMergesFromChunkCounts(
         });
 
         candidate_indices.clearRetainingCapacity();
-        if (where_to_update.getPtr(selected_key)) |indices_set| {
-            var word_iter = indices_set.keyIterator();
+        if (where_to_update.getPtr(selected_key)) |indices_set_ptr| {
+            var word_iter = indices_set_ptr.keyIterator();
             while (word_iter.next()) |word_idx_ptr| {
                 try candidate_indices.append(work_allocator, word_idx_ptr.*);
             }
-            indices_set.clearRetainingCapacity();
+            indices_set_ptr.deinit(work_allocator);
+            _ = where_to_update.remove(selected_key);
         }
         for (candidate_indices.items) |word_idx_u32| {
             const word_idx = @as(usize, @intCast(word_idx_u32));
@@ -679,4 +712,9 @@ test "trainMergesFromChunkCounts learns repeated pair" {
     try std.testing.expectEqual(@as(u32, 97), merges[0].left);
     try std.testing.expectEqual(@as(u32, 98), merges[0].right);
     try std.testing.expectEqual(@as(u32, 256), merges[0].new_id);
+}
+
+test "training worker cap keeps small corpora single-threaded even with large target" {
+    try std.testing.expectEqual(@as(usize, 1), capTrainingWorkerTargetByCorpus(8, 4_096, 100 * 1024));
+    try std.testing.expectEqual(@as(usize, 4), capTrainingWorkerTargetByCorpus(8, 16_384, 1_024 * 1_024));
 }

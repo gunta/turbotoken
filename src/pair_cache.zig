@@ -22,10 +22,14 @@ pub const PairCache = struct {
     };
     const aarch64_crc_supported = builtin.cpu.arch == .aarch64 and
         std.Target.aarch64.featureSetHas(builtin.cpu.features, .crc);
+    const x86_crc_supported = builtin.cpu.arch == .x86_64 and
+        std.Target.x86.featureSetHas(builtin.cpu.features, .sse4_2);
+    const hash_mode_benchmark_iterations: usize = 512;
 
     extern fn turbotoken_arm64_hash_crc32_u64(key: u64) u64;
+    extern fn turbotoken_x86_hash_crc32_u64(key: u64) u64;
 
-    var selected_hash_mode: HashMode = defaultHashMode();
+    var selected_hash_mode: HashMode = .rapidhash;
     var selected_hash_mode_once = std.once(initHashMode);
 
     entries: [entry_count]Entry align(64),
@@ -134,13 +138,7 @@ pub const PairCache = struct {
     }
 
     fn slotIndex(key: u64) usize {
-        const slot_hash = switch (selectHashMode()) {
-            .rapidhash => hash.bytes(std.mem.asBytes(&key)),
-            .crc32 => if (comptime aarch64_crc_supported)
-                turbotoken_arm64_hash_crc32_u64(key)
-            else
-                hash.bytes(std.mem.asBytes(&key)),
-        };
+        const slot_hash = hashKey(selectHashMode(), key);
         return @as(usize, @truncate(slot_hash)) & (entry_count - 1);
     }
 
@@ -150,7 +148,13 @@ pub const PairCache = struct {
     }
 
     fn defaultHashMode() HashMode {
-        return if (comptime aarch64_crc_supported) .crc32 else .rapidhash;
+        if (comptime aarch64_crc_supported) {
+            return .crc32;
+        }
+        if (comptime x86_crc_supported) {
+            return selectFastestHashMode();
+        }
+        return .rapidhash;
     }
 
     fn initHashMode() void {
@@ -170,10 +174,62 @@ pub const PairCache = struct {
             return;
         }
         if (std.ascii.eqlIgnoreCase(mode, "crc32")) {
-            selected_hash_mode = if (comptime aarch64_crc_supported) .crc32 else .rapidhash;
+            selected_hash_mode = if (comptime aarch64_crc_supported or x86_crc_supported) .crc32 else .rapidhash;
             return;
         }
         selected_hash_mode = defaultHashMode();
+    }
+
+    fn hashKey(mode: HashMode, key: u64) u64 {
+        return switch (mode) {
+            .rapidhash => hash.bytes(std.mem.asBytes(&key)),
+            .crc32 => blk: {
+                if (comptime aarch64_crc_supported) {
+                    break :blk turbotoken_arm64_hash_crc32_u64(key);
+                }
+                if (comptime x86_crc_supported) {
+                    break :blk turbotoken_x86_hash_crc32_u64(key);
+                }
+                break :blk hash.bytes(std.mem.asBytes(&key));
+            },
+        };
+    }
+
+    fn selectFastestHashMode() HashMode {
+        var sample: [256]u64 = undefined;
+        for (&sample, 0..) |*slot, idx| {
+            slot.* = (@as(u64, @intCast(idx + 1)) *% 0x9e3779b97f4a7c15) ^ 0x4cf5ad432745937f;
+        }
+
+        const rapidhash_time = benchmarkHashModeBestOf3(.rapidhash, &sample, hash_mode_benchmark_iterations);
+        const crc32_time = benchmarkHashModeBestOf3(.crc32, &sample, hash_mode_benchmark_iterations);
+        if (crc32_time * 100 <= rapidhash_time * 99) {
+            return .crc32;
+        }
+        return .rapidhash;
+    }
+
+    fn benchmarkHashModeBestOf3(mode: HashMode, sample: []const u64, iterations: usize) u64 {
+        var best: u64 = std.math.maxInt(u64);
+        for (0..3) |_| {
+            best = @min(best, benchmarkHashMode(mode, sample, iterations));
+        }
+        return best;
+    }
+
+    fn benchmarkHashMode(mode: HashMode, sample: []const u64, iterations: usize) u64 {
+        var sink: u64 = 0;
+        var timer = std.time.Timer.start() catch return std.math.maxInt(u64);
+
+        var iter: usize = 0;
+        while (iter < iterations) : (iter += 1) {
+            for (sample) |key| {
+                sink +%= hashKey(mode, key);
+            }
+        }
+
+        std.mem.doNotOptimizeAway(sink);
+        return timer.read();
     }
 
     fn rankTableFingerprint(table: *const rank_loader.RankTable, limit: u32) u64 {
@@ -259,7 +315,12 @@ test "pair cache known seed metadata is present" {
 }
 
 test "pair cache default hash mode follows target capability" {
-    const expected: PairCache.HashMode = if (comptime PairCache.aarch64_crc_supported) .crc32 else .rapidhash;
+    const expected: PairCache.HashMode = if (comptime PairCache.aarch64_crc_supported)
+        .crc32
+    else if (comptime PairCache.x86_crc_supported)
+        PairCache.selectFastestHashMode()
+    else
+        .rapidhash;
     try std.testing.expectEqual(expected, PairCache.defaultHashMode());
 }
 

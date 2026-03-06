@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, AbstractSet, Callable, Collection, Iterable, Literal, Mapping, TypeVar
@@ -77,6 +78,12 @@ def _compile_ascii_piece_regex_bytes(pattern: bytes) -> re.Pattern[bytes]:
 def _sanitize_text(text: str) -> str:
     # Match tiktoken's surrogate handling so encode/decode stay resilient on odd input.
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+
+def _is_linux_x86_64_host() -> bool:
+    if platform.system().lower() != "linux":
+        return False
+    return platform.machine().lower() in {"x86_64", "amd64"}
 
 
 def _utf8_len_fast(text: str) -> int:
@@ -441,7 +448,7 @@ class Encoding:
             "true",
             "yes",
         }
-        if not force_enable:
+        if not force_enable and not self._native_range_batch_auto_enabled(text):
             return None
 
         piece_ranges = self._ordinary_piece_ranges_bytes(text)
@@ -477,7 +484,7 @@ class Encoding:
             "true",
             "yes",
         }
-        if not force_enable:
+        if not force_enable and not self._native_range_batch_auto_enabled(text):
             return None
 
         piece_ranges = self._ordinary_piece_ranges_bytes(text)
@@ -621,6 +628,34 @@ class Encoding:
         except ValueError:
             return 131_072
         return max(1, value)
+
+    def _native_o200k_full_min_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_MIN_BYTES", "").strip()
+        if not raw:
+            return 65_536
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 65_536
+        return max(1, value)
+
+    def _native_o200k_full_auto_enabled(self, text: str) -> bool:
+        if self.name not in {"o200k_base", "o200k_harmony"}:
+            return False
+        if not text.isascii():
+            return False
+        if len(text) < self._native_o200k_full_min_bytes():
+            return False
+        return _is_linux_x86_64_host()
+
+    def _native_range_batch_auto_enabled(self, text: str) -> bool:
+        if self.name not in {"o200k_base", "o200k_harmony"}:
+            return False
+        if not text.isascii():
+            return False
+        if len(text) < self._native_o200k_full_min_bytes():
+            return False
+        return _is_linux_x86_64_host()
 
     def _native_decode_min_tokens(self) -> int:
         raw = os.environ.get("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "").strip()
@@ -851,8 +886,10 @@ class Encoding:
         if (
             self.name in {"o200k_base", "o200k_harmony"}
             and text.isascii()
-            and len(text) >= 65_536
-            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+            and (
+                os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+                or self._native_o200k_full_auto_enabled(text)
+            )
             and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
             not in {"1", "true", "yes"}
         ):
@@ -1251,8 +1288,10 @@ class Encoding:
         if (
             self.name in {"o200k_base", "o200k_harmony"}
             and text.isascii()
-            and len(text) >= 65_536
-            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+            and (
+                os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_ENABLE", "").strip().lower() in {"1", "true", "yes"}
+                or self._native_o200k_full_auto_enabled(text)
+            )
             and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
             not in {"1", "true", "yes"}
         ):
