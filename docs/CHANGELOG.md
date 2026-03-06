@@ -169,7 +169,7 @@
 - `train_mergeable_ranks_from_iterator(...)` now defaults native pretokenize/direct-ASCII toggles to enabled when `TURBOTOKEN_TRAINING_BACKEND=native` (unless explicitly overridden to `0/false/no`).
 - Native-direct ASCII trainer fast path now has a single-text fast branch and early non-ASCII rejection to avoid unnecessary native bridge attempts.
 - `scripts/bench-training.ts` native command now forces true native training path (`TURBOTOKEN_NATIVE_TRAINING_FORCE=1`) with direct-ASCII/native-pretokenize toggles enabled.
-- Native trainer thread override (`TURBOTOKEN_NATIVE_TRAIN_THREADS`) now bypasses default size thresholds, allowing explicit parallelization directives on smaller corpora.
+- Native trainer thread override (`TURBOTOKEN_NATIVE_TRAIN_THREADS`) now acts as an upper bound that can still bypass the coarse default thresholds, but it keeps per-worker corpus floors to avoid pathological small-input thread fanout on hosted x64 runners.
 - Metal direct BPE route (`TURBOTOKEN_METAL_BPE_DIRECT_ENABLE`) is now **opt-in by default** after A/B benchmarks showed a large regression on the tracked quick-profile workload; stitched/native fallback remains default-safe.
 - Metal direct BPE route now has a default low-entropy safety guard (`TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=1`) to avoid pathological repetitive-input regressions.
 - Metal direct BPE host loop now batches multiple rounds per command submission by default (`TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT`, configurable up to 64) to reduce round-submission overhead.
