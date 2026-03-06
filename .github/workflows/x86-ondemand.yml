@@ -37,27 +37,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare-matrix:
+    name: Prepare target matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - id: select
+        shell: bash
+        run: |
+          case "${{ inputs.target }}" in
+            linux)
+              echo 'matrix={"include":[{"id":"linux","name":"Ubuntu 24.04 x64","runs_on":"ubuntu-24.04","cpu_gate_profile":"linux-x86_64-cpu"}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            windows)
+              echo 'matrix={"include":[{"id":"windows","name":"Windows Server 2025 x64","runs_on":"windows-2025","cpu_gate_profile":""}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            macos-intel)
+              echo 'matrix={"include":[{"id":"macos-intel","name":"macOS 15 Intel x64","runs_on":"macos-15-intel","cpu_gate_profile":""}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            all)
+              echo 'matrix={"include":[{"id":"linux","name":"Ubuntu 24.04 x64","runs_on":"ubuntu-24.04","cpu_gate_profile":"linux-x86_64-cpu"},{"id":"windows","name":"Windows Server 2025 x64","runs_on":"windows-2025","cpu_gate_profile":""},{"id":"macos-intel","name":"macOS 15 Intel x64","runs_on":"macos-15-intel","cpu_gate_profile":""}]}' >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "unsupported target: ${{ inputs.target }}" >&2
+              exit 1
+              ;;
+          esac
+
   x64-validation:
+    needs: prepare-matrix
     name: ${{ matrix.name }}
-    if: ${{ inputs.target == 'all' || inputs.target == matrix.id }}
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - id: linux
-            name: Ubuntu 24.04 x64
-            runs_on: ubuntu-24.04
-            cpu_gate_profile: linux-x86_64-cpu
-          - id: windows
-            name: Windows Server 2025 x64
-            runs_on: windows-2025
-            cpu_gate_profile: ""
-          - id: macos-intel
-            name: macOS 15 Intel x64
-            runs_on: macos-15-intel
-            cpu_gate_profile: ""
+      matrix: ${{ fromJSON(needs.prepare-matrix.outputs.matrix) }}
 
     defaults:
       run:
