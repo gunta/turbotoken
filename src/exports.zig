@@ -2124,16 +2124,32 @@ pub export fn turbotoken_encode_bpe_ascii_o200k_from_ranks(
     const rank_slice = rank_bytes[0..rank_len];
     const table = ensureCachedRankTable(rank_slice) catch return -1;
     const in_slice = text[0..text_len];
-    const backend = ScalarBackend.init();
+    var ranges = allocAsciiO200kRanges(allocator, in_slice) catch return -1;
+    defer ranges.deinit(allocator);
 
     if (out_tokens == null) {
-        const token_count = countBpeAsciiO200kFromTable(allocator, &backend, in_slice, table) catch return -1;
+        const token_count = countBpeRangesFromTable(
+            allocator,
+            in_slice,
+            ranges.starts,
+            ranges.ends,
+            table,
+        ) catch return -1;
         if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
             return -1;
         }
         return @as(isize, @intCast(token_count));
     }
-    return encodeBpeAsciiO200kFromTable(allocator, &backend, in_slice, table, out_tokens, out_cap) catch return -1;
+    return encodeBpeRangesFromTable(
+        allocator,
+        in_slice,
+        ranges.starts,
+        ranges.ends,
+        table,
+        out_tokens,
+        out_cap,
+        null,
+    );
 }
 
 pub export fn turbotoken_decode_bpe_from_ranks(

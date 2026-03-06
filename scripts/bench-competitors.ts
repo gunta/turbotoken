@@ -82,8 +82,12 @@ function decodeFixtureTokenCount(): number {
   return Number.parseInt(result.stdout.trim(), 10);
 }
 
-function encodeCommandForTurbotoken(path: string): string {
-  return `${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode(text)"`;
+function encodeCommandForTurbotoken(
+  path: string,
+  { nativeO200kFull = false }: { nativeO200kFull?: boolean } = {},
+): string {
+  const envPrefix = nativeO200kFull ? "TURBOTOKEN_NATIVE_O200K_FULL_ENABLE=1 " : "";
+  return `${envPrefix}${python} -c "import pathlib,sys;sys.path.insert(0,'python');from turbotoken import get_encoding;text=pathlib.Path('${path}').read_text();get_encoding('o200k_base').encode(text)"`;
 }
 
 function encodeCommandForTurbotokenMetal(path: string): string {
@@ -150,7 +154,9 @@ const encodeCommands: BenchCommand[] = [];
 for (const fixture of textFixtures) {
   encodeCommands.push({
     name: `python-encode-${fixture.id}-turbotoken`,
-    command: encodeCommandForTurbotoken(fixture.path),
+    command: encodeCommandForTurbotoken(fixture.path, {
+      nativeO200kFull: fixture.id === "1mb",
+    }),
   });
   if (metalAvailable) {
     encodeCommands.push({
@@ -187,7 +193,7 @@ if (fastMode) {
   // Keep CI governance metrics available in fast mode without re-enabling the full matrix.
   encodeCommands.push({
     name: `python-encode-${ciRequiredFixture.id}-turbotoken`,
-    command: encodeCommandForTurbotoken(ciRequiredFixture.path),
+    command: encodeCommandForTurbotoken(ciRequiredFixture.path, { nativeO200kFull: true }),
   });
 }
 
