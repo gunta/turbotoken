@@ -646,13 +646,9 @@ class Encoding:
             return False
         if _utf8_len_fast(text) < self._native_o200k_full_min_bytes():
             return False
-        system = platform.system()
-        machine = platform.machine().lower()
-        if system != "Linux":
-            return False
-        if machine not in {"x86_64", "amd64"}:
-            return False
-        return True
+        # Keep the large-text native route opt-in until hosted Linux x64
+        # data consistently beats the default cached Python path.
+        return False
 
     def _native_o200k_full_auto_enabled(self, text: str) -> bool:
         return self._native_o200k_large_ascii_auto_enabled(text)
