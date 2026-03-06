@@ -2,18 +2,35 @@ from __future__ import annotations
 
 import base64
 import os
-import pickle
 import struct
 from pathlib import Path
 
 from ._registry import get_encoding_spec
 
 
-DEFAULT_CACHE_DIR = Path(os.environ.get("TURBOTOKEN_CACHE_DIR", Path.home() / ".cache" / "turbotoken"))
+_DEFAULT_CACHE_DIR: Path | None = None
+
+
+def _pickle_module():
+    import pickle
+
+    return pickle
+
+
+def _default_cache_dir() -> Path:
+    global _DEFAULT_CACHE_DIR
+    if _DEFAULT_CACHE_DIR is not None:
+        return _DEFAULT_CACHE_DIR
+    env_dir = os.environ.get("TURBOTOKEN_CACHE_DIR")
+    if env_dir:
+        _DEFAULT_CACHE_DIR = Path(env_dir)
+    else:
+        _DEFAULT_CACHE_DIR = Path.home() / ".cache" / "turbotoken"
+    return _DEFAULT_CACHE_DIR
 
 
 def cache_dir(path: Path | None = None) -> Path:
-    out = path or DEFAULT_CACHE_DIR
+    out = path or _default_cache_dir()
     out.mkdir(parents=True, exist_ok=True)
     return out
 
@@ -233,6 +250,7 @@ def load_decoder_only(
     timeout: float = 30.0,
     force: bool = False,
 ) -> dict[int, bytes]:
+    pickle_mod = _pickle_module()
     rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
     stat = rank_path.stat()
     rank_size = stat.st_size
@@ -242,7 +260,7 @@ def load_decoder_only(
     if not force and decoder_path.exists():
         try:
             with decoder_path.open("rb") as handle:
-                cached = pickle.load(handle)
+                cached = pickle_mod.load(handle)
             if (
                 isinstance(cached, dict)
                 and cached.get("version") == _DECODER_CACHE_VERSION
@@ -261,7 +279,7 @@ def load_decoder_only(
         import tempfile
 
         with tempfile.NamedTemporaryFile("wb", dir=decoder_path.parent, delete=False) as tmp:
-            pickle.dump(
+            pickle_mod.dump(
                 {
                     "version": _DECODER_CACHE_VERSION,
                     "size": rank_size,
@@ -269,7 +287,7 @@ def load_decoder_only(
                     "decoder": decoder,
                 },
                 tmp,
-                protocol=pickle.HIGHEST_PROTOCOL,
+                protocol=pickle_mod.HIGHEST_PROTOCOL,
             )
             tmp.flush()
             os.fsync(tmp.fileno())
@@ -288,6 +306,7 @@ def load_piece_bpe_cache(
     timeout: float = 30.0,
     force: bool = False,
 ) -> dict[bytes, tuple[int, ...]]:
+    pickle_mod = _pickle_module()
     rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
     stat = rank_path.stat()
     rank_size = stat.st_size
@@ -297,7 +316,7 @@ def load_piece_bpe_cache(
     if not force and piece_path.exists():
         try:
             with piece_path.open("rb") as handle:
-                cached = pickle.load(handle)
+                cached = pickle_mod.load(handle)
             if (
                 isinstance(cached, dict)
                 and cached.get("version") == _PIECE_CACHE_VERSION
@@ -327,6 +346,7 @@ def save_piece_bpe_cache(
     timeout: float = 30.0,
     force: bool = False,
 ) -> None:
+    pickle_mod = _pickle_module()
     rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
     stat = rank_path.stat()
     piece_path = _piece_pickle_path(rank_path)
@@ -335,7 +355,7 @@ def save_piece_bpe_cache(
         import tempfile
 
         with tempfile.NamedTemporaryFile("wb", dir=piece_path.parent, delete=False) as tmp:
-            pickle.dump(
+            pickle_mod.dump(
                 {
                     "version": _PIECE_CACHE_VERSION,
                     "size": stat.st_size,
@@ -343,7 +363,7 @@ def save_piece_bpe_cache(
                     "pieces": pieces,
                 },
                 tmp,
-                protocol=pickle.HIGHEST_PROTOCOL,
+                protocol=pickle_mod.HIGHEST_PROTOCOL,
             )
             tmp.flush()
             os.fsync(tmp.fileno())
@@ -361,6 +381,7 @@ def _load_rank_payload_and_ranks_impl(
     force: bool = False,
     include_payload: bool,
 ) -> tuple[bytes | None, dict[bytes, int]]:
+    pickle_mod = _pickle_module()
     rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
     payload = rank_path.read_bytes() if include_payload else None
 
@@ -372,7 +393,7 @@ def _load_rank_payload_and_ranks_impl(
     if not force and pickle_path.exists():
         try:
             with pickle_path.open("rb") as handle:
-                cached = pickle.load(handle)
+                cached = pickle_mod.load(handle)
             if (
                 isinstance(cached, dict)
                 and cached.get("version") == _RANK_CACHE_VERSION
@@ -390,7 +411,7 @@ def _load_rank_payload_and_ranks_impl(
         import tempfile
 
         with tempfile.NamedTemporaryFile("wb", dir=pickle_path.parent, delete=False) as tmp:
-            pickle.dump(
+            pickle_mod.dump(
                 {
                     "version": _RANK_CACHE_VERSION,
                     "size": rank_size,
@@ -398,7 +419,7 @@ def _load_rank_payload_and_ranks_impl(
                     "ranks": ranks,
                 },
                 tmp,
-                protocol=pickle.HIGHEST_PROTOCOL,
+                protocol=pickle_mod.HIGHEST_PROTOCOL,
             )
             tmp.flush()
             os.fsync(tmp.fileno())

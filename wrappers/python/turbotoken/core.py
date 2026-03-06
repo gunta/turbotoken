@@ -639,6 +639,16 @@ class Encoding:
             return 65_536
         return max(1, value)
 
+    def _native_cold_small_text_max_bytes(self) -> int:
+        raw = os.environ.get("TURBOTOKEN_NATIVE_COLD_SMALL_TEXT_MAX_BYTES", "").strip()
+        if not raw:
+            return 64
+        try:
+            value = int(raw, 10)
+        except ValueError:
+            return 64
+        return max(0, value)
+
     def _native_o200k_large_ascii_auto_enabled(self, text: str) -> bool:
         if self.name not in {"o200k_base", "o200k_harmony"}:
             return False
@@ -763,6 +773,54 @@ class Encoding:
         self._native_rank_payload_ref = rank_payload
         return session
 
+    def _encode_ordinary_cold_native(self, text: str) -> list[int] | None:
+        if self._mergeable_ranks_cache is not None or not text.isascii():
+            return None
+        max_bytes = self._native_cold_small_text_max_bytes()
+        if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
+            return None
+        session = self._native_rank_session()
+        if session is None:
+            return None
+        data = text.encode("ascii")
+        if (
+            self.name == "cl100k_base"
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+        ):
+            return session.encode_bpe_ascii_letter_space(data)
+        if (
+            self.name in {"o200k_base", "o200k_harmony"}
+            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+        ):
+            return session.encode_bpe_ascii_o200k(data)
+        return None
+
+    def _count_ordinary_cold_native(self, text: str) -> int | None:
+        if self._mergeable_ranks_cache is not None or not text.isascii():
+            return None
+        max_bytes = self._native_cold_small_text_max_bytes()
+        if max_bytes <= 0 or _utf8_len_fast(text) > max_bytes:
+            return None
+        session = self._native_rank_session()
+        if session is None:
+            return None
+        data = text.encode("ascii")
+        if (
+            self.name == "cl100k_base"
+            and os.environ.get("TURBOTOKEN_NATIVE_CL100K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+        ):
+            return session.count_bpe_ascii_letter_space(data)
+        if (
+            self.name in {"o200k_base", "o200k_harmony"}
+            and os.environ.get("TURBOTOKEN_NATIVE_O200K_FULL_DISABLE", "").strip().lower()
+            not in {"1", "true", "yes"}
+        ):
+            return session.count_bpe_ascii_o200k(data)
+        return None
+
     def _bpe_tokenize_piece(self, piece: bytes) -> tuple[int, ...]:
         if not piece:
             return ()
@@ -869,6 +927,9 @@ class Encoding:
     def _encode_ordinary_impl(self, text: str) -> list[int]:
         if not text:
             return []
+        cold_native_tokens = self._encode_ordinary_cold_native(text)
+        if cold_native_tokens is not None:
+            return cold_native_tokens
         if (
             self.name == "cl100k_base"
             and text.isascii()
@@ -1271,6 +1332,9 @@ class Encoding:
     def _count_ordinary_impl(self, text: str) -> int:
         if not text:
             return 0
+        cold_native_count = self._count_ordinary_cold_native(text)
+        if cold_native_count is not None:
+            return cold_native_count
         if (
             self.name == "cl100k_base"
             and text.isascii()
