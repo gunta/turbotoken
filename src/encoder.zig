@@ -527,10 +527,20 @@ pub const Encoder = struct {
         });
     }
 
-    fn buildMergedNodes(
+    fn prepareReusablePairCache(
+        cache: *pair_cache.PairCache,
+        table: *const rank_loader.RankTable,
+    ) void {
+        cache.clear();
+        _ = cache.populateFromKnownSeedSets(table);
+    }
+
+    fn buildMergedNodesWithReusableState(
         allocator: std.mem.Allocator,
         text: []const u8,
         table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
     ) !MergeResult {
         if (text.len > @as(usize, dead_index)) {
             return error.InputTooLarge;
@@ -563,14 +573,6 @@ pub const Encoder = struct {
             }
         }
 
-        const cache = try allocator.create(pair_cache.PairCache);
-        defer allocator.destroy(cache);
-        cache.clear();
-
-        _ = cache.populateFromKnownSeedSets(table);
-        var scratch = std.ArrayListUnmanaged(u8){};
-        defer scratch.deinit(allocator);
-
         const queue_config = resolveQueueConfig(table);
         var queue = try BucketQueue.init(allocator, queue_config.bucket_count, queue_config.overflow_enabled);
         defer queue.deinit();
@@ -578,7 +580,7 @@ pub const Encoder = struct {
         if (arena.token.len > 1) {
             try queue.ensureTotalCapacity(arena.token.len - 1);
             for (0..arena.token.len - 1) |idx| {
-                try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, idx);
+                try enqueueCandidate(allocator, &queue, &arena, table, cache, scratch, idx);
             }
         }
 
@@ -638,9 +640,9 @@ pub const Encoder = struct {
             arena.version[actual_right_usize] +%= 1;
 
             if (prev_idx != null_index and prev_idx != dead_index) {
-                try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, @as(usize, prev_idx));
+                try enqueueCandidate(allocator, &queue, &arena, table, cache, scratch, @as(usize, prev_idx));
             }
-            try enqueueCandidate(allocator, &queue, &arena, table, cache, &scratch, left_idx);
+            try enqueueCandidate(allocator, &queue, &arena, table, cache, scratch, left_idx);
         }
 
         var head_idx: ?NodeIndex = null;
@@ -655,6 +657,21 @@ pub const Encoder = struct {
             .arena = arena,
             .head_idx = head_idx orelse return error.InvalidTokenizerState,
         };
+    }
+
+    fn buildMergedNodes(
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+    ) !MergeResult {
+        const cache = try allocator.create(pair_cache.PairCache);
+        defer allocator.destroy(cache);
+        prepareReusablePairCache(cache, table);
+
+        var scratch = std.ArrayListUnmanaged(u8){};
+        defer scratch.deinit(allocator);
+
+        return buildMergedNodesWithReusableState(allocator, text, table, cache, &scratch);
     }
 
     fn prefetchRead(comptime locality: u2, ptr: anytype) void {
@@ -725,6 +742,52 @@ pub const Encoder = struct {
         return out.toOwnedSlice(allocator);
     }
 
+    pub fn preparePairCache(
+        self: *const Encoder,
+        cache: *pair_cache.PairCache,
+        table: *const rank_loader.RankTable,
+    ) void {
+        _ = self;
+        prepareReusablePairCache(cache, table);
+    }
+
+    pub fn encodeWithRanksReusable(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+    ) ![]u32 {
+        _ = self;
+
+        if (text.len == 0) {
+            return allocator.alloc(u32, 0);
+        }
+
+        var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
+        defer merged.arena.deinit(allocator);
+        const arena = &merged.arena;
+
+        var out = std.ArrayListUnmanaged(u32){};
+        errdefer out.deinit(allocator);
+        try out.ensureTotalCapacity(allocator, text.len);
+
+        var cursor = merged.head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
+                return error.InvalidTokenizerState;
+            }
+            try out.append(allocator, arena.token[idx]);
+        }
+
+        return out.toOwnedSlice(allocator);
+    }
+
     pub fn countWithRanks(
         self: *const Encoder,
         allocator: std.mem.Allocator,
@@ -738,6 +801,40 @@ pub const Encoder = struct {
         }
 
         var merged = try buildMergedNodes(allocator, text, table);
+        defer merged.arena.deinit(allocator);
+        const arena = &merged.arena;
+
+        var count: usize = 0;
+        var cursor = merged.head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
+                return error.InvalidTokenizerState;
+            }
+            count += 1;
+        }
+
+        return count;
+    }
+
+    pub fn countWithRanksReusable(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+    ) !usize {
+        _ = self;
+
+        if (text.len == 0) {
+            return 0;
+        }
+
+        var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         const arena = &merged.arena;
 
@@ -837,4 +934,42 @@ test "countWithRanks counts final tokenized segments without output allocation" 
 
     const enc = Encoder.init();
     try std.testing.expectEqual(@as(usize, 2), try enc.countWithRanks(allocator, "abc", &table));
+}
+
+test "reusable pair cache preserves encode/count results across pieces" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\Yw== 2
+        \\ZA== 3
+        \\YWI= 4
+        \\YmM= 5
+        \\Y2Q= 6
+        \\YWJj 7
+        \\YmNk 8
+        \\YWJjZA== 9
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    const cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(cache);
+    enc.preparePairCache(cache, &table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
+    const tokens_abc = try enc.encodeWithRanksReusable(allocator, "abc", &table, cache, &scratch);
+    defer allocator.free(tokens_abc);
+    try std.testing.expectEqualSlices(u32, &[_]u32{7}, tokens_abc);
+
+    const tokens_abcd = try enc.encodeWithRanksReusable(allocator, "abcd", &table, cache, &scratch);
+    defer allocator.free(tokens_abcd);
+    try std.testing.expectEqualSlices(u32, &[_]u32{9}, tokens_abcd);
+
+    try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abc", &table, cache, &scratch));
+    try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abcd", &table, cache, &scratch));
 }

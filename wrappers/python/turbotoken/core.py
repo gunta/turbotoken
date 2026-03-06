@@ -646,15 +646,20 @@ class Encoding:
             return False
         if _utf8_len_fast(text) < self._native_o200k_full_min_bytes():
             return False
-        # Keep large-text o200k full/range routing opt-in until hosted x64 data
-        # consistently beats the default cached CPU path.
-        return False
+        system = platform.system()
+        machine = platform.machine().lower()
+        if system != "Linux":
+            return False
+        if machine not in {"x86_64", "amd64"}:
+            return False
+        return True
 
     def _native_o200k_full_auto_enabled(self, text: str) -> bool:
         return self._native_o200k_large_ascii_auto_enabled(text)
 
     def _native_range_batch_auto_enabled(self, text: str) -> bool:
-        return self._native_o200k_large_ascii_auto_enabled(text)
+        _ = text
+        return False
 
     def _native_decode_min_tokens(self) -> int:
         raw = os.environ.get("TURBOTOKEN_NATIVE_DECODE_MIN_TOKENS", "").strip()
@@ -929,38 +934,14 @@ class Encoding:
         ascii_cache = self._ascii_text_bpe_cache
         if len(text) >= 8192:
             self._ensure_persistent_piece_cache()
-        pieces = [piece for piece in ascii_regex.findall(text) if piece]
-        if not pieces:
-            return []
         new_persistent_entries: dict[bytes, tuple[int, ...]] = {}
-
-        if len(pieces) >= 4096:
-            unique_pieces = set(pieces)
-            if len(unique_pieces) * 4 <= len(pieces):
-                import itertools
-
-                unique_token_map: dict[str, tuple[int, ...]] = {}
-                for piece_text in unique_pieces:
-                    cached = ascii_cache.get(piece_text)
-                    if cached is None:
-                        piece_bytes = piece_text.encode("ascii")
-                        cached = bpe_cache.get(piece_bytes)
-                        if cached is None:
-                            cached = self._bpe_tokenize_piece(piece_bytes)
-                            if len(piece_bytes) <= 64:
-                                new_persistent_entries[piece_bytes] = cached
-                        if self._cache_room(len(ascii_cache)):
-                            ascii_cache[piece_text] = cached
-                    unique_token_map[piece_text] = cached
-                out = list(itertools.chain.from_iterable(unique_token_map[piece] for piece in pieces))
-                if new_persistent_entries:
-                    self._persist_piece_entries(new_persistent_entries)
-                return out
-
         out: list[int] = []
         last_piece: str | None = None
         last_tokens: tuple[int, ...] = ()
-        for piece_text in pieces:
+        for match in ascii_regex.finditer(text):
+            piece_text = match.group(0)
+            if not piece_text:
+                continue
             if piece_text == last_piece:
                 out.extend(last_tokens)
                 continue
@@ -1387,39 +1368,14 @@ class Encoding:
         ascii_cache = self._ascii_text_bpe_cache
         if len(text) >= 8192:
             self._ensure_persistent_piece_cache()
-        pieces = [piece for piece in ascii_regex.findall(text) if piece]
-        if not pieces:
-            return 0
         new_persistent_entries: dict[bytes, tuple[int, ...]] = {}
-
-        if len(pieces) >= 4096:
-            unique_pieces = set(pieces)
-            if len(unique_pieces) * 4 <= len(pieces):
-                from collections import Counter
-
-                piece_counts = Counter(pieces)
-                unique_len_map: dict[str, int] = {}
-                for piece_text in unique_pieces:
-                    cached = ascii_cache.get(piece_text)
-                    if cached is None:
-                        piece_bytes = piece_text.encode("ascii")
-                        cached = bpe_cache.get(piece_bytes)
-                        if cached is None:
-                            cached = self._bpe_tokenize_piece(piece_bytes)
-                            if len(piece_bytes) <= 64:
-                                new_persistent_entries[piece_bytes] = cached
-                        if self._cache_room(len(ascii_cache)):
-                            ascii_cache[piece_text] = cached
-                    unique_len_map[piece_text] = len(cached)
-                total = sum(unique_len_map[piece] * count for piece, count in piece_counts.items())
-                if new_persistent_entries:
-                    self._persist_piece_entries(new_persistent_entries)
-                return total
-
         count = 0
         last_piece: str | None = None
         last_cached_len = 0
-        for piece_text in pieces:
+        for match in ascii_regex.finditer(text):
+            piece_text = match.group(0)
+            if not piece_text:
+                continue
             if piece_text == last_piece:
                 count += last_cached_len
                 continue

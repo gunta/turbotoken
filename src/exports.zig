@@ -5,6 +5,7 @@ const x86_64 = @import("arch/x86_64.zig");
 const wasm_arch = @import("arch/wasm.zig");
 const ScalarBackend = @import("arch/generic.zig").ScalarBackend;
 const hash = @import("hash.zig");
+const pair_cache = @import("pair_cache.zig");
 const rank_loader = @import("rank_loader.zig");
 const pretokenizer = @import("pretokenizer.zig");
 const trainer = @import("trainer.zig");
@@ -30,6 +31,29 @@ const BpeParallelMode = enum {
     auto,
     on,
     off,
+};
+
+const ReusableBpeState = struct {
+    cache: *pair_cache.PairCache,
+    scratch: std.ArrayListUnmanaged(u8) = .{},
+
+    fn init(
+        allocator: std.mem.Allocator,
+        backend: *const ScalarBackend,
+        table: *const rank_loader.RankTable,
+    ) !ReusableBpeState {
+        const cache = try allocator.create(pair_cache.PairCache);
+        errdefer allocator.destroy(cache);
+        backend.preparePairCache(cache, table);
+        return .{
+            .cache = cache,
+        };
+    }
+
+    fn deinit(self: *ReusableBpeState, allocator: std.mem.Allocator) void {
+        self.scratch.deinit(allocator);
+        allocator.destroy(self.cache);
+    }
 };
 
 var bpe_parallel_mode: BpeParallelMode = .auto;
@@ -217,6 +241,11 @@ fn markWorkerFailed(flag: *std.atomic.Value(u8)) void {
 fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
     const allocator = runtimeAllocator();
     const backend = ScalarBackend.init();
+    var reusable = ReusableBpeState.init(allocator, &backend, ctx.table) catch {
+        markWorkerFailed(&ctx.failed);
+        return;
+    };
+    defer reusable.deinit(allocator);
 
     for (begin..end) |idx| {
         if (ctx.failed.load(.acquire) != 0) {
@@ -230,7 +259,13 @@ fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
             return;
         }
 
-        const counted = backend.count(allocator, ctx.in_slice[start..finish], ctx.table) catch {
+        const counted = backend.countReusable(
+            allocator,
+            ctx.in_slice[start..finish],
+            ctx.table,
+            reusable.cache,
+            &reusable.scratch,
+        ) catch {
             markWorkerFailed(&ctx.failed);
             return;
         };
@@ -241,6 +276,11 @@ fn countRangesWorker(ctx: *CountRangesContext, begin: usize, end: usize) void {
 fn encodeRangesWorker(ctx: *EncodeRangesContext, begin: usize, end: usize) void {
     const allocator = runtimeAllocator();
     const backend = ScalarBackend.init();
+    var reusable = ReusableBpeState.init(allocator, &backend, ctx.table) catch {
+        markWorkerFailed(&ctx.failed);
+        return;
+    };
+    defer reusable.deinit(allocator);
 
     for (begin..end) |idx| {
         if (ctx.failed.load(.acquire) != 0) {
@@ -265,7 +305,13 @@ fn encodeRangesWorker(ctx: *EncodeRangesContext, begin: usize, end: usize) void 
             continue;
         }
 
-        const encoded = backend.encode(allocator, ctx.in_slice[start..finish], ctx.table) catch {
+        const encoded = backend.encodeReusable(
+            allocator,
+            ctx.in_slice[start..finish],
+            ctx.table,
+            reusable.cache,
+            &reusable.scratch,
+        ) catch {
             markWorkerFailed(&ctx.failed);
             return;
         };
@@ -1814,6 +1860,13 @@ fn countBpeAsciiO200kFromTable(
     in_slice: []const u8,
     table: *const rank_loader.RankTable,
 ) !usize {
+    const reusable_cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(reusable_cache);
+    backend.encoder.preparePairCache(reusable_cache, table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
     var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallCountCacheEntry = undefined;
     var small_cache_len: usize = 0;
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
@@ -1844,7 +1897,7 @@ fn countBpeAsciiO200kFromTable(
             }
         }
 
-        const piece_count = try backend.count(allocator, piece, table);
+        const piece_count = try backend.encoder.countWithRanksReusable(allocator, piece, table, reusable_cache, &scratch);
         total_count += piece_count;
 
         if (small_cache_len < ascii_o200k_small_cache_cap) {
@@ -1874,6 +1927,13 @@ fn encodeBpeAsciiO200kFromTable(
     out_tokens: [*c]u32,
     out_cap: usize,
 ) !isize {
+    const reusable_cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(reusable_cache);
+    backend.encoder.preparePairCache(reusable_cache, table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
     var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallEncodeCacheEntry = undefined;
     var small_cache_len: usize = 0;
     defer {
@@ -1925,7 +1985,7 @@ fn encodeBpeAsciiO200kFromTable(
             }
         }
 
-        const encoded = try backend.encode(allocator, piece, table);
+        const encoded = try backend.encoder.encodeWithRanksReusable(allocator, piece, table, reusable_cache, &scratch);
         defer allocator.free(encoded);
         if (encoded.len > out_cap -| total_tokens) {
             return error.OutOfMemory;
@@ -1989,6 +2049,13 @@ fn countBpeAsciiLetterSpaceFromTable(
     in_slice: []const u8,
     table: *const rank_loader.RankTable,
 ) !usize {
+    const reusable_cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(reusable_cache);
+    backend.encoder.preparePairCache(reusable_cache, table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
     defer piece_cache.deinit(allocator);
 
@@ -2001,7 +2068,7 @@ fn countBpeAsciiLetterSpaceFromTable(
             continue;
         }
 
-        const piece_count = try backend.count(allocator, piece, table);
+        const piece_count = try backend.encoder.countWithRanksReusable(allocator, piece, table, reusable_cache, &scratch);
         total_count += piece_count;
 
         if (piece_cache.count() >= ascii_letter_space_piece_cache_cap) {
@@ -2063,6 +2130,13 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
         return @as(isize, @intCast(token_count));
     }
 
+    const reusable_cache = allocator.create(pair_cache.PairCache) catch return -1;
+    defer allocator.destroy(reusable_cache);
+    backend.encoder.preparePairCache(reusable_cache, table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
     defer {
         var it = piece_cache.iterator();
@@ -2086,7 +2160,7 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
             continue;
         }
 
-        const encoded = backend.encode(allocator, piece, table) catch return -1;
+        const encoded = backend.encoder.encodeWithRanksReusable(allocator, piece, table, reusable_cache, &scratch) catch return -1;
         defer allocator.free(encoded);
         if (encoded.len > out_cap -| total_tokens) {
             return -1;

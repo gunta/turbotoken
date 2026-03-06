@@ -1,6 +1,7 @@
 const std = @import("std");
 const Encoder = @import("../encoder.zig").Encoder;
 const Decoder = @import("../decoder.zig").Decoder;
+const pair_cache = @import("../pair_cache.zig");
 const rank_loader = @import("../rank_loader.zig");
 
 pub fn available() bool {
@@ -43,6 +44,36 @@ pub const ScalarBackend = struct {
         table: *const rank_loader.RankTable,
     ) !usize {
         return self.encoder.countWithRanks(allocator, text, table);
+    }
+
+    pub fn preparePairCache(
+        self: *const ScalarBackend,
+        cache: *pair_cache.PairCache,
+        table: *const rank_loader.RankTable,
+    ) void {
+        self.encoder.preparePairCache(cache, table);
+    }
+
+    pub fn encodeReusable(
+        self: *const ScalarBackend,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+    ) ![]u32 {
+        return self.encoder.encodeWithRanksReusable(allocator, text, table, cache, scratch);
+    }
+
+    pub fn countReusable(
+        self: *const ScalarBackend,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+    ) !usize {
+        return self.encoder.countWithRanksReusable(allocator, text, table, cache, scratch);
     }
 };
 
