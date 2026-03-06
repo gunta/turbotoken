@@ -126,7 +126,9 @@ jobs:
       - name: Install Linux benchmark extras
         if: ${{ matrix.id == 'linux' && inputs.run_cpu_gates }}
         run: |
-          uv pip install --system rustbpe || python -m pip install rustbpe
+          sudo apt-get update
+          sudo apt-get install -y hyperfine
+          uv pip install --system rustbpe tiktoken || python -m pip install rustbpe tiktoken
           rm -rf /tmp/minbpe
           git clone --depth 1 https://github.com/karpathy/minbpe.git /tmp/minbpe
 
