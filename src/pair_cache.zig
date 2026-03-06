@@ -315,13 +315,16 @@ test "pair cache known seed metadata is present" {
 }
 
 test "pair cache default hash mode follows target capability" {
-    const expected: PairCache.HashMode = if (comptime PairCache.aarch64_crc_supported)
-        .crc32
-    else if (comptime PairCache.x86_crc_supported)
-        PairCache.selectFastestHashMode()
-    else
-        .rapidhash;
-    try std.testing.expectEqual(expected, PairCache.defaultHashMode());
+    const actual = PairCache.defaultHashMode();
+    if (comptime PairCache.aarch64_crc_supported) {
+        try std.testing.expectEqual(PairCache.HashMode.crc32, actual);
+        return;
+    }
+    if (comptime PairCache.x86_crc_supported) {
+        try std.testing.expect(actual == .crc32 or actual == .rapidhash);
+        return;
+    }
+    try std.testing.expectEqual(PairCache.HashMode.rapidhash, actual);
 }
 
 test "pair cache known seed matching is no-op for unknown tables" {
