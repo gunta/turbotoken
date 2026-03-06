@@ -33,6 +33,12 @@ Issues = "https://github.com/turbotoken/turbotoken/issues"
 [tool.hatch.build.targets.wheel]
 packages = ["wrappers/python/turbotoken"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+  "wrappers/python/turbotoken/_data/**/*.bin",
+  "scripts/build-python-embedded-ranks.ts",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["wrappers/python"]
 testpaths = ["wrappers/python/tests"]

@@ -12,7 +12,7 @@ active scaffold-to-implementation transition and should not be treated as produc
 - Language bindings are organized under `wrappers/` (see `wrappers/README.md`).
 - Each wrapper package has its own `README.md` with language-specific setup/usage notes.
 - Release/publish governance is tracked in `wrappers/release-matrix.json` and `docs/PUBLISHING.md`.
-- Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
+- Python `Encoding` now uses real regex+BPE merge logic, with embedded native rank payloads for `o200k_base`/`o200k_harmony`/`cl100k_base` and download-on-first-use fallback for the remaining rank files.
 - JS async encoding now defaults to real BPE when a native or full WASM backend is available; sync JS construction remains byte-path-first unless explicitly readied for BPE.
 - Native Zig CPU acceleration is available for key byte-path primitives, with x86 runtime dispatch (AVX-512/AVX2/SSE4.2/scalar) now wired in `src/arch/x86_64.zig`.
 - Apple Metal backend now includes an experimental on-device BPE merge loop (`find -> mark -> apply` + active compaction + GPU emit), but remains parity-guarded/experimental and is not the default route.

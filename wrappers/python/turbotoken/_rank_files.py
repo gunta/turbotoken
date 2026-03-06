@@ -3,12 +3,15 @@ from __future__ import annotations
 import base64
 import os
 import struct
+from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 
 from ._registry import get_encoding_spec
 
 
 _DEFAULT_CACHE_DIR: Path | None = None
+_EMBEDDED_RANK_RESOURCE_DIR = ("_data", "ranks")
 
 
 def _pickle_module():
@@ -40,11 +43,49 @@ def rank_file_path(name: str, *, dir_path: Path | None = None) -> Path:
     return cache_dir(dir_path) / f"{spec.name}.tiktoken"
 
 
+@lru_cache(maxsize=None)
+def _embedded_rank_asset_base(name: str) -> str | None:
+    return get_encoding_spec(name).embedded_rank_asset
+
+
+@lru_cache(maxsize=None)
+def _read_embedded_native_payload(name: str) -> bytes | None:
+    asset_base = _embedded_rank_asset_base(name)
+    if asset_base is None:
+        return None
+
+    try:
+        resource = resources.files("turbotoken").joinpath(
+            *_EMBEDDED_RANK_RESOURCE_DIR,
+            f"{asset_base}.tiktoken.native.bin",
+        )
+    except (AttributeError, ModuleNotFoundError):
+        return None
+
+    try:
+        return resource.read_bytes()
+    except FileNotFoundError:
+        return None
+
+
 def _download_bytes(url: str, *, timeout: float = 30.0) -> bytes:
     from urllib.request import urlopen
 
     with urlopen(url, timeout=timeout) as response:  # noqa: S310
         return response.read()
+
+
+def _write_atomic(target: Path, payload: bytes) -> None:
+    import tempfile
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as tmp:
+        tmp.write(payload)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = Path(tmp.name)
+
+    tmp_path.replace(target)
 
 
 def ensure_rank_file(
@@ -58,16 +99,21 @@ def ensure_rank_file(
     if target.exists() and not force:
         return target
 
-    payload = _download_bytes(get_encoding_spec(name).rank_file_url, timeout=timeout)
-    import tempfile
+    embedded_native = _read_embedded_native_payload(name)
+    if embedded_native is not None:
+        payload = _native_payload_to_rank_file_bytes(embedded_native)
+    else:
+        payload = _download_bytes(get_encoding_spec(name).rank_file_url, timeout=timeout)
 
-    with tempfile.NamedTemporaryFile("wb", dir=target.parent, delete=False) as tmp:
-        tmp.write(payload)
-        tmp.flush()
-        os.fsync(tmp.fileno())
-        tmp_path = Path(tmp.name)
+    _write_atomic(target, payload)
 
-    tmp_path.replace(target)
+    if embedded_native is not None:
+        native_path = _native_payload_path(target)
+        try:
+            if force or not native_path.exists():
+                _write_atomic(native_path, embedded_native)
+        except Exception:
+            pass
     return target
 
 
@@ -101,6 +147,21 @@ def _native_payload_path(rank_path: Path) -> Path:
     return rank_path.with_suffix(f"{rank_path.suffix}.native.bin")
 
 
+def _native_payload_source_metadata(payload: bytes) -> tuple[int, int]:
+    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
+        raise ValueError("invalid native rank payload header")
+    magic, version, flags, source_size, source_mtime_ns, _entry_count, _max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
+        payload[: _NATIVE_PAYLOAD_HEADER.size]
+    )
+    if (
+        magic != _NATIVE_PAYLOAD_MAGIC
+        or version != _NATIVE_PAYLOAD_VERSION
+        or flags != _NATIVE_PAYLOAD_FLAGS
+    ):
+        raise ValueError("unsupported native rank payload format")
+    return source_size, source_mtime_ns
+
+
 def _native_payload_header_matches(payload: bytes, *, rank_size: int, rank_mtime_ns: int) -> bool:
     if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
         return False
@@ -114,6 +175,45 @@ def _native_payload_header_matches(payload: bytes, *, rank_size: int, rank_mtime
         and source_size == rank_size
         and source_mtime_ns == rank_mtime_ns
     )
+
+
+def _native_payload_to_rank_file_bytes(payload: bytes) -> bytes:
+    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
+        raise ValueError("invalid native rank payload header")
+    magic, version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
+        payload[: _NATIVE_PAYLOAD_HEADER.size]
+    )
+    if (
+        magic != _NATIVE_PAYLOAD_MAGIC
+        or version != _NATIVE_PAYLOAD_VERSION
+        or flags != _NATIVE_PAYLOAD_FLAGS
+    ):
+        raise ValueError("unsupported native rank payload format")
+
+    cursor = _NATIVE_PAYLOAD_HEADER.size
+    parsed_entries = 0
+    out = bytearray()
+    for rank in range(max_rank_plus_one):
+        if cursor + 4 > len(payload):
+            raise ValueError("truncated native rank payload")
+        (token_len,) = struct.unpack_from("<I", payload, cursor)
+        cursor += 4
+        if token_len == _NATIVE_PAYLOAD_MISSING:
+            continue
+        end = cursor + token_len
+        if end > len(payload):
+            raise ValueError("truncated native rank payload token bytes")
+        token_bytes = payload[cursor:end]
+        cursor = end
+        out.extend(base64.b64encode(token_bytes))
+        out.extend(b" ")
+        out.extend(str(rank).encode("ascii"))
+        out.extend(b"\n")
+        parsed_entries += 1
+
+    if parsed_entries != entry_count:
+        raise ValueError("native rank payload entry count mismatch")
+    return bytes(out)
 
 
 def _compile_native_rank_payload(payload: bytes, *, rank_size: int, rank_mtime_ns: int) -> bytes:
@@ -171,6 +271,16 @@ def read_rank_file_native_payload(
     timeout: float = 30.0,
     force: bool = False,
 ) -> bytes:
+    embedded_payload = _read_embedded_native_payload(name)
+    if embedded_payload is not None:
+        native_path = _native_payload_path(rank_file_path(name, dir_path=dir_path))
+        try:
+            if force or not native_path.exists():
+                _write_atomic(native_path, embedded_payload)
+        except Exception:
+            pass
+        return embedded_payload
+
     rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
     stat = rank_path.stat()
     native_path = _native_payload_path(rank_path)
@@ -194,18 +304,29 @@ def read_rank_file_native_payload(
         return rank_payload
 
     try:
-        import tempfile
-
-        with tempfile.NamedTemporaryFile("wb", dir=native_path.parent, delete=False) as tmp:
-            tmp.write(native_payload)
-            tmp.flush()
-            os.fsync(tmp.fileno())
-            tmp_path = Path(tmp.name)
-        tmp_path.replace(native_path)
+        _write_atomic(native_path, native_payload)
     except Exception:
         pass
 
     return native_payload
+
+
+def _rank_source_signature(
+    name: str,
+    *,
+    dir_path: Path | None = None,
+    timeout: float = 30.0,
+    force: bool = False,
+) -> tuple[Path, int, int]:
+    rank_path = rank_file_path(name, dir_path=dir_path)
+    embedded_payload = _read_embedded_native_payload(name)
+    if embedded_payload is not None:
+        rank_size, rank_mtime_ns = _native_payload_source_metadata(embedded_payload)
+        return rank_path, rank_size, rank_mtime_ns
+
+    resolved_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
+    stat = resolved_path.stat()
+    return resolved_path, stat.st_size, stat.st_mtime_ns
 
 
 def load_rank_payload_and_ranks(
@@ -251,10 +372,12 @@ def load_decoder_only(
     force: bool = False,
 ) -> dict[int, bytes]:
     pickle_mod = _pickle_module()
-    rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
-    stat = rank_path.stat()
-    rank_size = stat.st_size
-    rank_mtime_ns = stat.st_mtime_ns
+    rank_path, rank_size, rank_mtime_ns = _rank_source_signature(
+        name,
+        dir_path=dir_path,
+        timeout=timeout,
+        force=force,
+    )
     decoder_path = _decoder_pickle_path(rank_path)
 
     if not force and decoder_path.exists():
@@ -307,10 +430,12 @@ def load_piece_bpe_cache(
     force: bool = False,
 ) -> dict[bytes, tuple[int, ...]]:
     pickle_mod = _pickle_module()
-    rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
-    stat = rank_path.stat()
-    rank_size = stat.st_size
-    rank_mtime_ns = stat.st_mtime_ns
+    rank_path, rank_size, rank_mtime_ns = _rank_source_signature(
+        name,
+        dir_path=dir_path,
+        timeout=timeout,
+        force=force,
+    )
     piece_path = _piece_pickle_path(rank_path)
 
     if not force and piece_path.exists():
@@ -347,8 +472,12 @@ def save_piece_bpe_cache(
     force: bool = False,
 ) -> None:
     pickle_mod = _pickle_module()
-    rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
-    stat = rank_path.stat()
+    rank_path, rank_size, rank_mtime_ns = _rank_source_signature(
+        name,
+        dir_path=dir_path,
+        timeout=timeout,
+        force=force,
+    )
     piece_path = _piece_pickle_path(rank_path)
 
     try:
@@ -358,8 +487,8 @@ def save_piece_bpe_cache(
             pickle_mod.dump(
                 {
                     "version": _PIECE_CACHE_VERSION,
-                    "size": stat.st_size,
-                    "mtime_ns": stat.st_mtime_ns,
+                    "size": rank_size,
+                    "mtime_ns": rank_mtime_ns,
                     "pieces": pieces,
                 },
                 tmp,
@@ -382,12 +511,19 @@ def _load_rank_payload_and_ranks_impl(
     include_payload: bool,
 ) -> tuple[bytes | None, dict[bytes, int]]:
     pickle_mod = _pickle_module()
-    rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
-    payload = rank_path.read_bytes() if include_payload else None
-
-    stat = rank_path.stat()
-    rank_size = stat.st_size
-    rank_mtime_ns = stat.st_mtime_ns
+    rank_path = rank_file_path(name, dir_path=dir_path)
+    embedded_payload = _read_embedded_native_payload(name)
+    if embedded_payload is not None:
+        payload = embedded_payload if include_payload else None
+        payload_for_parse = embedded_payload
+        rank_size, rank_mtime_ns = _native_payload_source_metadata(embedded_payload)
+    else:
+        rank_path = ensure_rank_file(name, dir_path=dir_path, timeout=timeout, force=force)
+        payload = rank_path.read_bytes() if include_payload else None
+        stat = rank_path.stat()
+        rank_size = stat.st_size
+        rank_mtime_ns = stat.st_mtime_ns
+        payload_for_parse = payload if payload is not None else rank_path.read_bytes()
     pickle_path = _rank_pickle_path(rank_path)
 
     if not force and pickle_path.exists():
@@ -405,7 +541,6 @@ def _load_rank_payload_and_ranks_impl(
         except Exception:
             pass
 
-    payload_for_parse = payload if payload is not None else rank_path.read_bytes()
     ranks = parse_rank_file_bytes(payload_for_parse)
     try:
         import tempfile

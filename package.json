@@ -95,6 +95,7 @@
     "release:dry-run": "bun run scripts/release-readiness.ts --dry-run",
     "release:dry-run:ga": "bun run scripts/release-readiness.ts --dry-run --tier=ga --fail-on-skipped",
     "gha:x86": "bun run scripts/trigger-x86-ondemand.ts",
+    "generate:python:embedded-ranks": "bun run scripts/build-python-embedded-ranks.ts",
     "release:smoke:ga": "bun run scripts/ga-wrapper-smoke.ts",
     "verify:npm-package": "bun run scripts/verify-npm-package.ts",
     "smoke:wheel-install": "bun run scripts/smoke-wheel-install.ts",

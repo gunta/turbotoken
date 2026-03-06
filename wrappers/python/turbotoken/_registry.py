@@ -98,13 +98,14 @@ _MODEL_TO_ENCODING = {
 
 
 class EncodingSpec:
-    __slots__ = ("name", "rank_file_url", "pat_str", "special_tokens", "explicit_n_vocab")
+    __slots__ = ("name", "rank_file_url", "pat_str", "special_tokens", "explicit_n_vocab", "embedded_rank_asset")
 
     name: str
     rank_file_url: str
     pat_str: str
     special_tokens: dict[str, int]
     explicit_n_vocab: int
+    embedded_rank_asset: str | None
 
     def __init__(
         self,
@@ -114,12 +115,14 @@ class EncodingSpec:
         pat_str: str,
         special_tokens: dict[str, int],
         explicit_n_vocab: int,
+        embedded_rank_asset: str | None = None,
     ) -> None:
         self.name = name
         self.rank_file_url = rank_file_url
         self.pat_str = pat_str
         self.special_tokens = special_tokens
         self.explicit_n_vocab = explicit_n_vocab
+        self.embedded_rank_asset = embedded_rank_asset
 
     @property
     def n_vocab(self) -> int:
@@ -137,6 +140,7 @@ _ENCODING_SPECS = {
         pat_str=_O200K_PAT_STR,
         special_tokens={ENDOFTEXT: 199999, ENDOFPROMPT: 200018},
         explicit_n_vocab=200019,
+        embedded_rank_asset="o200k_base",
     ),
     "cl100k_base": EncodingSpec(
         name="cl100k_base",
@@ -150,6 +154,7 @@ _ENCODING_SPECS = {
             ENDOFPROMPT: 100276,
         },
         explicit_n_vocab=100277,
+        embedded_rank_asset="cl100k_base",
     ),
     "p50k_base": EncodingSpec(
         name="p50k_base",
@@ -185,6 +190,7 @@ _ENCODING_SPECS = {
         pat_str=_O200K_PAT_STR,
         special_tokens={ENDOFTEXT: 199999, ENDOFPROMPT: 200018},
         explicit_n_vocab=200019,
+        embedded_rank_asset="o200k_base",
     ),
 }
 

@@ -18,7 +18,7 @@
 | ADR-007 | Script language: Bun Shell TypeScript | 2026-02-24 | ACCEPTED |
 | ADR-008 | Benchmark tool: Hyperfine | 2026-02-24 | ACCEPTED |
 | ADR-009 | Phase ordering: NEON > Metal > WASM > AVX > CUDA > RVV | 2026-02-24 | ACCEPTED |
-| ADR-010 | Merge table loading: download on first use | 2026-02-24 | ACCEPTED |
+| ADR-010 | Merge table loading: embedded native core payloads + download fallback | 2026-02-24 | ACCEPTED (revised) |
 
 ---
 
@@ -309,21 +309,20 @@ tiktoken encoding definitions include large merge tables (5MB for o200k_base). W
 ### Options
 | Option | Wheel Size | First Run | Offline |
 |--------|-----------|-----------|---------|
-| Vendor in wheel | +20MB | Instant | Works |
-| **Download on first use** | No change | +2s (one time) | Fails (needs fallback) |
+| Vendor every rank file in wheel | +20MB | Instant | Works |
+| Download on first use | No change | +2s (one time) | Fails (needs fallback) |
+| **Embed native payloads for core encodings; download others** | +~3.3MB (Python wheel) | Instant for `o200k`/`cl100k`; +2s for others | Works for core encodings |
 | Download at install time | No change | +2s (one time) | Fails |
 | Git LFS | N/A | Depends | Depends |
 
 ### Decision
-**Download on first use, cache in `~/.cache/turbotoken/`.**
-Offline fallback: check for tiktoken's cache in `~/.cache/tiktoken/` too.
+**Embed native rank payloads for `o200k_base`, `o200k_harmony`, and `cl100k_base` in the Python package; keep download-on-first-use fallback for the remaining rank files and cache materialized `.tiktoken` files in `~/.cache/turbotoken/`.**
 
 ### Rationale
-- Same approach as tiktoken -- users already understand this pattern
-- Keeps wheel size small (<500KB target)
-- Downloading 4 files once on first use is acceptable
-- Fallback to tiktoken's cache means users who already have tiktoken don't re-download
-- CLI can include `turbotoken prefetch` command for CI/Docker environments
+- Keeps the hottest Python encodings available offline with no first-run network dependency
+- Native binary payloads are smaller than vendoring every text rank file while still feeding the Zig loader directly
+- `Encoding.ensure_rank_file()` remains compatible by materializing a canonical `.tiktoken` file only when explicitly requested
+- Remaining lower-priority encodings still use the tiktoken-style download/cache path instead of bloating the wheel further
 
 ---
 

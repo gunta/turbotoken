@@ -1034,22 +1034,18 @@ pub export fn turbotoken_encode_bpe_from_ranks(
     const in_slice = text[0..text_len];
 
     const backend = ScalarBackend.init();
-    const tokens = backend.encode(allocator, in_slice, table) catch return -1;
-    defer allocator.free(tokens);
-
     if (out_tokens == null) {
-        if (tokens.len > @as(usize, @intCast(std.math.maxInt(isize)))) {
+        const token_count = backend.count(allocator, in_slice, table) catch return -1;
+        if (token_count > @as(usize, @intCast(std.math.maxInt(isize)))) {
             return -1;
         }
-        return @as(isize, @intCast(tokens.len));
+        return @as(isize, @intCast(token_count));
     }
-
-    if (out_cap < tokens.len) {
+    const written = backend.encoder.encodeWithRanksInto(allocator, in_slice, table, out_tokens[0..out_cap]) catch return -1;
+    if (written > @as(usize, @intCast(std.math.maxInt(isize)))) {
         return -1;
     }
-
-    @memcpy(out_tokens[0..tokens.len], tokens);
-    return @as(isize, @intCast(tokens.len));
+    return @as(isize, @intCast(written));
 }
 
 pub export fn turbotoken_train_bpe_from_chunk_counts(
@@ -1985,17 +1981,13 @@ fn encodeBpeAsciiO200kFromTable(
             }
         }
 
-        const encoded = try backend.encoder.encodeWithRanksReusable(allocator, piece, table, reusable_cache, &scratch);
-        defer allocator.free(encoded);
-        if (encoded.len > out_cap -| total_tokens) {
-            return error.OutOfMemory;
-        }
-        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
-        total_tokens += encoded.len;
+        const token_slice = out_tokens[total_tokens..out_cap];
+        const written = try backend.encoder.encodeWithRanksReusableInto(allocator, piece, table, reusable_cache, &scratch, token_slice);
+        total_tokens += written;
 
-        const token_copy = try allocator.alloc(u32, encoded.len);
+        const token_copy = try allocator.alloc(u32, written);
         errdefer allocator.free(token_copy);
-        @memcpy(token_copy, encoded);
+        @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
 
         if (small_cache_len < ascii_o200k_small_cache_cap) {
             small_cache[small_cache_len] = .{
@@ -2160,18 +2152,14 @@ pub export fn turbotoken_encode_bpe_ascii_letter_space_from_ranks(
             continue;
         }
 
-        const encoded = backend.encoder.encodeWithRanksReusable(allocator, piece, table, reusable_cache, &scratch) catch return -1;
-        defer allocator.free(encoded);
-        if (encoded.len > out_cap -| total_tokens) {
-            return -1;
-        }
-        @memcpy(out_tokens[total_tokens .. total_tokens + encoded.len], encoded);
-        total_tokens += encoded.len;
+        const token_slice = out_tokens[total_tokens..out_cap];
+        const written = backend.encoder.encodeWithRanksReusableInto(allocator, piece, table, reusable_cache, &scratch, token_slice) catch return -1;
+        total_tokens += written;
 
         if (piece_cache.count() < ascii_letter_space_piece_cache_cap) {
-            const token_copy = allocator.alloc(u32, encoded.len) catch return -1;
+            const token_copy = allocator.alloc(u32, written) catch return -1;
             errdefer allocator.free(token_copy);
-            @memcpy(token_copy, encoded);
+            @memcpy(token_copy, out_tokens[total_tokens - written .. total_tokens]);
             piece_cache.put(allocator, piece, .{ .tokens = token_copy }) catch return -1;
         }
     }

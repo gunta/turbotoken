@@ -13,6 +13,7 @@ pub const Encoder = struct {
     const CandidateIndex = u32;
     const invalid_candidate = std.math.maxInt(CandidateIndex);
     const candidate_bucket_count: usize = 32_768;
+    const adaptive_bucket_scale_per_node: usize = 64;
     const max_full_bucket_count: usize = 1_048_576;
 
     const QueueMode = enum {
@@ -429,7 +430,7 @@ pub const Encoder = struct {
         return selected_queue_mode;
     }
 
-    fn resolveQueueConfig(table: *const rank_loader.RankTable) QueueConfig {
+    fn resolveQueueConfig(table: *const rank_loader.RankTable, node_count: usize) QueueConfig {
         if (queueMode() != .full_bucket) {
             return .{
                 .bucket_count = candidate_bucket_count,
@@ -445,7 +446,8 @@ pub const Encoder = struct {
             };
         }
 
-        const capped = @min(rank_upper_bound, max_full_bucket_count);
+        const adaptive_target = std.math.mul(usize, node_count, adaptive_bucket_scale_per_node) catch max_full_bucket_count;
+        const capped = @min(@max(adaptive_target, candidate_bucket_count), @min(rank_upper_bound, max_full_bucket_count));
         const bucket_count = @max(capped, candidate_bucket_count);
         return .{
             .bucket_count = bucket_count,
@@ -573,7 +575,7 @@ pub const Encoder = struct {
             }
         }
 
-        const queue_config = resolveQueueConfig(table);
+        const queue_config = resolveQueueConfig(table, arena.token.len);
         var queue = try BucketQueue.init(allocator, queue_config.bucket_count, queue_config.overflow_enabled);
         defer queue.deinit();
 
@@ -680,6 +682,42 @@ pub const Encoder = struct {
         }
     }
 
+    fn countMergedTokens(arena: *const NodeArena, head_idx: NodeIndex) !usize {
+        var count: usize = 0;
+        var cursor = head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
+                return error.InvalidTokenizerState;
+            }
+            count += 1;
+        }
+        return count;
+    }
+
+    fn writeMergedTokens(arena: *const NodeArena, head_idx: NodeIndex, out_tokens: []u32) !usize {
+        var written: usize = 0;
+        var cursor = head_idx;
+        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
+            if (cursor == dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            const idx = @as(usize, cursor);
+            if (!arena.isAlive(idx)) {
+                return error.InvalidTokenizerState;
+            }
+            if (written >= out_tokens.len) {
+                return error.OutOfMemory;
+            }
+            out_tokens[written] = arena.token[idx];
+            written += 1;
+        }
+        return written;
+    }
+
     pub fn init() Encoder {
         return .{};
     }
@@ -721,25 +759,13 @@ pub const Encoder = struct {
 
         var merged = try buildMergedNodes(allocator, text, table);
         defer merged.arena.deinit(allocator);
-        const arena = &merged.arena;
-
-        var out = std.ArrayListUnmanaged(u32){};
-        errdefer out.deinit(allocator);
-        try out.ensureTotalCapacity(allocator, text.len);
-
-        var cursor = merged.head_idx;
-        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
-            if (cursor == dead_index) {
-                return error.InvalidTokenizerState;
-            }
-            const idx = @as(usize, cursor);
-            if (!arena.isAlive(idx)) {
-                return error.InvalidTokenizerState;
-            }
-            try out.append(allocator, arena.token[idx]);
+        const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
+        const out = try allocator.alloc(u32, token_count);
+        const written = try writeMergedTokens(&merged.arena, merged.head_idx, out);
+        if (written != out.len) {
+            return error.InvalidTokenizerState;
         }
-
-        return out.toOwnedSlice(allocator);
+        return out;
     }
 
     pub fn preparePairCache(
@@ -767,25 +793,51 @@ pub const Encoder = struct {
 
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
-        const arena = &merged.arena;
+        const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
+        const out = try allocator.alloc(u32, token_count);
+        const written = try writeMergedTokens(&merged.arena, merged.head_idx, out);
+        if (written != out.len) {
+            return error.InvalidTokenizerState;
+        }
+        return out;
+    }
 
-        var out = std.ArrayListUnmanaged(u32){};
-        errdefer out.deinit(allocator);
-        try out.ensureTotalCapacity(allocator, text.len);
+    pub fn encodeWithRanksInto(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        out_tokens: []u32,
+    ) !usize {
+        _ = self;
 
-        var cursor = merged.head_idx;
-        while (cursor != null_index) : (cursor = arena.next[@as(usize, cursor)]) {
-            if (cursor == dead_index) {
-                return error.InvalidTokenizerState;
-            }
-            const idx = @as(usize, cursor);
-            if (!arena.isAlive(idx)) {
-                return error.InvalidTokenizerState;
-            }
-            try out.append(allocator, arena.token[idx]);
+        if (text.len == 0) {
+            return 0;
         }
 
-        return out.toOwnedSlice(allocator);
+        var merged = try buildMergedNodes(allocator, text, table);
+        defer merged.arena.deinit(allocator);
+        return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
+    }
+
+    pub fn encodeWithRanksReusableInto(
+        self: *const Encoder,
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+        out_tokens: []u32,
+    ) !usize {
+        _ = self;
+
+        if (text.len == 0) {
+            return 0;
+        }
+
+        var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
+        defer merged.arena.deinit(allocator);
+        return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
     }
 
     pub fn countWithRanks(
@@ -972,4 +1024,46 @@ test "reusable pair cache preserves encode/count results across pieces" {
 
     try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abc", &table, cache, &scratch));
     try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abcd", &table, cache, &scratch));
+}
+
+test "encodeWithRanksReusableInto writes tokens without intermediate slice allocation" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\Yw== 2
+        \\YWI= 3
+        \\YWJj 4
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    const cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(cache);
+    enc.preparePairCache(cache, &table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
+    var out: [4]u32 = undefined;
+    const written = try enc.encodeWithRanksReusableInto(allocator, "abc", &table, cache, &scratch, out[0..]);
+    try std.testing.expectEqual(@as(usize, 1), written);
+    try std.testing.expectEqualSlices(u32, &[_]u32{4}, out[0..written]);
+}
+
+test "resolveQueueConfig clamps short inputs away from full rank-space buckets" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 99999
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const config = Encoder.resolveQueueConfig(&table, 8);
+    try std.testing.expectEqual(@as(usize, Encoder.candidate_bucket_count), config.bucket_count);
+    try std.testing.expect(config.overflow_enabled);
 }

@@ -4,6 +4,10 @@ from pathlib import Path
 
 from turbotoken import get_encoding
 from turbotoken._rank_files import (
+    _compile_native_rank_payload,
+    _embedded_rank_asset_base,
+    _read_embedded_native_payload,
+    ensure_rank_file,
     file_sha256,
     load_decoder_only,
     load_piece_bpe_cache,
@@ -12,6 +16,10 @@ from turbotoken._rank_files import (
     rank_file_path,
     save_piece_bpe_cache,
 )
+
+
+def _native_payload_fixture(payload: bytes, *, rank_mtime_ns: int = 7) -> bytes:
+    return _compile_native_rank_payload(payload, rank_size=len(payload), rank_mtime_ns=rank_mtime_ns)
 
 
 def test_rank_file_path_uses_encoding_name(tmp_path: Path) -> None:
@@ -28,6 +36,7 @@ def test_parse_rank_file_bytes() -> None:
 def test_load_mergeable_ranks_downloads_to_cache(tmp_path: Path, monkeypatch) -> None:
     fixture = b"YQ== 1\nYg== 2\n"
 
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
 
     enc = get_encoding("o200k_base")
@@ -42,6 +51,7 @@ def test_load_mergeable_ranks_downloads_to_cache(tmp_path: Path, monkeypatch) ->
 def test_load_decoder_only_builds_cache(tmp_path: Path, monkeypatch) -> None:
     fixture = b"YQ== 1\nYg== 2\n"
 
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
 
     decoder = load_decoder_only("o200k_base", dir_path=tmp_path)
@@ -56,6 +66,7 @@ def test_load_decoder_only_builds_cache(tmp_path: Path, monkeypatch) -> None:
 
 def test_piece_bpe_cache_roundtrip(tmp_path: Path, monkeypatch) -> None:
     fixture = b"YQ== 1\nYg== 2\n"
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
 
     payload = {b"a": (1,), b"ab": (1, 2)}
@@ -66,6 +77,7 @@ def test_piece_bpe_cache_roundtrip(tmp_path: Path, monkeypatch) -> None:
 
 def test_read_rank_file_native_payload_builds_cache(tmp_path: Path, monkeypatch) -> None:
     fixture = b"YQ== 0\nYg== 2\n"
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
 
     payload = read_rank_file_native_payload("o200k_base", dir_path=tmp_path)
@@ -78,8 +90,83 @@ def test_read_rank_file_native_payload_builds_cache(tmp_path: Path, monkeypatch)
 
 def test_parse_rank_file_bytes_supports_native_payload(tmp_path: Path, monkeypatch) -> None:
     fixture = b"YQ== 0\nYg== 2\n"
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("turbotoken._rank_files._download_bytes", lambda *_args, **_kwargs: fixture)
 
     payload = read_rank_file_native_payload("o200k_base", dir_path=tmp_path)
     parsed = parse_rank_file_bytes(payload)
     assert parsed == {b"a": 0, b"b": 2}
+
+
+def test_ensure_rank_file_prefers_embedded_native_payload(tmp_path: Path, monkeypatch) -> None:
+    fixture = b"YQ== 0\nYg== 2\n"
+    native_payload = _native_payload_fixture(fixture)
+
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: native_payload)
+    monkeypatch.setattr(
+        "turbotoken._rank_files._download_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected download")),
+    )
+
+    path = ensure_rank_file("o200k_base", dir_path=tmp_path)
+    assert path.read_bytes() == fixture
+    assert (tmp_path / "o200k_base.tiktoken.native.bin").read_bytes() == native_payload
+
+
+def test_read_rank_file_native_payload_prefers_embedded_asset(tmp_path: Path, monkeypatch) -> None:
+    fixture = b"YQ== 0\nYg== 2\n"
+    native_payload = _native_payload_fixture(fixture)
+
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: native_payload)
+    monkeypatch.setattr(
+        "turbotoken._rank_files._download_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected download")),
+    )
+
+    payload = read_rank_file_native_payload("o200k_base", dir_path=tmp_path)
+    assert payload == native_payload
+    assert (tmp_path / "o200k_base.tiktoken.native.bin").read_bytes() == native_payload
+    assert not (tmp_path / "o200k_base.tiktoken").exists()
+
+
+def test_load_decoder_only_uses_embedded_native_payload_without_rank_file(tmp_path: Path, monkeypatch) -> None:
+    fixture = b"YQ== 1\nYg== 2\n"
+    native_payload = _native_payload_fixture(fixture)
+
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: native_payload)
+    monkeypatch.setattr(
+        "turbotoken._rank_files._download_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected download")),
+    )
+
+    decoder = load_decoder_only("o200k_base", dir_path=tmp_path)
+    assert decoder == {1: b"a", 2: b"b"}
+    assert (tmp_path / "o200k_base.tiktoken.decoder.pickle").exists()
+    assert not (tmp_path / "o200k_base.tiktoken").exists()
+
+
+def test_force_true_on_embedded_rank_file_stays_offline(tmp_path: Path, monkeypatch) -> None:
+    fixture = b"YQ== 0\nYg== 2\n"
+    native_payload = _native_payload_fixture(fixture, rank_mtime_ns=11)
+
+    monkeypatch.setattr("turbotoken._rank_files._read_embedded_native_payload", lambda *_args, **_kwargs: native_payload)
+    monkeypatch.setattr(
+        "turbotoken._rank_files._download_bytes",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected download")),
+    )
+
+    stale_path = tmp_path / "o200k_base.tiktoken"
+    stale_path.write_bytes(b"stale")
+    path = ensure_rank_file("o200k_base", dir_path=tmp_path, force=True)
+    assert path.read_bytes() == fixture
+
+
+def test_embedded_rank_asset_alias_reuses_o200k_base() -> None:
+    assert _embedded_rank_asset_base("o200k_harmony") == "o200k_base"
+
+
+def test_embedded_native_payload_files_exist_for_core_encodings() -> None:
+    for name in ("o200k_base", "cl100k_base"):
+        payload = _read_embedded_native_payload(name)
+        assert payload is not None
+        assert payload.startswith(b"TTKRBIN1")

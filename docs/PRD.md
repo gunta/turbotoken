@@ -1139,7 +1139,7 @@ No other project has more than 2 of these 6.
 | Core language | **Zig + hand-written Assembly** | Unified codebase for native + WASM. `@Vector` portable SIMD. `comptime` tables. C ABI export. Safety without runtime cost. |
 | Build system | **`build.zig`** | Zig's built-in build system. Cross-compilation is first-class. Replaces CMake. |
 | Python bridge | **cffi** | Zig exports C ABI via `export fn`. No compile dependency for users. |
-| Merge table loading | **Download on first use** | Same as tiktoken, with offline fallback. Vendoring bloats wheel. |
+| Merge table loading | **Embed native payloads for core Python encodings; download others on first use** | Keeps `o200k`/`cl100k` offline and native without vendoring every text rank file. |
 | Org name | **`turbo-tools`** | Brand family for turbotoken, turbodiff, turbogrep |
 | Scripting language | **Bun Shell TypeScript** | Cross-platform, type-safe, maintainable. No raw shell. |
 | Benchmark tool | **Hyperfine** | Statistical rigor, JSON export, industry standard |

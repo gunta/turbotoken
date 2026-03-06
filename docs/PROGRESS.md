@@ -196,7 +196,7 @@ Optimization-note: Core encode/count BPE native calls now route through reusable
 | 2026-02-24 | **Zig + Assembly** as core language | C + Assembly, Rust | `@Vector` portable SIMD, `comptime` tables, WASM unification, C ABI export |
 | 2026-02-24 | **`build.zig`** build system | CMake, Meson | Native Zig, built-in cross-compilation, zero external deps |
 | 2026-02-24 | cffi Python bridge (via Zig C ABI export) | ctypes, pybind11 | No compile dependency, lighter |
-| 2026-02-24 | Download merge tables on first use | Vendor in wheel | Same as tiktoken, avoids bloat |
+| 2026-03-07 | Embed native `o200k`/`cl100k` Python rank payloads; keep download fallback for the rest | Download everything on first use, vendor every rank file in wheel | Core encodings stay offline/native without paying full wheel-bloat cost |
 | 2026-02-24 | Bun Shell TypeScript for all scripts | Bash, Python, Makefile | Cross-platform, type-safe, maintainable |
 | 2026-02-24 | Hyperfine for all benchmarks | Python timeit only | Statistical rigor, JSON export, reproducible |
 | 2026-02-24 | **Zig WASM unified** (same codebase) | MoonBit, Emscripten, Rust | One codebase, zero runtime, smallest binary |
