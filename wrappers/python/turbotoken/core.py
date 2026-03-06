@@ -646,8 +646,9 @@ class Encoding:
             return False
         if _utf8_len_fast(text) < self._native_o200k_full_min_bytes():
             return False
-        # Keep the default route conservative until more hosts have dedicated tuning data.
-        return _is_linux_x86_64_host()
+        # Keep large-text o200k full/range routing opt-in until hosted x64 data
+        # consistently beats the default cached CPU path.
+        return False
 
     def _native_o200k_full_auto_enabled(self, text: str) -> bool:
         return self._native_o200k_large_ascii_auto_enabled(text)
