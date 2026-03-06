@@ -1014,7 +1014,7 @@ Notes:
 - native-experimental toggles:
   - `TURBOTOKEN_TRAIN_NATIVE_PRETOKENIZE=1` enables native ASCII O200K range splitting before chunk counting
   - `TURBOTOKEN_TRAIN_NATIVE_DIRECT_ASCII=1` enables direct native ASCII O200K `text -> train` path for single-text list inputs
-  - `TURBOTOKEN_NATIVE_TRAIN_THREADS=<n>` overrides native trainer shard worker count (default auto)
+  - `TURBOTOKEN_NATIVE_TRAIN_THREADS=<n>` sets an upper bound for native trainer shard workers (default auto); very small corpora still stay single-threaded to avoid pure thread/setup overhead.
   - when `TURBOTOKEN_TRAINING_BACKEND=native` and these env vars are unset, both now default to enabled; set them to `0/false/no` to explicitly disable.
   - latest direct-path artifacts:
     - `bench/results/bench-training-python-20260301-164154.json` (100kb)
