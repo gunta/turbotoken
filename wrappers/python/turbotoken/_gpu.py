@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -199,6 +200,28 @@ class _OverlapPerfState:
 _overlap_perf_cache: dict[tuple[int, int, int], _OverlapPerfState] = {}
 _overlap_perf_lock = Lock()
 
+_BPE_PROFILE_ENV_KEYS: tuple[str, ...] = (
+    "TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_ENABLE",
+    "TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE",
+    "TURBOTOKEN_METAL_BPE_FIND_THREADS",
+    "TURBOTOKEN_METAL_BPE_MARK_THREADS",
+    "TURBOTOKEN_METAL_BPE_APPLY_THREADS",
+    "TURBOTOKEN_METAL_BPE_COMPACT_THREADS",
+    "TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT",
+)
+
+
+@dataclass(slots=True)
+class _BpeProfilePerfState:
+    calls: int
+    base_ewma_ms: float | None
+    long_ewma_ms: float | None
+
+
+_bpe_profile_perf_cache: dict[tuple[str, int, int], _BpeProfilePerfState] = {}
+_bpe_profile_perf_lock = Lock()
+_metal_bpe_profile_env_lock = Lock()
+
 
 @lru_cache(maxsize=16)
 def _rank_payload_digest(rank_payload: bytes) -> str:
@@ -252,6 +275,38 @@ def _env_float(name: str, default: float, *, minimum: float = 0.0, maximum: floa
     if maximum is not None and value > maximum:
         value = maximum
     return value
+
+
+def _metal_bpe_runtime_profile_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE", default=True)
+
+
+def _metal_bpe_long_profile_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE", default=True)
+
+
+def _metal_bpe_long_profile_min_bytes() -> int:
+    return _env_int("TURBOTOKEN_METAL_BPE_LONG_PROFILE_MIN_BYTES", 1_048_576, minimum=1)
+
+
+def _metal_bpe_profile_adaptive_enabled() -> bool:
+    return _env_flag("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_ENABLE", default=True)
+
+
+def _metal_bpe_profile_adaptive_margin_pct() -> float:
+    return _env_float("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_MARGIN_PCT", 2.0, minimum=0.0, maximum=100.0)
+
+
+def _metal_bpe_profile_adaptive_ewma_alpha() -> float:
+    return _env_float("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_EWMA_ALPHA", 0.25, minimum=0.05, maximum=1.0)
+
+
+def _metal_bpe_profile_adaptive_explore_every() -> int:
+    return _env_int("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_EXPLORE_EVERY", 8, minimum=2)
+
+
+def _metal_bpe_profile_force() -> str:
+    return os.environ.get("TURBOTOKEN_METAL_BPE_PROFILE_FORCE", "").strip().lower()
 
 
 def _metal_bpe_direct_enabled() -> bool:
@@ -333,6 +388,206 @@ def _env_flag_from_raw(raw: str, *, default: bool) -> bool:
     return default
 
 
+@lru_cache(maxsize=64)
+def _resolve_metal_bpe_long_profile_overrides(
+    enabled_raw: str,
+    find_raw: str,
+    mark_raw: str,
+    apply_raw: str,
+    compact_raw: str,
+    rounds_raw: str,
+    active_compact_enable_raw: str,
+    active_compact_stride_raw: str,
+) -> dict[str, str]:
+    if not _env_flag_from_raw(enabled_raw, default=True):
+        return {}
+    return {
+        "TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_ENABLE": "1"
+        if _env_flag_from_raw(active_compact_enable_raw, default=True)
+        else "0",
+        "TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE": str(_parse_int_floor(active_compact_stride_raw, 8, minimum=1)),
+        "TURBOTOKEN_METAL_BPE_FIND_THREADS": str(_parse_int_floor(find_raw, 224, minimum=1)),
+        "TURBOTOKEN_METAL_BPE_MARK_THREADS": str(_parse_int_floor(mark_raw, 320, minimum=1)),
+        "TURBOTOKEN_METAL_BPE_APPLY_THREADS": str(_parse_int_floor(apply_raw, 256, minimum=1)),
+        "TURBOTOKEN_METAL_BPE_COMPACT_THREADS": str(_parse_int_floor(compact_raw, 288, minimum=1)),
+        "TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT": str(_parse_int_floor(rounds_raw, 32, minimum=1)),
+    }
+
+
+def _metal_bpe_long_profile_overrides() -> dict[str, str]:
+    return dict(
+        _resolve_metal_bpe_long_profile_overrides(
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE", "").strip().lower(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_FIND_THREADS", "").strip(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_MARK_THREADS", "").strip(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_APPLY_THREADS", "").strip(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_COMPACT_THREADS", "").strip(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ROUNDS_PER_SUBMIT", "").strip(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_ENABLE", "").strip().lower(),
+            os.environ.get("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_STRIDE", "").strip(),
+        )
+    )
+
+
+def _metal_bpe_profile_overrides(profile_name: str) -> dict[str, str]:
+    if profile_name != "long" or not _metal_bpe_runtime_profile_enabled():
+        return {}
+    overrides = _metal_bpe_long_profile_overrides()
+    if not overrides:
+        return {}
+    # Never override explicit knob pins from the parent process.
+    for key in _BPE_PROFILE_ENV_KEYS:
+        if key in overrides and os.environ.get(key, "").strip():
+            overrides.pop(key, None)
+    return overrides
+
+
+def _metal_bpe_profile_perf_key(
+    *,
+    lane_hint: str,
+    input_bytes: int,
+    low_entropy: bool,
+) -> tuple[str, int, int]:
+    lane = lane_hint.strip().lower() if lane_hint.strip() else "default"
+    bytes_bucket = _bucketize(max(1, input_bytes), limits=[262_144, 524_288, 1_048_576, 2_097_152, 4_194_304])
+    entropy_bucket = 1 if low_entropy else 0
+    return lane, bytes_bucket, entropy_bucket
+
+
+def _metal_bpe_profile_select_mode(
+    *,
+    lane_hint: str,
+    input_bytes: int,
+    low_entropy: bool,
+) -> tuple[str, tuple[str, int, int] | None]:
+    if not _metal_bpe_runtime_profile_enabled():
+        return "base", None
+    if not _metal_bpe_long_profile_enabled():
+        return "base", None
+
+    force_mode = _metal_bpe_profile_force()
+    if force_mode in {"base", "default", "off", "disabled"}:
+        return "base", None
+
+    long_eligible = input_bytes >= _metal_bpe_long_profile_min_bytes() and not low_entropy
+    if not long_eligible:
+        return "base", None
+
+    if force_mode in {"long", "long-text", "long_text", "on", "enabled"}:
+        return "long", None
+    if not _metal_bpe_profile_adaptive_enabled():
+        return "long", None
+
+    key = _metal_bpe_profile_perf_key(
+        lane_hint=lane_hint,
+        input_bytes=input_bytes,
+        low_entropy=low_entropy,
+    )
+    explore_every = _metal_bpe_profile_adaptive_explore_every()
+    margin_pct = _metal_bpe_profile_adaptive_margin_pct()
+
+    with _bpe_profile_perf_lock:
+        state = _bpe_profile_perf_cache.get(key)
+        if state is None:
+            state = _BpeProfilePerfState(calls=0, base_ewma_ms=None, long_ewma_ms=None)
+            _bpe_profile_perf_cache[key] = state
+            if len(_bpe_profile_perf_cache) > 128:
+                _bpe_profile_perf_cache.pop(next(iter(_bpe_profile_perf_cache)))
+        state.calls += 1
+        calls = state.calls
+        base_ms = state.base_ewma_ms
+        long_ms = state.long_ewma_ms
+
+    if base_ms is None and long_ms is None:
+        return "base", key
+    if base_ms is None:
+        return "base", key
+    if long_ms is None:
+        return "long", key
+
+    prefer_long = long_ms <= (base_ms * (1.0 + (margin_pct / 100.0)))
+    if calls % explore_every == 0:
+        return ("base" if prefer_long else "long"), key
+    return ("long" if prefer_long else "base"), key
+
+
+def _metal_bpe_profile_record_sample(
+    key: tuple[str, int, int] | None,
+    *,
+    profile_name: str,
+    elapsed_ms: float,
+) -> None:
+    if key is None or elapsed_ms <= 0:
+        return
+
+    alpha = _metal_bpe_profile_adaptive_ewma_alpha()
+    with _bpe_profile_perf_lock:
+        state = _bpe_profile_perf_cache.get(key)
+        if state is None:
+            state = _BpeProfilePerfState(calls=0, base_ewma_ms=None, long_ewma_ms=None)
+            _bpe_profile_perf_cache[key] = state
+        if profile_name == "long":
+            prev = state.long_ewma_ms
+            state.long_ewma_ms = elapsed_ms if prev is None else ((alpha * elapsed_ms) + ((1.0 - alpha) * prev))
+        else:
+            prev = state.base_ewma_ms
+            state.base_ewma_ms = elapsed_ms if prev is None else ((alpha * elapsed_ms) + ((1.0 - alpha) * prev))
+
+
+@contextmanager
+def _metal_bpe_profile_scope(overrides: dict[str, str]) -> Any:
+    if not overrides:
+        yield
+        return
+
+    with _metal_bpe_profile_env_lock:
+        previous: dict[str, str | None] = {}
+        for key, value in overrides.items():
+            previous[key] = os.environ.get(key)
+            os.environ[key] = value
+        try:
+            yield
+        finally:
+            for key, previous_value in previous.items():
+                if previous_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = previous_value
+
+
+def _metal_bpe_encode_from_bytes_with_profile(
+    metal_bridge: "MetalBridge",
+    data: bytes,
+    *,
+    lane_hint: str,
+    low_entropy: bool,
+) -> list[int] | None:
+    profile_name, adaptive_key = _metal_bpe_profile_select_mode(
+        lane_hint=lane_hint,
+        input_bytes=len(data),
+        low_entropy=low_entropy,
+    )
+    overrides = _metal_bpe_profile_overrides(profile_name)
+
+    started_at = time.perf_counter()
+    with _metal_bpe_profile_scope(overrides):
+        tokens = metal_bridge.encode_bpe_from_bytes(data)
+
+    if adaptive_key is not None:
+        elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+        profile = metal_bridge.last_profile()
+        if profile is not None:
+            gpu_ns = int(profile.get("bpe_gpu_ns", 0))
+            if gpu_ns > 0:
+                elapsed_ms = gpu_ns / 1_000_000.0
+        _metal_bpe_profile_record_sample(
+            adaptive_key,
+            profile_name=profile_name,
+            elapsed_ms=elapsed_ms,
+        )
+    return tokens
+
+
 def _is_low_entropy_direct_input(data: bytes) -> bool:
     # Avoid pathological direct-kernel cases (very low-entropy repetitive text)
     # where merge rounds explode and stitched/native paths are far faster.
@@ -367,7 +622,8 @@ def _encode_bpe_direct_metal(
 
     if len(data) < direct_min or len(data) > direct_max:
         return None
-    if low_entropy_guard_enabled and _is_low_entropy_direct_input(data):
+    low_entropy_input = _is_low_entropy_direct_input(data)
+    if low_entropy_guard_enabled and low_entropy_input:
         return None
 
     metal_bridge = get_metal_bridge()
@@ -376,7 +632,12 @@ def _encode_bpe_direct_metal(
     if not _ensure_metal_bpe_rank_table(rank_payload):
         return None
 
-    gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+    gpu_tokens = _metal_bpe_encode_from_bytes_with_profile(
+        metal_bridge,
+        data,
+        lane_hint="direct",
+        low_entropy=low_entropy_input,
+    )
     if gpu_tokens is None:
         return None
     total_bytes = _token_total_bytes(gpu_tokens, token_lens)
@@ -1313,7 +1574,7 @@ def backend_info() -> dict[str, Any]:
         "library_path": str(bridge.library_path) if bridge.library_path is not None else None,
         "last_profile": profile,
         "autoroute": route_cache,
-        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. Large-piece direct GPU BPE merge route is available behind TURBOTOKEN_METAL_BPE_DIRECT_ENABLE (default off) with exactness guards/fallback and a low-entropy safety guard (override via TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0). TURBOTOKEN_GPU_OVERLAP_ENABLE also gates batch prep/owner overlap for stitched Metal routes. last_profile includes per-op GPU memory telemetry fields.",
+        "note": "Experimental Metal backend focuses on large-piece BPE crossover workloads. Small/medium pieces stay on CPU/native by default unless forced. Large-piece direct GPU BPE merge route is available behind TURBOTOKEN_METAL_BPE_DIRECT_ENABLE (default off) with exactness guards/fallback and a low-entropy safety guard (override via TURBOTOKEN_METAL_BPE_DIRECT_LOW_ENTROPY_GUARD=0). Long-text lane-aware runtime tuning is enabled by default and can be configured via TURBOTOKEN_METAL_BPE_LONG_PROFILE_* and TURBOTOKEN_METAL_BPE_PROFILE_* env knobs. TURBOTOKEN_GPU_OVERLAP_ENABLE also gates batch prep/owner overlap for stitched Metal routes. last_profile includes per-op GPU memory telemetry fields.",
     }
 
 
@@ -1819,7 +2080,12 @@ def _encode_bpe_chunked_stitched_metal(
         and len(data) <= full_piece_max_bytes
         and _ensure_metal_bpe_rank_table(rank_payload)
     ):
-        gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+        gpu_tokens = _metal_bpe_encode_from_bytes_with_profile(
+            metal_bridge,
+            data,
+            lane_hint="full",
+            low_entropy=_is_low_entropy_direct_input(data),
+        )
         if gpu_tokens is not None:
             total_bytes = _token_total_bytes(gpu_tokens, token_lens)
             if total_bytes == len(data):
@@ -2055,11 +2321,17 @@ def _encode_bpe_chunked_stitched_metal_many(
     for piece_idx, (piece_start, piece_end) in enumerate(ranges):
         piece_len = piece_end - piece_start
         piece_bytes = data[piece_start:piece_end]
+        piece_low_entropy = _is_low_entropy_direct_input(piece_bytes) if piece_len >= 65_536 else False
 
         if direct_enabled:
             if piece_len >= direct_min_bytes and piece_len <= direct_max_bytes and full_piece_gpu_available():
-                if not (low_entropy_guard_enabled and _is_low_entropy_direct_input(piece_bytes)):
-                    gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
+                if not (low_entropy_guard_enabled and piece_low_entropy):
+                    gpu_tokens = _metal_bpe_encode_from_bytes_with_profile(
+                        metal_bridge,
+                        piece_bytes,
+                        lane_hint="piece-direct",
+                        low_entropy=piece_low_entropy,
+                    )
                     if gpu_tokens is not None:
                         gpu_total = _token_total_bytes(gpu_tokens, token_lens)
                         if gpu_total == piece_len:
@@ -2067,7 +2339,12 @@ def _encode_bpe_chunked_stitched_metal_many(
                             continue
 
         if piece_len >= full_piece_min_bytes and piece_len <= full_piece_max_bytes and full_piece_gpu_available():
-            gpu_tokens = metal_bridge.encode_bpe_from_bytes(piece_bytes)
+            gpu_tokens = _metal_bpe_encode_from_bytes_with_profile(
+                metal_bridge,
+                piece_bytes,
+                lane_hint="piece-full",
+                low_entropy=piece_low_entropy,
+            )
             if gpu_tokens is not None:
                 gpu_total = _token_total_bytes(gpu_tokens, token_lens)
                 if gpu_total == piece_len:
@@ -2396,7 +2673,12 @@ def encode_bpe_chunked_stitched(
             ):
                 metal_bridge = get_metal_bridge()
                 if metal_bridge.available:
-                    gpu_tokens = metal_bridge.encode_bpe_from_bytes(data)
+                    gpu_tokens = _metal_bpe_encode_from_bytes_with_profile(
+                        metal_bridge,
+                        data,
+                        lane_hint="full",
+                        low_entropy=_is_low_entropy_direct_input(data),
+                    )
                     if gpu_tokens is not None:
                         total_bytes = _token_total_bytes(gpu_tokens, token_lens)
                         if total_bytes == len(data):

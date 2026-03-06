@@ -1,0 +1,148 @@
+name: X86 On Demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which x64 hosted runner set to use"
+        required: true
+        default: "linux"
+        type: choice
+        options:
+          - linux
+          - windows
+          - macos-intel
+          - all
+      benchmark_speed:
+        description: "CPU benchmark artifact speed for Linux x64 governance"
+        required: true
+        default: "fast"
+        type: choice
+        options:
+          - fast
+          - full
+      run_cpu_gates:
+        description: "Run Linux x86_64 CPU benchmark governance on Ubuntu"
+        required: true
+        default: true
+        type: boolean
+      run_release_check:
+        description: "Run release readiness on Ubuntu"
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: x86-ondemand-${{ github.ref }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  x64-validation:
+    name: ${{ matrix.name }}
+    if: ${{ inputs.target == 'all' || inputs.target == matrix.id }}
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux
+            name: Ubuntu 24.04 x64
+            runs_on: ubuntu-24.04
+            cpu_gate_profile: linux-x86_64-cpu
+          - id: windows
+            name: Windows Server 2025 x64
+            runs_on: windows-2025
+            cpu_gate_profile: ""
+          - id: macos-intel
+            name: macOS 15 Intel x64
+            runs_on: macos-15-intel
+            cpu_gate_profile: ""
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          check-latest: true
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Set up Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install uv
+        run: python -m pip install -U pip uv
+
+      - name: Install repo dependencies
+        run: |
+          uv pip install --system -e .[dev] || python -m pip install -e .[dev]
+          bun install --frozen-lockfile
+
+      - name: Install Linux benchmark extras
+        if: ${{ matrix.id == 'linux' && inputs.run_cpu_gates }}
+        run: |
+          uv pip install --system rustbpe || python -m pip install rustbpe
+          rm -rf /tmp/minbpe
+          git clone --depth 1 https://github.com/karpathy/minbpe.git /tmp/minbpe
+
+      - name: Show runner info
+        run: |
+          python --version
+          bun --version
+          zig version
+          uname -a || true
+
+      - name: Run Python tests
+        run: python -m pytest -q
+
+      - name: Run JS smoke tests
+        run: bun test wrappers/js/tests/smoke.test.ts
+
+      - name: Run Zig tests
+        run: zig build test
+
+      - name: Build native library
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Run Zig cross-target smoke build
+        if: ${{ matrix.id == 'linux' }}
+        run: zig build targets
+
+      - name: Run Linux x86_64 CPU governance
+        if: ${{ matrix.id == 'linux' && inputs.run_cpu_gates }}
+        env:
+          TURBOTOKEN_BENCH_INCLUDE_CUDA: "0"
+          TURBOTOKEN_BENCH_SPEED: ${{ inputs.benchmark_speed }}
+          TURBOTOKEN_CI_ARTIFACT_SPEED: ${{ inputs.benchmark_speed }}
+        run: |
+          bun run scripts/ci-benchmark.ts \
+            --mode=cpu \
+            --profile=${{ matrix.cpu_gate_profile }} \
+            --artifact-speed=${{ inputs.benchmark_speed }}
+
+      - name: Run release readiness
+        if: ${{ matrix.id == 'linux' && inputs.run_release_check }}
+        run: bun run release:check
+
+      - name: Upload Linux benchmark artifacts
+        if: ${{ always() && matrix.id == 'linux' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86-ondemand-linux-artifacts
+          path: |
+            bench/results/*.json
+            bench/results/*.meta.json
+            dist/release/*.json
+            dist/release/*.md

@@ -34,4 +34,5 @@ Issues = "https://github.com/turbotoken/turbotoken/issues"
 packages = ["wrappers/python/turbotoken"]
 
 [tool.pytest.ini_options]
+pythonpath = ["wrappers/python"]
 testpaths = ["wrappers/python/tests"]

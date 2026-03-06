@@ -104,3 +104,73 @@ def test_gpu_profile_exposes_memory_fields_when_available() -> None:
         assert key in profile
         assert isinstance(profile[key], int)
         assert profile[key] >= 0
+
+
+def test_gpu_bpe_long_profile_overrides_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in (
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_FIND_THREADS",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_MARK_THREADS",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_APPLY_THREADS",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_COMPACT_THREADS",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_ROUNDS_PER_SUBMIT",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_ENABLE",
+        "TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_STRIDE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    overrides = _gpu._metal_bpe_long_profile_overrides()
+    assert overrides["TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_ENABLE"] == "1"
+    assert overrides["TURBOTOKEN_METAL_BPE_ACTIVE_COMPACT_STRIDE"] == "8"
+    assert overrides["TURBOTOKEN_METAL_BPE_FIND_THREADS"] == "224"
+    assert overrides["TURBOTOKEN_METAL_BPE_MARK_THREADS"] == "320"
+    assert overrides["TURBOTOKEN_METAL_BPE_APPLY_THREADS"] == "256"
+    assert overrides["TURBOTOKEN_METAL_BPE_COMPACT_THREADS"] == "288"
+    assert overrides["TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT"] == "32"
+
+
+def test_gpu_bpe_profile_overrides_respect_explicit_env_pins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_FIND_THREADS", "192")
+    monkeypatch.delenv("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE", raising=False)
+    overrides = _gpu._metal_bpe_profile_overrides("long")
+    assert "TURBOTOKEN_METAL_BPE_FIND_THREADS" not in overrides
+    assert overrides["TURBOTOKEN_METAL_BPE_MARK_THREADS"] == "320"
+
+
+def test_gpu_bpe_profile_adaptive_switch_prefers_faster_long(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_ENABLE", "1")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_LONG_PROFILE_MIN_BYTES", "1024")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_EXPLORE_EVERY", "64")
+    monkeypatch.setenv("TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_MARGIN_PCT", "0")
+    _gpu._bpe_profile_perf_cache.clear()
+    try:
+        mode0, key0 = _gpu._metal_bpe_profile_select_mode(
+            lane_hint="direct",
+            input_bytes=4096,
+            low_entropy=False,
+        )
+        assert mode0 == "base"
+        assert key0 is not None
+
+        _gpu._metal_bpe_profile_record_sample(key0, profile_name="base", elapsed_ms=10.0)
+        mode1, key1 = _gpu._metal_bpe_profile_select_mode(
+            lane_hint="direct",
+            input_bytes=4096,
+            low_entropy=False,
+        )
+        assert mode1 == "long"
+        assert key1 == key0
+
+        _gpu._metal_bpe_profile_record_sample(key1, profile_name="long", elapsed_ms=8.0)
+        mode2, key2 = _gpu._metal_bpe_profile_select_mode(
+            lane_hint="direct",
+            input_bytes=4096,
+            low_entropy=False,
+        )
+        assert mode2 == "long"
+        assert key2 == key0
+    finally:
+        _gpu._bpe_profile_perf_cache.clear()

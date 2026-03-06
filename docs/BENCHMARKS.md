@@ -70,6 +70,10 @@
   - `linux-x86_64-cpu` for Ubuntu CPU gate runners
   - `macos-arm64-metal` for macOS Metal gate runners
   This keeps hard/relative gates host-aware instead of sharing one global baseline across dissimilar runners.
+- Manual x64 GitHub Actions validation is also available via the `X86 On Demand` workflow:
+  - latest standard hosted x64 labels used there are `ubuntu-24.04`, `windows-2025`, and `macos-15-intel`
+  - Linux is the current profiled x86 benchmark host; Windows and Intel macOS currently run validation/smoke coverage rather than profiled CPU governance
+  - local dispatch helper: `bun run gha:x86 -- --target=linux --benchmark-speed=fast --push`
 - Workflow runner/toolchain policy for benchmark CI:
   - CPU gates: `ubuntu-24.04`
   - Metal gates: `macos-14` (Apple Silicon)
@@ -91,8 +95,10 @@
   - Metal gates (quick profile on free runner envelope): `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal`
   - Metal gates against fast artifacts: `TURBOTOKEN_GPU_CROSSOVER_QUICK=1 TURBOTOKEN_GPU_MEMORY_RUNS=1 TURBOTOKEN_GPU_MEMORY_ROUTE_BYTES=262144 bun run scripts/ci-benchmark.ts --mode=gpu --profile=macos-arm64-metal --artifact-speed=fast`
   - Direct-route A/B profile matrix: `bun run scripts/bench-gpu-bpe-direct.ts`
+  - Direct-route A/B stability harness (median/p95 across repeated passes): `bun run scripts/bench-gpu-direct-stability.ts`
   - Metal host-overhead microbench: `bun run scripts/bench-gpu-host-overhead.ts`
   - Metal knob sweep (staged auto-tuning): `bun run scripts/bench-gpu-knob-sweep.ts`
+  - Metal direct-objective sweep (A/B artifact optimization): `bun run scripts/bench-gpu-direct-sweep.ts`
   - Single crossover profile run: `TURBOTOKEN_GPU_CROSSOVER_BPE_TEXT_KIND=normal-text bun run scripts/bench-gpu-crossover.ts`
   - fast competitors mode keeps mandatory `python-encode-1mb-turbotoken` / `python-count-1mb-turbotoken` rows so CI 1MB gates remain measurable.
 - Packaging smoke checks are now CI-wired:

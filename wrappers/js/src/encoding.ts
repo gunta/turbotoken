@@ -123,6 +123,19 @@ function resolveBackendMode(explicit: BackendMode | undefined): BackendMode {
   }
 }
 
+function defaultAsyncOptions(options: EncodingOptions): EncodingOptions {
+  if (options.enableWasmBpe !== undefined) {
+    return options;
+  }
+  if (resolveBackendMode(options.backend) === "js") {
+    return options;
+  }
+  return {
+    ...options,
+    enableWasmBpe: true,
+  };
+}
+
 async function readUtf8File(path: string): Promise<string> {
   if (typeof Bun !== "undefined") {
     return Bun.file(path).text();
@@ -167,7 +180,8 @@ export class Encoding {
     this.nativeOptions = options.native ?? {};
     this.rankUrlOverride = options.rankUrlOverride;
     this.rankPayload = options.rankPayload ?? null;
-    this.enableWasmBpe = options.enableWasmBpe ?? false;
+    this.enableWasmBpe =
+      options.enableWasmBpe ?? (options.rankPayload !== undefined || options.rankUrlOverride !== undefined);
     this.backendMode = resolveBackendMode(options.backend);
     if (this.backendMode === "js" && this.enableWasmBpe) {
       throw new Error("backend='js' does not support BPE mode; use backend='wasm', 'native', or 'auto'");
@@ -179,7 +193,7 @@ export class Encoding {
   }
 
   static async create(name: string, options: EncodingOptions = {}): Promise<Encoding> {
-    const enc = new Encoding(name, options);
+    const enc = new Encoding(name, defaultAsyncOptions(options));
     await enc.ready();
     return enc;
   }
@@ -229,7 +243,10 @@ export class Encoding {
       }
     }
     if (bridge === null) {
-      bridge = await loadWasm(this.wasmOptions);
+      bridge = await loadWasm({
+        ...this.wasmOptions,
+        preferFull: this.enableWasmBpe || this.wasmOptions.preferFull === true,
+      });
     }
 
     const rankPromise: Promise<Uint8Array | null> = this.enableWasmBpe
@@ -243,13 +260,20 @@ export class Encoding {
     this.rankPayload = rankPayload;
   }
 
+  private requireSyncBpeReady(method: string): void {
+    if (this.enableWasmBpe && !this.isReady()) {
+      throw new Error(
+        `${method} requires a loaded BPE backend. Use await enc.ready(), ` +
+          `await getEncodingAsync(...), or the corresponding async method.`,
+      );
+    }
+  }
+
   encode(text: string): number[] {
     if (!this.enableWasmBpe) {
       return this.encodeBytePath(text);
     }
-    if (!this.isReady()) {
-      return encodeByteFallback(text);
-    }
+    this.requireSyncBpeReady("encode()");
     return this.bridge!.encodeBpeFromRanks(this.rankPayload!, text);
   }
 
@@ -265,9 +289,7 @@ export class Encoding {
     if (!this.enableWasmBpe) {
       return this.decodeBytePath(tokens);
     }
-    if (!this.isReady()) {
-      return decodeByteFallback(tokens);
-    }
+    this.requireSyncBpeReady("decode()");
     const bytes = this.bridge!.decodeBpeFromRanks(this.rankPayload!, tokens);
     return decoder.decode(bytes);
   }
@@ -285,9 +307,7 @@ export class Encoding {
     if (!this.enableWasmBpe) {
       return this.countBytePath(text);
     }
-    if (!this.isReady()) {
-      return encodeByteFallback(text).length;
-    }
+    this.requireSyncBpeReady("count()");
     return this.bridge!.countBpeFromRanks(this.rankPayload!, text);
   }
 
@@ -303,10 +323,7 @@ export class Encoding {
       const count = this.countBytePath(text);
       return count <= tokenLimit ? count : false;
     }
-    if (!this.isReady()) {
-      const count = encodeByteFallback(text).length;
-      return count <= tokenLimit ? count : false;
-    }
+    this.requireSyncBpeReady("isWithinTokenLimit()");
     return this.bridge!.isWithinTokenLimitBpeFromRanks(this.rankPayload!, text, tokenLimit);
   }
 

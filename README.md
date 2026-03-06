@@ -1,9 +1,10 @@
 # turbotoken
 
-The fastest BPE tokenizer on every platform.
+An experimental high-performance BPE tokenizer project.
 
-`turbotoken` is a drop-in replacement for `tiktoken` with a Zig core, architecture-specific
-SIMD backends, and a compatibility-focused Python API.
+`turbotoken` aims to be a drop-in replacement for `tiktoken` with a Zig core, architecture-specific
+SIMD backends, and compatibility-focused Python and JS wrapper paths. The repository is still in
+active scaffold-to-implementation transition and should not be treated as production-ready yet.
 
 ## Status
 
@@ -12,6 +13,7 @@ SIMD backends, and a compatibility-focused Python API.
 - Each wrapper package has its own `README.md` with language-specific setup/usage notes.
 - Release/publish governance is tracked in `wrappers/release-matrix.json` and `docs/PUBLISHING.md`.
 - Python `Encoding` now uses real regex+BPE merge logic loaded from `.tiktoken` rank files.
+- JS async encoding now defaults to real BPE when a native or full WASM backend is available; sync JS construction remains byte-path-first unless explicitly readied for BPE.
 - Native Zig CPU acceleration is available for key byte-path primitives, with x86 runtime dispatch (AVX-512/AVX2/SSE4.2/scalar) now wired in `src/arch/x86_64.zig`.
 - Apple Metal backend now includes an experimental on-device BPE merge loop (`find -> mark -> apply` + active compaction + GPU emit), but remains parity-guarded/experimental and is not the default route.
 - Modal NVIDIA remote benchmark runner is available via `scripts/modal/bench_cuda_modal.py` for CUDA-hosted baseline runs (`B200` default; also supports `B200+`/`H200`/`H100`/`A100`/`L40S` on Modal). Paid Modal CUDA runs are explicit opt-in (`--confirm-paid`).
@@ -53,7 +55,6 @@ import { getEncodingAsync, trainBpeFromChunks } from "./wrappers/js/src/index";
 
 const enc = await getEncodingAsync("o200k_base", {
   wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
-  enableWasmBpe: true, // experimental
 });
 
 const ids = await enc.encodeAsync("hello world");
@@ -79,8 +80,9 @@ Notes:
 - JS backend routing now supports `backend: "auto" | "native" | "wasm" | "js"` (default `auto`).
 - In Bun runtime, `auto` now prefers optional native packages (`@turbotoken/native-*`) and falls back to WASM when native is unavailable.
 - You can force backend globally with `TURBOTOKEN_BACKEND=native|wasm|js|auto`.
-- `enableWasmBpe` is currently experimental and off by default.
-- Without it, JS methods fall back to UTF-8 byte behavior while still using the real WASM loader for byte-path primitives.
+- `getEncodingAsync()` and `encodingForModelAsync()` now default to real BPE mode when a native or full WASM backend is available.
+- Passing `rankPayload` or `rankUrlOverride` also counts as an explicit BPE request, even on `getEncoding()`.
+- Sync `getEncoding()` remains a byte-path-first thin wrapper unless you opt into BPE mode and call `await enc.ready()` first.
 - WASM training helpers are available via `trainBpeFromChunkCounts` and `trainBpeFromChunks`.
 
 Build host native package artifact (Bun native backend):
@@ -134,6 +136,8 @@ bun run bench       # default local suite (CUDA excluded)
 bun run bench:js-backends  # Bun native vs WASM backend comparison
 bun run bench:gpu-host-overhead  # Metal route host-overhead microbench (hash/rank-init/wall-vs-GPU)
 bun run bench:gpu-sweep  # staged Metal knob sweep (threads/rounds/compaction)
+bun run bench:gpu-direct-sweep  # direct-objective sweep on bench-gpu-bpe-direct artifacts
+bun run bench:gpu-direct-stability  # repeated direct A/B with median+p95 summary
 bun run bench:cuda  # include local CUDA rows explicitly
 bun run bench:scorecard  # consolidate latest artifacts into a canonical scorecard
 bun run bench:modal:cuda  # paid remote Modal CUDA run (explicitly confirmed)

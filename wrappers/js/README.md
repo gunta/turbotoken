@@ -24,6 +24,7 @@ const ids = await enc.encodeAsync("hello world");
 
 Notes:
 - `backend: "auto"` prefers optional native packages, then falls back to WASM.
+- `getEncodingAsync()` defaults to real BPE mode; sync `getEncoding()` stays byte-path-first unless you explicitly enable BPE and await `enc.ready()`.
 - Source lives in `wrappers/js/src`.
 
 ## Publish

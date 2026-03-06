@@ -137,8 +137,40 @@ test("encoding auto backend prefers native when available", async () => {
     return;
   }
 
-  const enc = await getEncodingAsync("o200k_base");
+  const enc = await getEncodingAsync("o200k_base", { enableWasmBpe: false });
   expect(enc.backendKind()).toBe("native");
+});
+
+test("bpe-enabled sync methods fail loudly before the backend is ready", () => {
+  const rankPayload = new TextEncoder().encode("YQ== 0\nYg== 1\nYWI= 2\n\n");
+  const enc = getEncoding("o200k_base", {
+    backend: "wasm",
+    rankPayload,
+    enableWasmBpe: true,
+  });
+
+  expect(() => enc.encode("abb")).toThrow(/loaded BPE backend/);
+  expect(() => enc.count("abb")).toThrow(/loaded BPE backend/);
+  expect(() => enc.decode([2, 1])).toThrow(/loaded BPE backend/);
+});
+
+test("async encoding defaults to BPE mode with rank payloads", async () => {
+  const fullWasmPath = resolve(process.cwd(), "zig-out/bin/turbotoken.wasm");
+  if (!existsSync(fullWasmPath)) {
+    return;
+  }
+
+  const rankPayload = new TextEncoder().encode("YQ== 0\nYg== 1\nYWI= 2\n\n");
+  clearWasmCache();
+  const enc = await getEncodingAsync("o200k_base", {
+    backend: "wasm",
+    rankPayload,
+  });
+
+  expect(enc.backendKind()).toBe("wasm");
+  expect(enc.encode("abb")).toEqual([2, 1]);
+  expect(enc.count("abb")).toBe(2);
+  expect(enc.decode([2, 1])).toBe("abb");
 });
 
 test("wasm bpe path works with explicit ranks when wasm artifact exists", async () => {
@@ -152,13 +184,34 @@ test("wasm bpe path works with explicit ranks when wasm artifact exists", async 
   const enc = await getEncodingAsync("o200k_base", {
     wasm: { wasmPath, forceReload: true },
     rankPayload,
-    enableWasmBpe: true,
   });
 
   const tokens = await enc.encodeAsync("abb");
   expect(tokens).toEqual([2, 1]);
   expect(await enc.countAsync("abb")).toBe(2);
   expect(await enc.decodeAsync(tokens)).toBe("abb");
+});
+
+test("sync BPE helpers do not silently fall back when ranks are configured", async () => {
+  const wasmPath = resolve(process.cwd(), "zig-out/bin/turbotoken.wasm");
+  if (!existsSync(wasmPath)) {
+    return;
+  }
+
+  const rankPayload = new TextEncoder().encode("YQ== 0\nYg== 1\nYWI= 2\n\n");
+  clearWasmCache();
+  const enc = getEncoding("o200k_base", {
+    backend: "wasm",
+    wasm: { wasmPath, forceReload: true },
+    rankPayload,
+  });
+
+  expect(() => enc.encode("abb")).toThrow(/loaded BPE backend/);
+
+  await enc.ready();
+  expect(enc.encode("abb")).toEqual([2, 1]);
+  expect(enc.count("abb")).toBe(2);
+  expect(enc.decode([2, 1])).toBe("abb");
 });
 
 test("wasm training wrappers return expected first merge when wasm artifact exists", async () => {

@@ -106,6 +106,12 @@ Interpretation:
 - Automated knob sweep script:
   - `bun run scripts/bench-gpu-knob-sweep.ts`
   - executes staged tuning over BPE threadgroup and submit/compaction knobs, ranks candidates by normal-text direct-enabled wall time, and writes a sweep artifact under `bench/results/bench-gpu-knob-sweep-*.json`.
+- Direct-objective sweep script:
+  - `bun run scripts/bench-gpu-direct-sweep.ts`
+  - optimizes directly on `bench-gpu-bpe-direct` A/B artifact metrics (weighted short+long throughput ratio with parity checks) and writes `bench/results/bench-gpu-direct-objective-sweep-*.json`.
+- Direct-route stability harness:
+  - `bun run scripts/bench-gpu-direct-stability.ts`
+  - repeats `bench-gpu-bpe-direct` and reports median/p95 across passes for slowdown, throughput ratio, BPE rounds/submits, and parity counters per workload.
 - Latest matrix artifacts:
   - standard: `bench/results/bench-gpu-crossover-1772046799515.json`
   - optional long mode: `bench/results/bench-gpu-crossover-1772033988163.json`
@@ -163,6 +169,26 @@ New BPE crossover rows in the same artifact show:
     - `TURBOTOKEN_METAL_BPE_COMPACT_THREADS`
     - `TURBOTOKEN_METAL_BPE_EMIT_THREADS`
 - keep parity gates on while tuning; use `bench-gpu-bpe-direct` + `bench-gpu-host-overhead` to separate kernel wins from host-side regressions.
+
+2026-03-03 runtime lane-aware tuning knobs:
+- long-text runtime profile (enabled by default):
+  - `TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE=0|1`
+  - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE=0|1`
+  - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_MIN_BYTES` (default `1048576`)
+  - long preset values (all optional):
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_FIND_THREADS`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_MARK_THREADS`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_APPLY_THREADS`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_COMPACT_THREADS`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_ROUNDS_PER_SUBMIT`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_ENABLE`
+    - `TURBOTOKEN_METAL_BPE_LONG_PROFILE_ACTIVE_COMPACT_STRIDE`
+- adaptive profile switch controls:
+  - `TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_ENABLE=0|1`
+  - `TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_MARGIN_PCT` (default `2.0`)
+  - `TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_EWMA_ALPHA` (default `0.25`)
+  - `TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_EXPLORE_EVERY` (default `8`)
+  - `TURBOTOKEN_METAL_BPE_PROFILE_FORCE=base|long` (optional override for deterministic runs)
 
 ## Next Steps Toward Full GPU BPE
 

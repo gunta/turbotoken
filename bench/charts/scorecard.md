@@ -1,6 +1,6 @@
 # Scorecard
 
-Generated: 2026-03-02T18:14:01.859Z
+Generated: 2026-03-02T22:45:47.050Z
 
 ## Comparison (100KB encode)
 - turbotoken: 41 ms
@@ -32,35 +32,35 @@ Generated: 2026-03-02T18:14:01.859Z
 ## GPU Direct A/B (Headline: normal-text)
 - profile count: 4
 - headline profile: normal-text
-- headline disabled: n/a
-- headline enabled: n/a
-- headline slowdown: n/a
-- headline throughput ratio (enabled/disabled): n/a
+- headline disabled: 4.84 ms (51.693 MiB/s)
+- headline enabled: 4.82 ms (51.843 MiB/s)
+- headline slowdown: -0.29%
+- headline throughput ratio (enabled/disabled): 1.003x
 - headline route disabled (GPU-only): n/a
 - headline route enabled (GPU-only): n/a
 - headline route throughput ratio (enabled/disabled): n/a
 - stress profile: low-entropy
-- stress slowdown: n/a
-- stress throughput ratio (enabled/disabled): n/a
+- stress slowdown: 4.11%
+- stress throughput ratio (enabled/disabled): 0.961x
 - long-lane headline key: normalTextLong
 - long-lane bytes: 1,048,576
-- long-lane disabled: n/a
-- long-lane enabled: n/a
-- long-lane slowdown: n/a
-- long-lane throughput ratio (enabled/disabled): n/a
-- long-lane route disabled (GPU-only): n/a
-- long-lane route enabled (GPU-only): n/a
-- long-lane route throughput ratio (enabled/disabled): n/a
+- long-lane disabled: 136.39 ms (7.332 MiB/s)
+- long-lane enabled: 73.6 ms (13.586 MiB/s)
+- long-lane slowdown: -46.03%
+- long-lane throughput ratio (enabled/disabled): 1.853x
+- long-lane route disabled (GPU-only): 14906.906 MiB/s
+- long-lane route enabled (GPU-only): 40.299 MiB/s
+- long-lane route throughput ratio (enabled/disabled): 0.003x
 - long-lane stress key: lowEntropyLong
-- long-lane stress slowdown: n/a
-- long-lane stress throughput ratio (enabled/disabled): n/a
+- long-lane stress slowdown: 2.96%
+- long-lane stress throughput ratio (enabled/disabled): 0.971x
 
 ## GPU Host Overhead
-- digest speedup (raw/cached): 11086.58x
-- rank table cold init: 1423.061 ms
-- rank table warm init: 0.007 ms
-- normal-text direct disabled host-overhead: 297.303 ms
-- normal-text direct enabled host-overhead: 67.842 ms
+- digest speedup (raw/cached): 9004.8x
+- rank table cold init: 1285.131 ms
+- rank table warm init: 0.005 ms
+- normal-text direct disabled host-overhead: 259.367 ms
+- normal-text direct enabled host-overhead: 55.08 ms
 
 ## Winners
 - encode 100KB: turbotoken
@@ -88,7 +88,7 @@ Generated: 2026-03-02T18:14:01.859Z
 - ram: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-ram-1772450936168.json
 - wasm: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-wasm-1772455201579.json
 - gpuMemory: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-memory-1772469000332.json
-- gpuHostOverhead: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-host-overhead-1772475205633.json
+- gpuHostOverhead: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-host-overhead-1772480883643.json
 - gpuOverlap: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-overlap-1772453446855.json
-- gpuBpeDirect: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-bpe-direct-1772468769516.json
+- gpuBpeDirect: /Users/a12907/Documents/GitHub/turbotoken/bench/results/bench-gpu-bpe-direct-1772491180783.json
 

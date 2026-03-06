@@ -60,6 +60,7 @@ export interface WasmLoadOptions {
   wasmBytes?: ArrayBuffer | Uint8Array;
   imports?: WebAssembly.Imports;
   forceReload?: boolean;
+  preferFull?: boolean;
 }
 
 export interface BpeMerge {
@@ -70,14 +71,15 @@ export interface BpeMerge {
 
 let wasmBridgePromise: Promise<WasmBridge> | null = null;
 
-function defaultWasmPath(): string {
+function defaultWasmPath(preferFull = false): string {
   if (typeof process !== "undefined" && process.env?.TURBOTOKEN_WASM_URL) {
     return process.env.TURBOTOKEN_WASM_URL;
   }
   if (typeof process !== "undefined" && process.env?.TURBOTOKEN_WASM_PATH) {
     return process.env.TURBOTOKEN_WASM_PATH;
   }
-  const moduleCandidate = new URL("../../../zig-out/bin/turbotoken-npm.wasm", import.meta.url);
+  const moduleName = preferFull ? "turbotoken.wasm" : "turbotoken-npm.wasm";
+  const moduleCandidate = new URL(`../../../zig-out/bin/${moduleName}`, import.meta.url);
   if (moduleCandidate.protocol !== "file:") {
     return moduleCandidate.href;
   }
@@ -138,7 +140,7 @@ async function loadWasmBytes(options: WasmLoadOptions): Promise<Uint8Array> {
     }
     return new Uint8Array(await response.arrayBuffer());
   }
-  const specifier = options.wasmPath ?? defaultWasmPath();
+  const specifier = options.wasmPath ?? defaultWasmPath(options.preferFull === true);
   try {
     return await readWasmSpecifier(specifier);
   } catch (primaryError) {

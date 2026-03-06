@@ -9,7 +9,7 @@ Current status:
   - npm-minimal: `zig-out/bin/turbotoken-npm.wasm`
 - JS loader now calls real Zig exports via WebAssembly (no placeholder stub)
 - npm auto-load defaults to `turbotoken-npm.wasm` with fallback to full `turbotoken.wasm`
-- JS `Encoding` supports async BPE mode backed by WASM + rank payloads
+- JS `Encoding` supports async BPE mode backed by WASM + rank payloads, and async factory helpers now default to that mode
 - JS exports now include WASM training wrappers (`trainBpeFromChunkCounts`, `trainBpeFromChunks`)
 - `scripts/bench-wasm.ts` now reports startup latency, throughput MB/s, and peak RSS rows
 - `scripts/bench-wasm.ts` includes browser benchmark rows behind explicit opt-in (`TURBOTOKEN_WASM_BROWSER_ENABLE=1`)
@@ -65,7 +65,6 @@ import { getEncodingAsync, trainBpeFromChunks } from "../wrappers/js/src/index";
 
 const enc = await getEncodingAsync("o200k_base", {
   wasm: { wasmPath: "zig-out/bin/turbotoken.wasm" },
-  enableWasmBpe: true, // experimental
 });
 
 const ids = await enc.encodeAsync("hello world");
@@ -80,10 +79,11 @@ const merges = await trainBpeFromChunks({
 ```
 
 Notes:
-- Sync `encode/decode/count` methods still exist and fall back to UTF-8 byte behavior when WASM/ranks are not loaded.
+- `getEncodingAsync()` now defaults to BPE mode and prefers the full `turbotoken.wasm` artifact when it needs WASM BPE exports.
+- Passing `rankPayload` or `rankUrlOverride` also enables BPE mode on the sync constructor, so sync byte-path fallback is not used silently once rank data is configured.
+- Sync `encode/decode/count` methods still exist for byte-path use, and they now fail loudly if BPE mode was requested before the backend finished loading.
 - Once the bridge is loaded, non-BPE byte-path `encode/decode/count` routes through WASM bridge exports (thin wrapper mode).
 - Async methods ensure the WASM module is loaded.
-- WASM BPE route is currently opt-in (`enableWasmBpe: true`) and still experimental.
 - Repo remains in active optimization/scaffold stage; this is not yet a final production WASM package.
 - npm packaging validation:
   - `bun run verify:npm-package`

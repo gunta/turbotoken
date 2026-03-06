@@ -319,6 +319,33 @@ function compareScenarios(disabled: JsonMap, enabled: JsonMap): JsonMap {
   };
 }
 
+function applyLongLanePreset(env: Record<string, string>, profile: WorkloadProfile): void {
+  if (!(profile.lane === "long" && profile.textKind === "normal-text")) {
+    return;
+  }
+  env.TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE = readEnvOrDefault(
+    "TURBOTOKEN_METAL_BPE_RUNTIME_PROFILE_ENABLE",
+    "1",
+  );
+  env.TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE = readEnvOrDefault("TURBOTOKEN_METAL_BPE_LONG_PROFILE_ENABLE", "1");
+  env.TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_ENABLE = readEnvOrDefault(
+    "TURBOTOKEN_METAL_BPE_PROFILE_ADAPTIVE_ENABLE",
+    "1",
+  );
+  env.TURBOTOKEN_METAL_BPE_LONG_PROFILE_MIN_BYTES = readEnvOrDefault(
+    "TURBOTOKEN_METAL_BPE_LONG_PROFILE_MIN_BYTES",
+    String(profile.inputBytes),
+  );
+
+  const explicitForce = (process.env.TURBOTOKEN_GPU_BPE_DIRECT_LONG_PROFILE_FORCE ?? "").trim();
+  if (explicitForce.length > 0) {
+    env.TURBOTOKEN_METAL_BPE_PROFILE_FORCE = explicitForce;
+  } else if (!process.env.TURBOTOKEN_METAL_BPE_PROFILE_FORCE) {
+    // Keep direct A/B deterministic on the long normal-text lane while preserving manual overrides.
+    env.TURBOTOKEN_METAL_BPE_PROFILE_FORCE = "long";
+  }
+}
+
 function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   const bytesString = String(Math.max(1024, profile.inputBytes));
   const env: Record<string, string> = {
@@ -337,6 +364,7 @@ function runScenario(enableDirect: boolean, profile: WorkloadProfile): JsonMap {
   if (process.env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT) {
     env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT = process.env.TURBOTOKEN_METAL_BPE_ROUNDS_PER_SUBMIT;
   }
+  applyLongLanePreset(env, profile);
   if (profile.lane === "long" && profile.textKind === "normal-text") {
     env.TURBOTOKEN_GPU_CROSSOVER_NORMAL_TEXT_MODE = "singlepiece-lower";
     env.TURBOTOKEN_GPU_MEMORY_NORMAL_TEXT_MODE = "singlepiece-lower";
