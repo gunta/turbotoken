@@ -15,6 +15,20 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - handled at runtime in bridge state
     FFI = None  # type: ignore[assignment]
 
+try:
+    _PY_BYTES_AS_STRING = ctypes.pythonapi.PyBytes_AsString
+    _PY_BYTES_AS_STRING.argtypes = [ctypes.py_object]
+    _PY_BYTES_AS_STRING.restype = ctypes.c_void_p
+except AttributeError:  # pragma: no cover - platform/runtime specific
+    _PY_BYTES_AS_STRING = None
+
+try:
+    _PY_UNICODE_AS_UTF8_AND_SIZE = ctypes.pythonapi.PyUnicode_AsUTF8AndSize
+    _PY_UNICODE_AS_UTF8_AND_SIZE.argtypes = [ctypes.py_object, ctypes.POINTER(ctypes.c_ssize_t)]
+    _PY_UNICODE_AS_UTF8_AND_SIZE.restype = ctypes.c_void_p
+except AttributeError:  # pragma: no cover - platform/runtime specific
+    _PY_UNICODE_AS_UTF8_AND_SIZE = None
+
 
 def _shared_library_names() -> list[str]:
     if os.name == "nt":
@@ -149,19 +163,39 @@ class NativeBridge:
             return None
         if self._fast_rank_payload_ref is not rank_payload or self._fast_rank_payload_buf is None:
             self._fast_rank_payload_ref = rank_payload
-            self._fast_rank_payload_buf = ctypes.create_string_buffer(rank_payload)
+            self._fast_rank_payload_buf = self._fast_bytes_view(rank_payload)
         return self._fast_rank_payload_buf
 
     @staticmethod
-    def _fast_bytes_buffer(data: bytes) -> Any:
+    def _fast_bytes_view(data: bytes) -> Any:
+        if _PY_BYTES_AS_STRING is not None:
+            try:
+                ptr = _PY_BYTES_AS_STRING(data)
+            except (TypeError, ValueError):
+                ptr = None
+            if ptr is not None:
+                return ctypes.c_void_p(ptr)
         return ctypes.create_string_buffer(data)
+
+    @staticmethod
+    def _fast_ascii_text_view(text: str) -> tuple[Any, int] | None:
+        if _PY_UNICODE_AS_UTF8_AND_SIZE is None or not text.isascii():
+            return None
+        size = ctypes.c_ssize_t()
+        try:
+            ptr = _PY_UNICODE_AS_UTF8_AND_SIZE(text, ctypes.byref(size))
+        except (TypeError, ValueError):
+            return None
+        if ptr is None or size.value < 0:
+            return None
+        return (ctypes.c_void_p(ptr), int(size.value))
 
     def _fast_pretokenize_ranges(self, symbol: str, data: bytes) -> list[tuple[int, int]] | None:
         lib = self._load_fast_lib()
         if lib is None:
             return None
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         try:
             needed = int(getattr(lib, symbol)(in_buf, len(data), None, None, 0))
         except (AttributeError, TypeError):
@@ -189,9 +223,29 @@ class NativeBridge:
         if rank_buf is None:
             return None
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         try:
             result = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, len(data)))
+        except (AttributeError, TypeError):
+            return None
+        if result < 0:
+            return None
+        return result
+
+    def _fast_count_from_ranks_text(self, symbol: str, rank_payload: bytes, text: str) -> int | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        view = self._fast_ascii_text_view(text)
+        if view is None:
+            return None
+
+        in_buf, text_len = view
+        try:
+            result = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, text_len))
         except (AttributeError, TypeError):
             return None
         if result < 0:
@@ -208,7 +262,7 @@ class NativeBridge:
         if not data:
             return []
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         out = (ctypes.c_uint32 * len(data))()
         try:
             written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, len(data), out, len(data)))
@@ -216,7 +270,31 @@ class NativeBridge:
             return None
         if written < 0:
             return None
-        return [int(out[idx]) for idx in range(written)]
+        return out[:written]
+
+    def _fast_encode_from_ranks_text(self, symbol: str, rank_payload: bytes, text: str) -> list[int] | None:
+        lib = self._load_fast_lib()
+        if lib is None:
+            return None
+        rank_buf = self._fast_rank_payload_ptr(rank_payload)
+        if rank_buf is None:
+            return None
+        view = self._fast_ascii_text_view(text)
+        if view is None:
+            return None
+
+        in_buf, text_len = view
+        if text_len == 0:
+            return []
+
+        out = (ctypes.c_uint32 * text_len)()
+        try:
+            written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, text_len, out, text_len))
+        except (AttributeError, OverflowError, TypeError):
+            return None
+        if written < 0:
+            return None
+        return out[:written]
 
     def _fast_is_within_limit_from_ranks(
         self,
@@ -233,7 +311,7 @@ class NativeBridge:
         if rank_buf is None:
             return None
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         try:
             result = int(
                 lib.turbotoken_is_within_token_limit_bpe_from_ranks(
@@ -275,7 +353,7 @@ class NativeBridge:
                 return None
             prev = value
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         offsets_buf = (ctypes.c_uint32 * len(offsets))(*offsets)
         token_offsets = (ctypes.c_uint32 * len(offsets))()
         out_cap = max(1, len(data))
@@ -329,7 +407,7 @@ class NativeBridge:
             if upper_bound > 0x7FFFFFFF_FFFFFFFF:
                 return None
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         starts_buf = (ctypes.c_uint32 * len(starts))(*starts)
         ends_buf = (ctypes.c_uint32 * len(ends))(*ends)
         token_offsets = (ctypes.c_uint32 * (len(ranges) + 1))()
@@ -381,7 +459,7 @@ class NativeBridge:
             starts.append(start)
             ends.append(end)
 
-        in_buf = self._fast_bytes_buffer(data)
+        in_buf = self._fast_bytes_view(data)
         starts_buf = (ctypes.c_uint32 * len(starts))(*starts)
         ends_buf = (ctypes.c_uint32 * len(ends))(*ends)
         try:
@@ -1916,6 +1994,12 @@ class NativeBridge:
             return None
         return result
 
+    def count_bpe_ascii_o200k_text_from_ranks(self, rank_payload: bytes, text: str) -> int | None:
+        fast = self._fast_count_from_ranks_text("turbotoken_count_bpe_ascii_o200k_from_ranks", rank_payload, text)
+        if fast is not None:
+            return fast
+        return self.count_bpe_ascii_o200k_from_ranks(rank_payload, text.encode("ascii"))
+
     def encode_bpe_ascii_o200k_from_ranks(self, rank_payload: bytes, data: bytes) -> list[int] | None:
         fast = self._fast_encode_from_ranks("turbotoken_encode_bpe_ascii_o200k_from_ranks", rank_payload, data)
         if fast is not None:
@@ -1950,6 +2034,12 @@ class NativeBridge:
         if written < 0:
             return None
         return _unpack_u32(self._ffi, out, written)
+
+    def encode_bpe_ascii_o200k_text_from_ranks(self, rank_payload: bytes, text: str) -> list[int] | None:
+        fast = self._fast_encode_from_ranks_text("turbotoken_encode_bpe_ascii_o200k_from_ranks", rank_payload, text)
+        if fast is not None:
+            return fast
+        return self.encode_bpe_ascii_o200k_from_ranks(rank_payload, text.encode("ascii"))
 
     def decode_bpe_from_ranks(self, rank_payload: bytes, tokens: list[int]) -> bytes | None:
         fast = self._fast_decode_from_ranks(rank_payload, tokens)
@@ -2064,8 +2154,14 @@ class NativeRankSession:
     def encode_bpe_ascii_o200k(self, data: bytes) -> list[int] | None:
         return self._bridge.encode_bpe_ascii_o200k_from_ranks(self._rank_payload, data)
 
+    def encode_bpe_ascii_o200k_text(self, text: str) -> list[int] | None:
+        return self._bridge.encode_bpe_ascii_o200k_text_from_ranks(self._rank_payload, text)
+
     def count_bpe_ascii_o200k(self, data: bytes) -> int | None:
         return self._bridge.count_bpe_ascii_o200k_from_ranks(self._rank_payload, data)
+
+    def count_bpe_ascii_o200k_text(self, text: str) -> int | None:
+        return self._bridge.count_bpe_ascii_o200k_text_from_ranks(self._rank_payload, text)
 
     def encode_bpe_ascii_letter_space(self, data: bytes) -> list[int] | None:
         return self._bridge.encode_bpe_ascii_letter_space_from_ranks(self._rank_payload, data)

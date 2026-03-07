@@ -102,16 +102,18 @@ pub const PairCache = struct {
     }
 
     pub fn populateFromRankTable(self: *PairCache, table: *const rank_loader.RankTable) void {
-        for (table.entries.items) |entry| {
-            if (entry.token.len < 2) {
+        for (table.by_rank_dense.items, 0..) |maybe_token, rank_idx| {
+            const token = maybe_token orelse continue;
+            if (token.len < 2) {
                 continue;
             }
 
+            const rank: u32 = @intCast(rank_idx);
             var split_at: usize = 1;
-            while (split_at < entry.token.len) : (split_at += 1) {
-                const left = table.get(entry.token[0..split_at]) orelse continue;
-                const right = table.get(entry.token[split_at..]) orelse continue;
-                _ = self.put(left, right, entry.rank);
+            while (split_at < token.len) : (split_at += 1) {
+                const left = table.get(token[0..split_at]) orelse continue;
+                const right = table.get(token[split_at..]) orelse continue;
+                _ = self.put(left, right, rank);
             }
         }
     }

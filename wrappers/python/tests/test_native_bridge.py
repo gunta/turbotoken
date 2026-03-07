@@ -148,6 +148,26 @@ def test_native_bridge_bpe_wrappers_roundtrip_when_available() -> None:
     assert bridge.decode_bpe_from_ranks(ranks, encoded) == b"abb"
 
 
+def test_native_bridge_ascii_o200k_text_wrappers_when_available() -> None:
+    bridge = get_native_bridge()
+    if not bridge.available:
+        pytest.skip("native library not available in this environment")
+
+    ranks = b"YQ== 0\nYg== 1\nYWI= 2\n"
+    encoded = bridge.encode_bpe_ascii_o200k_text_from_ranks(ranks, "abb")
+    if encoded is None:
+        pytest.skip("native library does not expose ascii o200k BPE symbols")
+
+    counted = bridge.count_bpe_ascii_o200k_text_from_ranks(ranks, "abb")
+    assert counted == 2
+    assert encoded == [2, 1]
+
+    session = bridge.rank_session(ranks)
+    if session is not None:
+        assert session.encode_bpe_ascii_o200k_text("abb") == [2, 1]
+        assert session.count_bpe_ascii_o200k_text("abb") == 2
+
+
 def test_native_bridge_bpe_token_limit_wrapper_when_available() -> None:
     bridge = get_native_bridge()
     if not bridge.available:

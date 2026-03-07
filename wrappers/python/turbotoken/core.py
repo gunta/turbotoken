@@ -894,7 +894,12 @@ class Encoding:
         ):
             session = self._native_rank_session()
             if session is not None:
-                native_tokens = session.encode_bpe_ascii_o200k(text.encode("ascii"))
+                encode_ascii_text = getattr(session, "encode_bpe_ascii_o200k_text", None)
+                native_tokens = (
+                    encode_ascii_text(text)
+                    if callable(encode_ascii_text)
+                    else session.encode_bpe_ascii_o200k(text.encode("ascii"))
+                )
                 if native_tokens is not None:
                     return native_tokens
 
@@ -1272,7 +1277,12 @@ class Encoding:
         ):
             session = self._native_rank_session()
             if session is not None:
-                native_count = session.count_bpe_ascii_o200k(text.encode("ascii"))
+                count_ascii_text = getattr(session, "count_bpe_ascii_o200k_text", None)
+                native_count = (
+                    count_ascii_text(text)
+                    if callable(count_ascii_text)
+                    else session.count_bpe_ascii_o200k(text.encode("ascii"))
+                )
                 if native_count is not None:
                     return native_count
 
