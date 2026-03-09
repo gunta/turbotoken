@@ -157,6 +157,11 @@ def _next_power_of_two(value: int) -> int:
     return out
 
 
+def _token_lookup_slot_count(entry_count: int) -> int:
+    # Keep the linear-probe table below ~80% load while avoiding a 2x over-allocation.
+    return _next_power_of_two(max(4, (entry_count * 5 + 3) // 4))
+
+
 def _fnv1a64(token_bytes: bytes) -> int:
     acc = 0xCBF29CE484222325
     for byte in token_bytes:
@@ -296,7 +301,7 @@ def _compile_native_rank_payload(payload: bytes, *, rank_size: int, rank_mtime_n
             raise ValueError("duplicate rank")
         dense[rank] = token_bytes
 
-    slot_count = _next_power_of_two(max(4, len(entries) * 2))
+    slot_count = _token_lookup_slot_count(len(entries))
     slots = [_NATIVE_PAYLOAD_MISSING] * slot_count
     mask = slot_count - 1
     for rank, token_bytes in enumerate(dense):
