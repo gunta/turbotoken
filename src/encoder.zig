@@ -15,10 +15,6 @@ pub const Encoder = struct {
     const candidate_bucket_count: usize = 32_768;
     const adaptive_bucket_scale_per_node: usize = 64;
     const max_full_bucket_count: usize = 1_048_576;
-    const medium_piece_fast_max_bytes: usize = 12;
-    const MediumNodeIndex = u8;
-    const medium_null_index = std.math.maxInt(MediumNodeIndex);
-    const medium_dead_index: MediumNodeIndex = std.math.maxInt(MediumNodeIndex) - 1;
 
     const QueueMode = enum {
         hybrid,
@@ -580,201 +576,6 @@ pub const Encoder = struct {
         return 2;
     }
 
-    fn mediumEdgeIsAlive(
-        next: []const MediumNodeIndex,
-        left_idx: usize,
-    ) bool {
-        return left_idx < next.len and next[left_idx] != medium_null_index and next[left_idx] != medium_dead_index;
-    }
-
-    fn recomputeMediumEdge(
-        allocator: std.mem.Allocator,
-        table: *const rank_loader.RankTable,
-        cache: *pair_cache.PairCache,
-        scratch: *std.ArrayListUnmanaged(u8),
-        tokens: []const u32,
-        prev: []const MediumNodeIndex,
-        next: []const MediumNodeIndex,
-        edge_rank: []u32,
-        edge_sequence: []u32,
-        next_sequence: *u32,
-        left_idx: usize,
-    ) !void {
-        if (left_idx >= tokens.len or prev[left_idx] == medium_dead_index or !mediumEdgeIsAlive(next, left_idx)) {
-            edge_rank[left_idx] = cache_miss;
-            edge_sequence[left_idx] = 0;
-            return;
-        }
-
-        const right_idx = @as(usize, next[left_idx]);
-        const rank = try pairRank(allocator, table, cache, scratch, tokens[left_idx], tokens[right_idx]) orelse {
-            edge_rank[left_idx] = cache_miss;
-            edge_sequence[left_idx] = 0;
-            return;
-        };
-
-        edge_rank[left_idx] = rank;
-        edge_sequence[left_idx] = next_sequence.*;
-        next_sequence.* +%= 1;
-    }
-
-    fn encodeMediumPieceWithRanks(
-        allocator: std.mem.Allocator,
-        text: []const u8,
-        table: *const rank_loader.RankTable,
-        cache: *pair_cache.PairCache,
-        scratch: *std.ArrayListUnmanaged(u8),
-        out_tokens: []u32,
-    ) !?usize {
-        if (text.len <= 3 or text.len > medium_piece_fast_max_bytes) {
-            return null;
-        }
-
-        var tokens: [medium_piece_fast_max_bytes]u32 = undefined;
-        var prev: [medium_piece_fast_max_bytes]MediumNodeIndex = undefined;
-        var next: [medium_piece_fast_max_bytes]MediumNodeIndex = undefined;
-        var edge_rank: [medium_piece_fast_max_bytes]u32 = [_]u32{cache_miss} ** medium_piece_fast_max_bytes;
-        var edge_sequence: [medium_piece_fast_max_bytes]u32 = [_]u32{0} ** medium_piece_fast_max_bytes;
-        var live_len = text.len;
-
-        for (text, 0..) |byte, idx| {
-            tokens[idx] = try byteToken(table, byte);
-            prev[idx] = if (idx == 0) medium_null_index else @as(MediumNodeIndex, @intCast(idx - 1));
-            next[idx] = if (idx + 1 < text.len) @as(MediumNodeIndex, @intCast(idx + 1)) else medium_null_index;
-        }
-
-        const queue_config = resolveQueueConfig(table, text.len);
-        var next_sequence: u32 = 0;
-        for (0..text.len - 1) |idx| {
-            try recomputeMediumEdge(
-                allocator,
-                table,
-                cache,
-                scratch,
-                tokens[0..text.len],
-                prev[0..text.len],
-                next[0..text.len],
-                edge_rank[0..text.len],
-                edge_sequence[0..text.len],
-                &next_sequence,
-                idx,
-            );
-        }
-
-        while (true) {
-            var best_left: ?usize = null;
-            var best_rank: u32 = cache_miss;
-            var best_sequence: u32 = 0;
-
-            for (0..text.len) |left_idx| {
-                const rank = edge_rank[left_idx];
-                if (rank == cache_miss) {
-                    continue;
-                }
-                if (!mediumEdgeIsAlive(next[0..text.len], left_idx) or prev[left_idx] == medium_dead_index) {
-                    continue;
-                }
-
-                if (best_left == null or rank < best_rank) {
-                    best_left = left_idx;
-                    best_rank = rank;
-                    best_sequence = edge_sequence[left_idx];
-                    continue;
-                }
-                if (rank > best_rank) {
-                    continue;
-                }
-
-                if (rank < queue_config.bucket_count) {
-                    if (edge_sequence[left_idx] > best_sequence) {
-                        best_left = left_idx;
-                        best_sequence = edge_sequence[left_idx];
-                    }
-                } else if (left_idx < best_left.?) {
-                    best_left = left_idx;
-                }
-            }
-
-            const left_idx = best_left orelse break;
-            const right_idx = @as(usize, next[left_idx]);
-            const prev_idx = prev[left_idx];
-            const next_next_idx = next[right_idx];
-
-            tokens[left_idx] = best_rank;
-            next[left_idx] = next_next_idx;
-            edge_rank[left_idx] = cache_miss;
-            edge_sequence[left_idx] = 0;
-
-            if (next_next_idx != medium_null_index and next_next_idx != medium_dead_index) {
-                prev[@as(usize, next_next_idx)] = @as(MediumNodeIndex, @intCast(left_idx));
-            }
-
-            prev[right_idx] = medium_dead_index;
-            next[right_idx] = medium_dead_index;
-            edge_rank[right_idx] = cache_miss;
-            edge_sequence[right_idx] = 0;
-            live_len -= 1;
-
-            if (prev_idx != medium_null_index and prev_idx != medium_dead_index) {
-                try recomputeMediumEdge(
-                    allocator,
-                    table,
-                    cache,
-                    scratch,
-                    tokens[0..text.len],
-                    prev[0..text.len],
-                    next[0..text.len],
-                    edge_rank[0..text.len],
-                    edge_sequence[0..text.len],
-                    &next_sequence,
-                    @as(usize, prev_idx),
-                );
-            }
-            try recomputeMediumEdge(
-                allocator,
-                table,
-                cache,
-                scratch,
-                tokens[0..text.len],
-                prev[0..text.len],
-                next[0..text.len],
-                edge_rank[0..text.len],
-                edge_sequence[0..text.len],
-                &next_sequence,
-                left_idx,
-            );
-        }
-
-        var head_idx: ?usize = null;
-        for (0..text.len) |idx| {
-            if (prev[idx] == medium_dead_index) {
-                continue;
-            }
-            if (prev[idx] == medium_null_index) {
-                head_idx = idx;
-                break;
-            }
-        }
-
-        var written: usize = 0;
-        var cursor = @as(MediumNodeIndex, @intCast(head_idx orelse return error.InvalidTokenizerState));
-        while (cursor != medium_null_index) : (cursor = next[@as(usize, cursor)]) {
-            if (cursor == medium_dead_index) {
-                return error.InvalidTokenizerState;
-            }
-            if (written >= out_tokens.len) {
-                return error.OutOfMemory;
-            }
-            out_tokens[written] = tokens[@as(usize, cursor)];
-            written += 1;
-        }
-
-        if (written != live_len) {
-            return error.InvalidTokenizerState;
-        }
-        return written;
-    }
-
     fn enqueueCandidate(
         allocator: std.mem.Allocator,
         queue: *BucketQueue,
@@ -1100,13 +901,6 @@ pub const Encoder = struct {
             return out;
         }
 
-        var medium_out: [medium_piece_fast_max_bytes]u32 = undefined;
-        if (try encodeMediumPieceWithRanks(allocator, text, table, cache, scratch, medium_out[0..])) |written| {
-            const out = try allocator.alloc(u32, written);
-            @memcpy(out, medium_out[0..written]);
-            return out;
-        }
-
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         const token_count = try countMergedTokens(&merged.arena, merged.head_idx);
@@ -1171,10 +965,6 @@ pub const Encoder = struct {
             return written;
         }
 
-        if (try encodeMediumPieceWithRanks(allocator, text, table, cache, scratch, out_tokens)) |written| {
-            return written;
-        }
-
         var merged = try buildMergedNodesWithReusableState(allocator, text, table, cache, scratch);
         defer merged.arena.deinit(allocator);
         return writeMergedTokens(&merged.arena, merged.head_idx, out_tokens);
@@ -1236,11 +1026,6 @@ pub const Encoder = struct {
 
         var tiny_out: [3]u32 = undefined;
         if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, tiny_out[0..])) |written| {
-            return written;
-        }
-
-        var medium_out: [medium_piece_fast_max_bytes]u32 = undefined;
-        if (try encodeMediumPieceWithRanks(allocator, text, table, cache, scratch, medium_out[0..])) |written| {
             return written;
         }
 
@@ -1443,84 +1228,6 @@ test "tiny reusable path preserves 2-byte and 3-byte merge behavior" {
     try std.testing.expectEqual(@as(usize, 1), written_abc);
     try std.testing.expectEqualSlices(u32, &[_]u32{5}, out_abc[0..written_abc]);
     try std.testing.expectEqual(@as(usize, 1), try enc.countWithRanksReusable(allocator, "abc", &table, cache, &scratch));
-}
-
-test "medium reusable path matches queue path up to 12 bytes" {
-    const allocator = std.testing.allocator;
-    const payload =
-        \\YQ== 0
-        \\Yg== 1
-        \\YWE= 2
-        \\YWI= 3
-        \\YmE= 4
-        \\YmI= 5
-        \\YWFh 6
-        \\YWFi 7
-        \\YWJh 8
-        \\YWJi 9
-        \\YmFh 10
-        \\YmFi 11
-        \\YmJh 12
-        \\YmJi 13
-        \\YWFhYQ== 14
-        \\YWFhYg== 15
-        \\YWFiYQ== 16
-        \\YWFiYg== 17
-        \\YWJhYQ== 18
-        \\YWJhYg== 19
-        \\YWJiYQ== 20
-        \\YWJiYg== 21
-        \\YmFhYQ== 22
-        \\YmFhYg== 23
-        \\YmFiYQ== 24
-        \\YmFiYg== 25
-        \\YmJhYQ== 26
-        \\YmJhYg== 27
-        \\YmJiYQ== 28
-        \\YmJiYg== 29
-        \\YWFhYWE= 30
-        \\YWFhYWI= 31
-        \\YWFhYmE= 32
-        \\YWFhYmI= 33
-        \\YWFiaWE= 34
-        \\YWFiaWI= 35
-        \\YWJiYWE= 36
-        \\YWJiYWI= 37
-        \\YmJiYWE= 38
-        \\YmJiYWI= 39
-        \\
-    ;
-    var table = try rank_loader.loadFromBytes(allocator, payload);
-    defer table.deinit();
-
-    const enc = Encoder.init();
-    const cache = try allocator.create(pair_cache.PairCache);
-    defer allocator.destroy(cache);
-    enc.preparePairCache(cache, &table);
-
-    var scratch = std.ArrayListUnmanaged(u8){};
-    defer scratch.deinit(allocator);
-
-    var text_buf: [Encoder.medium_piece_fast_max_bytes]u8 = undefined;
-    var out_buf: [Encoder.medium_piece_fast_max_bytes]u32 = undefined;
-
-    for (4..Encoder.medium_piece_fast_max_bytes + 1) |text_len| {
-        const combinations = @as(usize, 1) << @as(u6, @intCast(text_len));
-        for (0..combinations) |mask| {
-            for (0..text_len) |idx| {
-                text_buf[idx] = if (((mask >> @as(u6, @intCast(idx))) & 1) == 0) 'a' else 'b';
-            }
-
-            const text = text_buf[0..text_len];
-            const expected = try enc.encodeWithRanks(allocator, text, &table);
-            defer allocator.free(expected);
-
-            const written = try enc.encodeWithRanksReusableInto(allocator, text, &table, cache, &scratch, out_buf[0..]);
-            try std.testing.expectEqual(expected.len, written);
-            try std.testing.expectEqualSlices(u32, expected, out_buf[0..written]);
-            try std.testing.expectEqual(expected.len, try enc.countWithRanksReusable(allocator, text, &table, cache, &scratch));
-        }
-    }
 }
 
 test "directRankForText returns exact whole-token hits" {
