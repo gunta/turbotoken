@@ -55,13 +55,8 @@ function nextPowerOfTwo(value: number): number {
   return next;
 }
 
-function tokenLookupSlotCount(entryCount: number): number {
-  // Keep the linear-probe table below ~80% load while avoiding a 2x over-allocation.
-  return nextPowerOfTwo(Math.max(4, Math.ceil((entryCount * 5) / 4)));
-}
-
 function buildTokenLookup(dense: Array<Buffer | null>, entryCount: number): Buffer {
-  const slotCount = tokenLookupSlotCount(entryCount);
+  const slotCount = nextPowerOfTwo(Math.max(4, entryCount * 2));
   const slots = new Uint32Array(slotCount);
   slots.fill(MISSING);
   const mask = slotCount - 1;
