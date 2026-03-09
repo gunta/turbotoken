@@ -8,9 +8,13 @@ type EncodingName = "o200k_base" | "cl100k_base";
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const OUTPUT_DIR = resolve(REPO_ROOT, "wrappers", "python", "turbotoken", "_data", "ranks");
 const MAGIC = Buffer.from("TTKRBIN1", "ascii");
-const VERSION = 1;
-const FLAGS = 0;
+const VERSION = 2;
+const FLAG_TOKEN_LOOKUP = 1;
 const MISSING = 0xFFFFFFFF;
+const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+const U64_MASK = 0xffffffffffffffffn;
+const LOOKUP_ALIGNMENT = 4;
 
 const SOURCES: Record<EncodingName, string> = {
   o200k_base: resolve(REPO_ROOT, "upstream", "rs-bpe", "bpe-openai", "data", "o200k_base.tiktoken.gz"),
@@ -32,6 +36,49 @@ function encodeU64(value: bigint): Buffer {
 function stableSourceFingerprint(payload: Buffer): bigint {
   const digest = createHash("sha256").update(payload).digest();
   return digest.readBigUInt64LE(0);
+}
+
+function fnv1a64(bytes: Buffer): bigint {
+  let hash = FNV_OFFSET_BASIS;
+  for (const byte of bytes) {
+    hash ^= BigInt(byte);
+    hash = (hash * FNV_PRIME) & U64_MASK;
+  }
+  return hash;
+}
+
+function nextPowerOfTwo(value: number): number {
+  let next = 1;
+  while (next < value) {
+    next <<= 1;
+  }
+  return next;
+}
+
+function buildTokenLookup(dense: Array<Buffer | null>, entryCount: number): Buffer {
+  const slotCount = nextPowerOfTwo(Math.max(4, entryCount * 2));
+  const slots = new Uint32Array(slotCount);
+  slots.fill(MISSING);
+  const mask = slotCount - 1;
+
+  for (let rank = 0; rank < dense.length; rank += 1) {
+    const token = dense[rank];
+    if (token === null) {
+      continue;
+    }
+    let idx = Number(fnv1a64(token) & BigInt(mask));
+    while (slots[idx] !== MISSING) {
+      idx = (idx + 1) & mask;
+    }
+    slots[idx] = rank >>> 0;
+  }
+
+  const header = encodeU32(slotCount);
+  const payload = Buffer.allocUnsafe(slotCount * 4);
+  for (let idx = 0; idx < slotCount; idx += 1) {
+    payload.writeUInt32LE(slots[idx]!, idx * 4);
+  }
+  return Buffer.concat([header, payload]);
 }
 
 function buildNativePayload(source: Buffer): Buffer {
@@ -71,14 +118,17 @@ function buildNativePayload(source: Buffer): Buffer {
     dense[entry.rank] = entry.token;
   }
 
+  const tokenLookup = buildTokenLookup(dense, entries.length);
+
   const chunks: Buffer[] = [
     MAGIC,
     encodeU32(VERSION),
-    encodeU32(FLAGS),
+    encodeU32(FLAG_TOKEN_LOOKUP),
     encodeU64(BigInt(source.length)),
     encodeU64(stableSourceFingerprint(source)),
     encodeU32(entries.length),
     encodeU32(maxRankPlusOne),
+    tokenLookup.subarray(0, 4),
   ];
 
   for (const token of dense) {
@@ -88,6 +138,13 @@ function buildNativePayload(source: Buffer): Buffer {
     }
     chunks.push(encodeU32(token.length), token);
   }
+
+  const denseLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const lookupPadding = (LOOKUP_ALIGNMENT - (denseLength % LOOKUP_ALIGNMENT)) % LOOKUP_ALIGNMENT;
+  if (lookupPadding !== 0) {
+    chunks.push(Buffer.alloc(lookupPadding));
+  }
+  chunks.push(tokenLookup.subarray(4));
 
   return Buffer.concat(chunks);
 }

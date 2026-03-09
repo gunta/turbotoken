@@ -19,7 +19,7 @@ else
 
 const RankTableCache = struct {
     hash: u64 = 0,
-    payload: ?[]u8 = null,
+    payload: ?[]align(@alignOf(u32)) u8 = null,
     last_input_ptr: usize = 0,
     last_input_len: usize = 0,
     table: ?rank_loader.RankTable = null,
@@ -110,7 +110,7 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
 
     clearRankTableCache();
 
-    const payload_copy = try rank_cache_allocator.alloc(u8, rank_slice.len);
+    const payload_copy = try rank_cache_allocator.alignedAlloc(u8, .fromByteUnits(@alignOf(u32)), rank_slice.len);
     errdefer rank_cache_allocator.free(payload_copy);
     @memcpy(payload_copy, rank_slice);
 

@@ -125,10 +125,13 @@ _RANK_CACHE_VERSION = 1
 _DECODER_CACHE_VERSION = 1
 _PIECE_CACHE_VERSION = 1
 _NATIVE_PAYLOAD_MAGIC = b"TTKRBIN1"
-_NATIVE_PAYLOAD_VERSION = 1
-_NATIVE_PAYLOAD_FLAGS = 0
+_NATIVE_PAYLOAD_VERSION_LEGACY = 1
+_NATIVE_PAYLOAD_VERSION_CURRENT = 2
+_NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP = 1
 _NATIVE_PAYLOAD_MISSING = 0xFFFFFFFF
-_NATIVE_PAYLOAD_HEADER = struct.Struct("<8sIIQQII")
+_NATIVE_PAYLOAD_LOOKUP_ALIGNMENT = 4
+_NATIVE_PAYLOAD_HEADER_V1 = struct.Struct("<8sIIQQII")
+_NATIVE_PAYLOAD_HEADER_V2 = struct.Struct("<8sIIQQIII")
 
 
 def _rank_pickle_path(rank_path: Path) -> Path:
@@ -147,50 +150,91 @@ def _native_payload_path(rank_path: Path) -> Path:
     return rank_path.with_suffix(f"{rank_path.suffix}.native.bin")
 
 
-def _native_payload_source_metadata(payload: bytes) -> tuple[int, int]:
-    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
+def _next_power_of_two(value: int) -> int:
+    out = 1
+    while out < value:
+        out <<= 1
+    return out
+
+
+def _fnv1a64(token_bytes: bytes) -> int:
+    acc = 0xCBF29CE484222325
+    for byte in token_bytes:
+        acc ^= byte
+        acc = (acc * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return acc
+
+
+def _parse_native_payload_header(payload: bytes) -> tuple[int, int, int, int, int, int, int, int]:
+    if len(payload) < _NATIVE_PAYLOAD_HEADER_V1.size:
         raise ValueError("invalid native rank payload header")
-    magic, version, flags, source_size, source_mtime_ns, _entry_count, _max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
-        payload[: _NATIVE_PAYLOAD_HEADER.size]
+
+    magic, version, flags, source_size, source_mtime_ns, entry_count, max_rank_plus_one = _NATIVE_PAYLOAD_HEADER_V1.unpack(
+        payload[: _NATIVE_PAYLOAD_HEADER_V1.size]
     )
-    if (
-        magic != _NATIVE_PAYLOAD_MAGIC
-        or version != _NATIVE_PAYLOAD_VERSION
-        or flags != _NATIVE_PAYLOAD_FLAGS
-    ):
+    if magic != _NATIVE_PAYLOAD_MAGIC:
         raise ValueError("unsupported native rank payload format")
+
+    if version == _NATIVE_PAYLOAD_VERSION_LEGACY:
+        if flags != 0:
+            raise ValueError("unsupported native rank payload format")
+        return version, flags, source_size, source_mtime_ns, entry_count, max_rank_plus_one, 0, _NATIVE_PAYLOAD_HEADER_V1.size
+
+    if version == _NATIVE_PAYLOAD_VERSION_CURRENT:
+        if len(payload) < _NATIVE_PAYLOAD_HEADER_V2.size:
+            raise ValueError("invalid native rank payload header")
+        (
+            _magic,
+            _version,
+            flags,
+            source_size,
+            source_mtime_ns,
+            entry_count,
+            max_rank_plus_one,
+            token_lookup_slot_count,
+        ) = _NATIVE_PAYLOAD_HEADER_V2.unpack(payload[: _NATIVE_PAYLOAD_HEADER_V2.size])
+        if (flags & ~_NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP) != 0:
+            raise ValueError("unsupported native rank payload format")
+        if bool(flags & _NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP) != bool(token_lookup_slot_count):
+            raise ValueError("unsupported native rank payload format")
+        if token_lookup_slot_count and token_lookup_slot_count & (token_lookup_slot_count - 1):
+            raise ValueError("unsupported native rank payload format")
+        return (
+            version,
+            flags,
+            source_size,
+            source_mtime_ns,
+            entry_count,
+            max_rank_plus_one,
+            token_lookup_slot_count,
+            _NATIVE_PAYLOAD_HEADER_V2.size,
+        )
+
+    raise ValueError("unsupported native rank payload format")
+
+
+def _native_payload_source_metadata(payload: bytes) -> tuple[int, int]:
+    _version, _flags, source_size, source_mtime_ns, _entry_count, _max_rank_plus_one, _slot_count, _header_size = (
+        _parse_native_payload_header(payload)
+    )
     return source_size, source_mtime_ns
 
 
 def _native_payload_header_matches(payload: bytes, *, rank_size: int, rank_mtime_ns: int) -> bool:
-    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
+    try:
+        _version, _flags, source_size, source_mtime_ns, _entry_count, _max_rank_plus_one, _slot_count, _header_size = (
+            _parse_native_payload_header(payload)
+        )
+    except ValueError:
         return False
-    magic, version, flags, source_size, source_mtime_ns, _entry_count, _max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
-        payload[: _NATIVE_PAYLOAD_HEADER.size]
-    )
-    return (
-        magic == _NATIVE_PAYLOAD_MAGIC
-        and version == _NATIVE_PAYLOAD_VERSION
-        and flags == _NATIVE_PAYLOAD_FLAGS
-        and source_size == rank_size
-        and source_mtime_ns == rank_mtime_ns
-    )
+    return source_size == rank_size and source_mtime_ns == rank_mtime_ns
 
 
 def _native_payload_to_rank_file_bytes(payload: bytes) -> bytes:
-    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
-        raise ValueError("invalid native rank payload header")
-    magic, version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
-        payload[: _NATIVE_PAYLOAD_HEADER.size]
+    _version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one, token_lookup_slot_count, header_size = (
+        _parse_native_payload_header(payload)
     )
-    if (
-        magic != _NATIVE_PAYLOAD_MAGIC
-        or version != _NATIVE_PAYLOAD_VERSION
-        or flags != _NATIVE_PAYLOAD_FLAGS
-    ):
-        raise ValueError("unsupported native rank payload format")
-
-    cursor = _NATIVE_PAYLOAD_HEADER.size
+    cursor = header_size
     parsed_entries = 0
     out = bytearray()
     for rank in range(max_rank_plus_one):
@@ -211,8 +255,17 @@ def _native_payload_to_rank_file_bytes(payload: bytes) -> bytes:
         out.extend(b"\n")
         parsed_entries += 1
 
+    if flags & _NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP:
+        cursor = (cursor + (_NATIVE_PAYLOAD_LOOKUP_ALIGNMENT - 1)) & ~(_NATIVE_PAYLOAD_LOOKUP_ALIGNMENT - 1)
+        lookup_bytes_len = token_lookup_slot_count * 4
+        if cursor + lookup_bytes_len > len(payload):
+            raise ValueError("truncated native rank payload lookup")
+        cursor += lookup_bytes_len
+
     if parsed_entries != entry_count:
         raise ValueError("native rank payload entry count mismatch")
+    if cursor != len(payload):
+        raise ValueError("trailing native rank payload bytes")
     return bytes(out)
 
 
@@ -243,16 +296,28 @@ def _compile_native_rank_payload(payload: bytes, *, rank_size: int, rank_mtime_n
             raise ValueError("duplicate rank")
         dense[rank] = token_bytes
 
+    slot_count = _next_power_of_two(max(4, len(entries) * 2))
+    slots = [_NATIVE_PAYLOAD_MISSING] * slot_count
+    mask = slot_count - 1
+    for rank, token_bytes in enumerate(dense):
+        if token_bytes is None:
+            continue
+        idx = _fnv1a64(token_bytes) & mask
+        while slots[idx] != _NATIVE_PAYLOAD_MISSING:
+            idx = (idx + 1) & mask
+        slots[idx] = rank
+
     out = bytearray()
     out.extend(
-        _NATIVE_PAYLOAD_HEADER.pack(
+        _NATIVE_PAYLOAD_HEADER_V2.pack(
             _NATIVE_PAYLOAD_MAGIC,
-            _NATIVE_PAYLOAD_VERSION,
-            _NATIVE_PAYLOAD_FLAGS,
+            _NATIVE_PAYLOAD_VERSION_CURRENT,
+            _NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP,
             rank_size,
             rank_mtime_ns,
             len(entries),
             max_rank_plus_one,
+            slot_count,
         )
     )
     for token_bytes in dense:
@@ -261,6 +326,12 @@ def _compile_native_rank_payload(payload: bytes, *, rank_size: int, rank_mtime_n
             continue
         out.extend(struct.pack("<I", len(token_bytes)))
         out.extend(token_bytes)
+
+    padding = (-len(out)) % _NATIVE_PAYLOAD_LOOKUP_ALIGNMENT
+    if padding:
+        out.extend(b"\0" * padding)
+    for rank in slots:
+        out.extend(struct.pack("<I", rank))
     return bytes(out)
 
 
@@ -584,19 +655,10 @@ def parse_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
 
 
 def _parse_native_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
-    if len(payload) < _NATIVE_PAYLOAD_HEADER.size:
-        raise ValueError("invalid native rank payload header")
-    magic, version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one = _NATIVE_PAYLOAD_HEADER.unpack(
-        payload[: _NATIVE_PAYLOAD_HEADER.size]
+    _version, flags, _source_size, _source_mtime_ns, entry_count, max_rank_plus_one, token_lookup_slot_count, header_size = (
+        _parse_native_payload_header(payload)
     )
-    if (
-        magic != _NATIVE_PAYLOAD_MAGIC
-        or version != _NATIVE_PAYLOAD_VERSION
-        or flags != _NATIVE_PAYLOAD_FLAGS
-    ):
-        raise ValueError("unsupported native rank payload format")
-
-    cursor = _NATIVE_PAYLOAD_HEADER.size
+    cursor = header_size
     ranks: dict[bytes, int] = {}
     for rank in range(max_rank_plus_one):
         if cursor + 4 > len(payload):
@@ -612,8 +674,17 @@ def _parse_native_rank_file_bytes(payload: bytes) -> dict[bytes, int]:
         cursor = end
         ranks[token_bytes] = rank
 
+    if flags & _NATIVE_PAYLOAD_FLAG_TOKEN_LOOKUP:
+        cursor = (cursor + (_NATIVE_PAYLOAD_LOOKUP_ALIGNMENT - 1)) & ~(_NATIVE_PAYLOAD_LOOKUP_ALIGNMENT - 1)
+        lookup_bytes_len = token_lookup_slot_count * 4
+        if cursor + lookup_bytes_len > len(payload):
+            raise ValueError("truncated native rank payload lookup")
+        cursor += lookup_bytes_len
+
     if len(ranks) != entry_count:
         raise ValueError("native rank payload entry count mismatch")
+    if cursor != len(payload):
+        raise ValueError("trailing native rank payload bytes")
     return ranks
 
 
