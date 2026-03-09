@@ -15,6 +15,11 @@ pub const Encoder = struct {
     const candidate_bucket_count: usize = 32_768;
     const adaptive_bucket_scale_per_node: usize = 64;
     const max_full_bucket_count: usize = 1_048_576;
+    const small_piece_fast_max_bytes: usize = 8;
+    const SmallNodeIndex = u8;
+    const small_null_index = std.math.maxInt(SmallNodeIndex);
+    const small_dead_index: SmallNodeIndex = std.math.maxInt(SmallNodeIndex) - 1;
+    const small_candidate_cap: usize = small_piece_fast_max_bytes * 3;
 
     const QueueMode = enum {
         hybrid,
@@ -72,6 +77,15 @@ pub const Encoder = struct {
         left: NodeIndex,
         left_version: u32,
         right_version: u32,
+    };
+
+    const SmallCandidate = struct {
+        rank: u32,
+        left: SmallNodeIndex,
+        left_version: u32,
+        right_version: u32,
+        sequence: u32,
+        valid: bool,
     };
 
     const CandidatePool = struct {
@@ -543,7 +557,7 @@ pub const Encoder = struct {
             return 3;
         }
 
-        if (pair12 == null or (pair01 != null and pair01.? <= pair12.?)) {
+        if (pair12 == null or (pair01 != null and pair01.? < pair12.?)) {
             const merged_left = pair01.?;
             if (try pairRank(allocator, table, cache, scratch, merged_left, token2)) |merged_all| {
                 if (out_tokens.len < 1) {
@@ -574,6 +588,180 @@ pub const Encoder = struct {
         out_tokens[0] = token0;
         out_tokens[1] = merged_right;
         return 2;
+    }
+
+    fn encodeSmallPieceWithRanks(
+        allocator: std.mem.Allocator,
+        text: []const u8,
+        table: *const rank_loader.RankTable,
+        cache: *pair_cache.PairCache,
+        scratch: *std.ArrayListUnmanaged(u8),
+        out_tokens: []u32,
+    ) !?usize {
+        if (text.len == 0) {
+            return 0;
+        }
+        if (text.len > small_piece_fast_max_bytes) {
+            return null;
+        }
+
+        var tokens: [small_piece_fast_max_bytes]u32 = undefined;
+        var prev: [small_piece_fast_max_bytes]SmallNodeIndex = undefined;
+        var next: [small_piece_fast_max_bytes]SmallNodeIndex = undefined;
+        var version: [small_piece_fast_max_bytes]u32 = [_]u32{0} ** small_piece_fast_max_bytes;
+        for (text, 0..) |byte, idx| {
+            tokens[idx] = try byteToken(table, byte);
+            prev[idx] = if (idx == 0) small_null_index else @as(SmallNodeIndex, @intCast(idx - 1));
+            next[idx] = if (idx + 1 < text.len) @as(SmallNodeIndex, @intCast(idx + 1)) else small_null_index;
+        }
+
+        const queue_config = resolveQueueConfig(table, text.len);
+        var candidates: [small_candidate_cap]SmallCandidate = undefined;
+        var candidate_len: usize = 0;
+        var next_sequence: u32 = 0;
+
+        if (text.len > 1) {
+            for (0..text.len - 1) |idx| {
+                const right_idx = next[idx];
+                const rank = try pairRank(allocator, table, cache, scratch, tokens[idx], tokens[@as(usize, right_idx)]) orelse continue;
+                candidates[candidate_len] = .{
+                    .rank = rank,
+                    .left = @as(SmallNodeIndex, @intCast(idx)),
+                    .left_version = version[idx],
+                    .right_version = version[@as(usize, right_idx)],
+                    .sequence = next_sequence,
+                    .valid = true,
+                };
+                candidate_len += 1;
+                next_sequence +%= 1;
+            }
+        }
+
+        while (true) {
+            var best_candidate_idx: ?usize = null;
+
+            for (0..candidate_len) |candidate_idx| {
+                const candidate = candidates[candidate_idx];
+                if (!candidate.valid) {
+                    continue;
+                }
+
+                const left_idx = @as(usize, candidate.left);
+                if (left_idx >= text.len or next[left_idx] == small_dead_index or version[left_idx] != candidate.left_version) {
+                    continue;
+                }
+
+                const right_idx = next[left_idx];
+                if (right_idx == small_null_index or right_idx == small_dead_index) {
+                    continue;
+                }
+                const right_usize = @as(usize, right_idx);
+                if (next[right_usize] == small_dead_index or version[right_usize] != candidate.right_version) {
+                    continue;
+                }
+
+                if (best_candidate_idx) |best_idx| {
+                    const best = candidates[best_idx];
+                    if (candidate.rank < best.rank) {
+                        best_candidate_idx = candidate_idx;
+                        continue;
+                    }
+                    if (candidate.rank > best.rank) {
+                        continue;
+                    }
+
+                    if (candidate.rank < queue_config.bucket_count) {
+                        if (candidate.sequence > best.sequence) {
+                            best_candidate_idx = candidate_idx;
+                        }
+                    } else if (candidate.left < best.left) {
+                        best_candidate_idx = candidate_idx;
+                    }
+                } else {
+                    best_candidate_idx = candidate_idx;
+                }
+            }
+
+            const candidate_idx = best_candidate_idx orelse break;
+            const candidate = candidates[candidate_idx];
+            candidates[candidate_idx].valid = false;
+
+            const left_idx = @as(usize, candidate.left);
+            const right_idx = next[left_idx];
+            const right_usize = @as(usize, right_idx);
+            const prev_idx = prev[left_idx];
+            const next_next_idx = next[right_usize];
+
+            tokens[left_idx] = candidate.rank;
+            next[left_idx] = next_next_idx;
+            version[left_idx] +%= 1;
+            if (next_next_idx != small_null_index and next_next_idx != small_dead_index) {
+                prev[@as(usize, next_next_idx)] = candidate.left;
+            }
+
+            prev[right_usize] = small_dead_index;
+            next[right_usize] = small_dead_index;
+            version[right_usize] +%= 1;
+
+            if (prev_idx != small_null_index and prev_idx != small_dead_index) {
+                const prev_usize = @as(usize, prev_idx);
+                const prev_right_idx = next[prev_usize];
+                if (prev_right_idx != small_null_index and prev_right_idx != small_dead_index) {
+                    const prev_rank = try pairRank(allocator, table, cache, scratch, tokens[prev_usize], tokens[@as(usize, prev_right_idx)]) orelse null;
+                    if (prev_rank) |rank| {
+                        candidates[candidate_len] = .{
+                            .rank = rank,
+                            .left = prev_idx,
+                            .left_version = version[prev_usize],
+                            .right_version = version[@as(usize, prev_right_idx)],
+                            .sequence = next_sequence,
+                            .valid = true,
+                        };
+                        candidate_len += 1;
+                        next_sequence +%= 1;
+                    }
+                }
+            }
+
+            const left_right_idx = next[left_idx];
+            if (left_right_idx != small_null_index and left_right_idx != small_dead_index) {
+                const left_rank = try pairRank(allocator, table, cache, scratch, tokens[left_idx], tokens[@as(usize, left_right_idx)]) orelse null;
+                if (left_rank) |rank| {
+                    candidates[candidate_len] = .{
+                        .rank = rank,
+                        .left = candidate.left,
+                        .left_version = version[left_idx],
+                        .right_version = version[@as(usize, left_right_idx)],
+                        .sequence = next_sequence,
+                        .valid = true,
+                    };
+                    candidate_len += 1;
+                    next_sequence +%= 1;
+                }
+            }
+        }
+
+        var head_idx: ?usize = null;
+        for (0..text.len) |idx| {
+            if (next[idx] != small_dead_index and prev[idx] == small_null_index) {
+                head_idx = idx;
+                break;
+            }
+        }
+
+        var written: usize = 0;
+        var cursor = @as(SmallNodeIndex, @intCast(head_idx orelse return error.InvalidTokenizerState));
+        while (cursor != small_null_index) : (cursor = next[@as(usize, cursor)]) {
+            if (cursor == small_dead_index) {
+                return error.InvalidTokenizerState;
+            }
+            if (written >= out_tokens.len) {
+                return error.OutOfMemory;
+            }
+            out_tokens[written] = tokens[@as(usize, cursor)];
+            written += 1;
+        }
+        return written;
     }
 
     fn enqueueCandidate(
@@ -894,10 +1082,10 @@ pub const Encoder = struct {
             return out;
         }
 
-        var tiny_out: [3]u32 = undefined;
-        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, tiny_out[0..])) |written| {
+        var small_out: [small_piece_fast_max_bytes]u32 = undefined;
+        if (try encodeSmallPieceWithRanks(allocator, text, table, cache, scratch, small_out[0..])) |written| {
             const out = try allocator.alloc(u32, written);
-            @memcpy(out, tiny_out[0..written]);
+            @memcpy(out, small_out[0..written]);
             return out;
         }
 
@@ -961,7 +1149,7 @@ pub const Encoder = struct {
             return 1;
         }
 
-        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, out_tokens)) |written| {
+        if (try encodeSmallPieceWithRanks(allocator, text, table, cache, scratch, out_tokens)) |written| {
             return written;
         }
 
@@ -1024,8 +1212,8 @@ pub const Encoder = struct {
             return 1;
         }
 
-        var tiny_out: [3]u32 = undefined;
-        if (try encodeTinyPieceWithRanks(allocator, text, table, cache, scratch, tiny_out[0..])) |written| {
+        var small_out: [small_piece_fast_max_bytes]u32 = undefined;
+        if (try encodeSmallPieceWithRanks(allocator, text, table, cache, scratch, small_out[0..])) |written| {
             return written;
         }
 
@@ -1076,6 +1264,73 @@ test "encodeWithRanks merges lowest-rank adjacent pairs first" {
     const tokens_abc = try enc.encodeWithRanks(allocator, "abc", &table);
     defer allocator.free(tokens_abc);
     try std.testing.expectEqualSlices(u32, &[_]u32{ 3, 2 }, tokens_abc);
+}
+
+test "encodeWithRanksReusable small-piece fast path matches queue path up to 8 bytes" {
+    const allocator = std.testing.allocator;
+    const payload =
+        \\YQ== 0
+        \\Yg== 1
+        \\YWE= 2
+        \\YWI= 3
+        \\YmE= 4
+        \\YmI= 5
+        \\YWFh 6
+        \\YWFi 7
+        \\YWJh 8
+        \\YWJi 9
+        \\YmFh 10
+        \\YmFi 11
+        \\YmJh 12
+        \\YmJi 13
+        \\YWFhYQ== 14
+        \\YWFhYg== 15
+        \\YWFiYQ== 16
+        \\YWFiYg== 17
+        \\YWJhYQ== 18
+        \\YWJhYg== 19
+        \\YWJiYQ== 20
+        \\YWJiYg== 21
+        \\YmFhYQ== 22
+        \\YmFhYg== 23
+        \\YmFiYQ== 24
+        \\YmFiYg== 25
+        \\YmJhYQ== 26
+        \\YmJhYg== 27
+        \\YmJiYQ== 28
+        \\YmJiYg== 29
+        \\
+    ;
+    var table = try rank_loader.loadFromBytes(allocator, payload);
+    defer table.deinit();
+
+    const enc = Encoder.init();
+    const cache = try allocator.create(pair_cache.PairCache);
+    defer allocator.destroy(cache);
+    enc.preparePairCache(cache, &table);
+
+    var scratch = std.ArrayListUnmanaged(u8){};
+    defer scratch.deinit(allocator);
+
+    var text_buf: [Encoder.small_piece_fast_max_bytes]u8 = undefined;
+    var out_buf: [Encoder.small_piece_fast_max_bytes]u32 = undefined;
+
+    for (1..Encoder.small_piece_fast_max_bytes + 1) |text_len| {
+        const combinations = @as(usize, 1) << @as(u6, @intCast(text_len));
+        for (0..combinations) |mask| {
+            for (0..text_len) |idx| {
+                text_buf[idx] = if (((mask >> @as(u6, @intCast(idx))) & 1) == 0) 'a' else 'b';
+            }
+
+            const text = text_buf[0..text_len];
+            const expected = try enc.encodeWithRanks(allocator, text, &table);
+            defer allocator.free(expected);
+
+            const written = try enc.encodeWithRanksReusableInto(allocator, text, &table, cache, &scratch, out_buf[0..]);
+            try std.testing.expectEqual(expected.len, written);
+            try std.testing.expectEqualSlices(u32, expected, out_buf[0..written]);
+        }
+    }
 }
 
 test "encodeWithRanks handles stale queue candidates across merges" {
