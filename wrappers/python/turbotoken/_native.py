@@ -78,6 +78,14 @@ def _unpack_u32(ffi: Any, out: Any, written: int) -> list[int]:
         return [int(out[idx]) for idx in range(written)]
 
 
+def _fast_encode_output_capacity(input_len: int) -> int:
+    if input_len <= 0:
+        return 0
+    if input_len <= 4096:
+        return input_len
+    return min(input_len, max(4096, (input_len + 3) // 4))
+
+
 def _configure_fast_ctypes(lib: Any) -> None:
     void_p = ctypes.c_void_p
     size_t = ctypes.c_size_t
@@ -263,14 +271,17 @@ class NativeBridge:
             return []
 
         in_buf = self._fast_bytes_view(data)
-        out = (ctypes.c_uint32 * len(data))()
-        try:
-            written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, len(data), out, len(data)))
-        except (AttributeError, OverflowError, TypeError):
-            return None
-        if written < 0:
-            return None
-        return out[:written]
+        input_len = len(data)
+        initial_cap = _fast_encode_output_capacity(input_len)
+        for out_cap in (initial_cap, input_len) if initial_cap < input_len else (input_len,):
+            out = (ctypes.c_uint32 * out_cap)()
+            try:
+                written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, input_len, out, out_cap))
+            except (AttributeError, OverflowError, TypeError):
+                return None
+            if written >= 0:
+                return out[:written]
+        return None
 
     def _fast_encode_from_ranks_text(self, symbol: str, rank_payload: bytes, text: str) -> list[int] | None:
         lib = self._load_fast_lib()
@@ -287,14 +298,16 @@ class NativeBridge:
         if text_len == 0:
             return []
 
-        out = (ctypes.c_uint32 * text_len)()
-        try:
-            written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, text_len, out, text_len))
-        except (AttributeError, OverflowError, TypeError):
-            return None
-        if written < 0:
-            return None
-        return out[:written]
+        initial_cap = _fast_encode_output_capacity(text_len)
+        for out_cap in (initial_cap, text_len) if initial_cap < text_len else (text_len,):
+            out = (ctypes.c_uint32 * out_cap)()
+            try:
+                written = int(getattr(lib, symbol)(rank_buf, len(rank_payload), in_buf, text_len, out, out_cap))
+            except (AttributeError, OverflowError, TypeError):
+                return None
+            if written >= 0:
+                return out[:written]
+        return None
 
     def _fast_is_within_limit_from_ranks(
         self,

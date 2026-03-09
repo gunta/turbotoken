@@ -2,7 +2,21 @@ from __future__ import annotations
 
 import pytest
 
-from turbotoken._native import get_native_bridge
+from turbotoken._native import _fast_encode_output_capacity, get_native_bridge
+
+
+@pytest.mark.parametrize(
+    ("input_len", "expected"),
+    [
+        (0, 0),
+        (1, 1),
+        (4096, 4096),
+        (4097, 4096),
+        (1_048_576, 262_144),
+    ],
+)
+def test_fast_encode_output_capacity_prefers_tighter_large_buffer(input_len: int, expected: int) -> None:
+    assert _fast_encode_output_capacity(input_len) == expected
 
 
 def test_native_bridge_utf8_byte_wrappers_roundtrip_when_available() -> None:
