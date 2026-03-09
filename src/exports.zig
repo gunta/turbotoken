@@ -114,7 +114,7 @@ fn ensureCachedRankTable(rank_slice: []const u8) !*const rank_loader.RankTable {
     errdefer rank_cache_allocator.free(payload_copy);
     @memcpy(payload_copy, rank_slice);
 
-    var table = try rank_loader.loadFromBytes(rank_cache_allocator, rank_slice);
+    var table = try rank_loader.loadFromBorrowedBytes(rank_cache_allocator, payload_copy);
     errdefer table.deinit();
 
     rank_table_cache.hash = rank_hash;

@@ -8,18 +8,21 @@ const missing_single_byte_rank: u32 = std.math.maxInt(u32);
 pub const RankTable = struct {
     allocator: std.mem.Allocator,
     by_token: std.StringHashMapUnmanaged(u32) = .{},
-    by_rank_dense: std.ArrayListUnmanaged(?[]u8) = .{},
+    by_rank_dense: std.ArrayListUnmanaged(?[]const u8) = .{},
     single_byte_ranks: [256]u32 = [_]u32{missing_single_byte_rank} ** 256,
     single_byte_rank_count: u16 = 0,
+    free_token_bytes: bool = true,
 
     pub fn init(allocator: std.mem.Allocator) RankTable {
         return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *RankTable) void {
-        for (self.by_rank_dense.items) |maybe_token| {
-            if (maybe_token) |token| {
-                self.allocator.free(token);
+        if (self.free_token_bytes) {
+            for (self.by_rank_dense.items) |maybe_token| {
+                if (maybe_token) |token| {
+                    self.allocator.free(@constCast(token));
+                }
             }
         }
         self.by_token.deinit(self.allocator);
@@ -63,7 +66,7 @@ pub const RankTable = struct {
         return 0;
     }
 
-    fn addOwned(self: *RankTable, token: []u8, rank: u32) !void {
+    fn addOwned(self: *RankTable, token: []const u8, rank: u32) !void {
         if (self.by_token.contains(token)) {
             return error.DuplicateToken;
         }
@@ -102,7 +105,7 @@ pub const RankTable = struct {
 
 pub fn loadFromBytes(allocator: std.mem.Allocator, payload: []const u8) !RankTable {
     if (std.mem.startsWith(u8, payload, binary_magic)) {
-        return loadFromBinaryPayload(allocator, payload);
+        return loadFromBinaryPayloadInternal(allocator, payload, true);
     }
 
     var table = RankTable.init(allocator);
@@ -151,6 +154,13 @@ pub fn loadFromBytes(allocator: std.mem.Allocator, payload: []const u8) !RankTab
     return table;
 }
 
+pub fn loadFromBorrowedBytes(allocator: std.mem.Allocator, payload: []u8) !RankTable {
+    if (std.mem.startsWith(u8, payload, binary_magic)) {
+        return loadFromBinaryPayloadInternal(allocator, payload, false);
+    }
+    return loadFromBytes(allocator, payload);
+}
+
 fn readU32Le(payload: []const u8, offset: *usize) !u32 {
     if (payload.len < offset.* + 4) {
         return error.InvalidBinary;
@@ -169,7 +179,11 @@ fn readU64Le(payload: []const u8, offset: *usize) !u64 {
     return value;
 }
 
-fn loadFromBinaryPayload(allocator: std.mem.Allocator, payload: []const u8) !RankTable {
+fn loadFromBinaryPayloadInternal(
+    allocator: std.mem.Allocator,
+    payload: []const u8,
+    copy_tokens: bool,
+) !RankTable {
     var offset: usize = 0;
     if (payload.len < binary_magic.len) {
         return error.InvalidBinary;
@@ -198,6 +212,7 @@ fn loadFromBinaryPayload(allocator: std.mem.Allocator, payload: []const u8) !Ran
 
     var table = RankTable.init(allocator);
     errdefer table.deinit();
+    table.free_token_bytes = copy_tokens;
 
     if (entry_count > 0) {
         try table.by_token.ensureTotalCapacity(allocator, entry_count_u32);
@@ -221,14 +236,17 @@ fn loadFromBinaryPayload(allocator: std.mem.Allocator, payload: []const u8) !Ran
             return error.InvalidBinary;
         }
 
-        const token_copy = try allocator.alloc(u8, token_len);
         const token_src = payload[offset .. offset + token_len];
-        @memcpy(token_copy, token_src);
         offset += token_len;
 
         const rank: u32 = @intCast(rank_idx);
-        errdefer allocator.free(token_copy);
-        try table.addOwned(token_copy, rank);
+        const token = if (copy_tokens) blk: {
+            const token_copy = try allocator.alloc(u8, token_len);
+            errdefer allocator.free(token_copy);
+            @memcpy(token_copy, token_src);
+            break :blk token_copy[0..];
+        } else token_src;
+        try table.addOwned(token, rank);
         parsed_entries += 1;
     }
 
@@ -394,6 +412,51 @@ test "loadFromBytes supports native binary payload format" {
     try payload.append(allocator, 'b');
 
     var table = try loadFromBytes(allocator, payload.items);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), table.len());
+    try std.testing.expectEqual(@as(usize, 3), table.maxRankPlusOne());
+    try std.testing.expectEqual(@as(?u32, 0), table.get("a"));
+    try std.testing.expectEqual(@as(?u32, 2), table.get("b"));
+    try std.testing.expect(table.tokenForRank(1) == null);
+    try std.testing.expectEqualStrings("a", table.tokenForRank(0).?);
+    try std.testing.expectEqualStrings("b", table.tokenForRank(2).?);
+}
+
+test "loadFromBorrowedBytes supports native binary payload format" {
+    const allocator = std.testing.allocator;
+
+    var payload = std.ArrayListUnmanaged(u8){};
+    defer payload.deinit(allocator);
+
+    try payload.appendSlice(allocator, binary_magic);
+
+    var u32_buf: [4]u8 = undefined;
+    var u64_buf: [8]u8 = undefined;
+
+    std.mem.writeInt(u32, &u32_buf, binary_version, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u32, &u32_buf, 0, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u64, &u64_buf, 16, .little);
+    try payload.appendSlice(allocator, &u64_buf);
+    std.mem.writeInt(u64, &u64_buf, 0, .little);
+    try payload.appendSlice(allocator, &u64_buf);
+    std.mem.writeInt(u32, &u32_buf, 2, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u32, &u32_buf, 3, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+
+    std.mem.writeInt(u32, &u32_buf, 1, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    try payload.append(allocator, 'a');
+    std.mem.writeInt(u32, &u32_buf, binary_missing_len, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    std.mem.writeInt(u32, &u32_buf, 1, .little);
+    try payload.appendSlice(allocator, &u32_buf);
+    try payload.append(allocator, 'b');
+
+    var table = try loadFromBorrowedBytes(allocator, payload.items);
     defer table.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), table.len());
