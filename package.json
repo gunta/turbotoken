@@ -53,6 +53,7 @@
     "bench:scalar": "bun run scripts/bench-scalar-fallback.ts",
     "bench:pair-cache-hash": "bun run scripts/bench-pair-cache-hash.ts",
     "bench:encoder-queue": "bun run scripts/bench-encoder-queue.ts",
+    "bench:medium-pieces": "bun run scripts/bench-medium-pieces.ts",
     "bench:boundary-classifier": "bun run scripts/bench-boundary-classifier.ts",
     "bench:native-pretokenizer": "bun run scripts/bench-native-pretokenizer.ts --mode=baseline",
     "bench:native-pretokenizer:sme-auto": "bun run scripts/bench-native-pretokenizer.ts --mode=sme-auto",
