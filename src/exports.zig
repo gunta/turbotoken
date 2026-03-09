@@ -1896,11 +1896,45 @@ const AsciiO200kSmallEncodeCacheEntry = struct {
 };
 
 const ascii_o200k_small_cache_cap: usize = 64;
+const ascii_o200k_small_lookup_cap: usize = 256;
+const ascii_o200k_small_lookup_empty: u8 = std.math.maxInt(u8);
 const ascii_o200k_piece_cache_cap: usize = 65_536;
 const ascii_letter_space_piece_cache_cap: usize = 65_536;
 
 fn asciiSmallCacheKey(piece: []const u8) u64 {
     return hash.bytes(piece);
+}
+
+fn asciiSmallLookupSlot(piece_key: u64) usize {
+    return @as(usize, @truncate(piece_key)) & (ascii_o200k_small_lookup_cap - 1);
+}
+
+fn findAsciiSmallCacheIndex(
+    comptime EntryType: type,
+    lookup: *[ascii_o200k_small_lookup_cap]u8,
+    small_cache: []const EntryType,
+    piece_key: u64,
+    piece: []const u8,
+) ?usize {
+    const slot = asciiSmallLookupSlot(piece_key);
+    const mapped = lookup[slot];
+    if (mapped != ascii_o200k_small_lookup_empty) {
+        const mapped_idx = @as(usize, mapped);
+        if (mapped_idx < small_cache.len) {
+            const cached = small_cache[mapped_idx];
+            if (cached.key == piece_key and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+                return mapped_idx;
+            }
+        }
+    }
+
+    for (small_cache, 0..) |cached, idx| {
+        if (cached.key == piece_key and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+            lookup[slot] = @intCast(idx);
+            return idx;
+        }
+    }
+    return null;
 }
 
 fn countBpeAsciiO200kFromTable(
@@ -1918,6 +1952,7 @@ fn countBpeAsciiO200kFromTable(
 
     var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallCountCacheEntry = undefined;
     var small_cache_len: usize = 0;
+    var small_lookup = [_]u8{ascii_o200k_small_lookup_empty} ** ascii_o200k_small_lookup_cap;
     var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
     defer piece_cache.deinit(allocator);
 
@@ -1926,17 +1961,8 @@ fn countBpeAsciiO200kFromTable(
     while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
         const piece = in_slice[range.start..range.end];
         const piece_key = asciiSmallCacheKey(piece);
-        var handled = false;
-        var small_idx: usize = 0;
-        while (small_idx < small_cache_len) : (small_idx += 1) {
-            const cached = small_cache[small_idx];
-            if (cached.key == piece_key and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
-                total_count += cached.count;
-                handled = true;
-                break;
-            }
-        }
-        if (handled) {
+        if (findAsciiSmallCacheIndex(AsciiO200kSmallCountCacheEntry, &small_lookup, small_cache[0..small_cache_len], piece_key, piece)) |small_idx| {
+            total_count += small_cache[small_idx].count;
             continue;
         }
 
@@ -1956,6 +1982,7 @@ fn countBpeAsciiO200kFromTable(
                 .piece = piece,
                 .count = piece_count,
             };
+            small_lookup[asciiSmallLookupSlot(piece_key)] = @intCast(small_cache_len);
             small_cache_len += 1;
             continue;
         }
@@ -1987,6 +2014,7 @@ fn encodeBpeAsciiO200kFromTable(
 
     var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallEncodeCacheEntry = undefined;
     var small_cache_len: usize = 0;
+    var small_lookup = [_]u8{ascii_o200k_small_lookup_empty} ** ascii_o200k_small_lookup_cap;
     defer {
         for (small_cache[0..small_cache_len]) |entry| {
             entry.tokens.deinit(allocator);
@@ -2008,17 +2036,8 @@ fn encodeBpeAsciiO200kFromTable(
         const piece = in_slice[range.start..range.end];
         const piece_key = asciiSmallCacheKey(piece);
 
-        var handled = false;
-        var small_idx: usize = 0;
-        while (small_idx < small_cache_len) : (small_idx += 1) {
-            const cached = small_cache[small_idx];
-            if (cached.key == piece_key and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
-                try cached.tokens.appendTo(out_tokens, out_cap, &total_tokens);
-                handled = true;
-                break;
-            }
-        }
-        if (handled) {
+        if (findAsciiSmallCacheIndex(AsciiO200kSmallEncodeCacheEntry, &small_lookup, small_cache[0..small_cache_len], piece_key, piece)) |small_idx| {
+            try small_cache[small_idx].tokens.appendTo(out_tokens, out_cap, &total_tokens);
             continue;
         }
 
@@ -2055,6 +2074,7 @@ fn encodeBpeAsciiO200kFromTable(
                 .piece = piece,
                 .tokens = cached_tokens,
             };
+            small_lookup[asciiSmallLookupSlot(piece_key)] = @intCast(small_cache_len);
             small_cache_len += 1;
             continue;
         }
