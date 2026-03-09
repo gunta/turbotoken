@@ -7,11 +7,34 @@ const binary_flag_token_lookup: u32 = 1;
 const binary_missing_len: u32 = std.math.maxInt(u32);
 const missing_single_byte_rank: u32 = std.math.maxInt(u32);
 const binary_lookup_alignment = @alignOf(u32);
+const dense_token_missing_len = std.math.maxInt(u16);
+
+const DenseTokenRef = struct {
+    offset: u32 = 0,
+    len: u16 = dense_token_missing_len,
+    _reserved: u16 = 0,
+
+    fn init(offset: u32, len: usize) !DenseTokenRef {
+        if (len >= dense_token_missing_len) {
+            return error.TokenTooLong;
+        }
+        return .{
+            .offset = offset,
+            .len = @intCast(len),
+        };
+    }
+
+    fn isMissing(self: DenseTokenRef) bool {
+        return self.len == dense_token_missing_len;
+    }
+};
 
 pub const RankTable = struct {
     allocator: std.mem.Allocator,
     by_token: std.StringHashMapUnmanaged(u32) = .{},
     by_rank_dense: std.ArrayListUnmanaged(?[]const u8) = .{},
+    by_rank_compact: std.ArrayListUnmanaged(DenseTokenRef) = .{},
+    borrowed_dense_bytes: []const u8 = &[_]u8{},
     single_byte_ranks: [256]u32 = [_]u32{missing_single_byte_rank} ** 256,
     single_byte_rank_count: u16 = 0,
     free_token_bytes: bool = true,
@@ -33,6 +56,7 @@ pub const RankTable = struct {
         }
         self.by_token.deinit(self.allocator);
         self.by_rank_dense.deinit(self.allocator);
+        self.by_rank_compact.deinit(self.allocator);
     }
 
     pub fn len(self: *const RankTable) usize {
@@ -48,6 +72,14 @@ pub const RankTable = struct {
 
     pub fn tokenForRank(self: *const RankTable, rank: u32) ?[]const u8 {
         const idx: usize = @intCast(rank);
+        if (idx < self.by_rank_compact.items.len) {
+            const token_ref = self.by_rank_compact.items[idx];
+            if (!token_ref.isMissing()) {
+                const start = @as(usize, token_ref.offset);
+                const end = start + @as(usize, token_ref.len);
+                return self.borrowed_dense_bytes[start..end];
+            }
+        }
         if (idx < self.by_rank_dense.items.len) {
             if (self.by_rank_dense.items[idx]) |token| {
                 return token;
@@ -66,6 +98,15 @@ pub const RankTable = struct {
     }
 
     pub fn maxRankPlusOne(self: *const RankTable) usize {
+        if (self.by_rank_compact.items.len != 0) {
+            var compact_idx = self.by_rank_compact.items.len;
+            while (compact_idx > 0) : (compact_idx -= 1) {
+                if (!self.by_rank_compact.items[compact_idx - 1].isMissing()) {
+                    return compact_idx;
+                }
+            }
+            return 0;
+        }
         var idx = self.by_rank_dense.items.len;
         while (idx > 0) : (idx -= 1) {
             if (self.by_rank_dense.items[idx - 1] != null) {
@@ -99,6 +140,45 @@ pub const RankTable = struct {
         }
         self.by_rank_dense.items[rank_idx] = token;
         errdefer self.by_rank_dense.items[rank_idx] = null;
+        self.recordSingleByteRank(token, rank);
+        self.token_count += 1;
+    }
+
+    fn addBorrowed(self: *RankTable, payload: []const u8, token: []const u8, rank: u32) !void {
+        if (!self.use_serialized_lookup and self.by_token.contains(token)) {
+            return error.DuplicateToken;
+        }
+
+        const rank_idx: usize = @intCast(rank);
+        if (rank_idx >= self.by_rank_compact.items.len) {
+            const grow_by = (rank_idx + 1) - self.by_rank_compact.items.len;
+            try self.by_rank_compact.ensureUnusedCapacity(self.allocator, grow_by);
+            var idx = self.by_rank_compact.items.len;
+            while (idx <= rank_idx) : (idx += 1) {
+                self.by_rank_compact.appendAssumeCapacity(.{});
+            }
+        }
+
+        if (!self.by_rank_compact.items[rank_idx].isMissing()) {
+            return error.DuplicateRank;
+        }
+
+        if (!self.use_serialized_lookup) {
+            try self.by_token.putNoClobber(self.allocator, token, rank);
+            errdefer _ = self.by_token.remove(token);
+        }
+
+        const payload_start = @intFromPtr(payload.ptr);
+        const token_start = @intFromPtr(token.ptr);
+        if (token_start < payload_start or token_start + token.len > payload_start + payload.len) {
+            return error.InvalidBinary;
+        }
+        const offset = token_start - payload_start;
+        if (offset > std.math.maxInt(u32)) {
+            return error.InvalidBinary;
+        }
+
+        self.by_rank_compact.items[rank_idx] = try DenseTokenRef.init(@intCast(offset), token.len);
         self.recordSingleByteRank(token, rank);
         self.token_count += 1;
     }
@@ -263,6 +343,7 @@ fn loadFromBinaryPayloadInternal(
     var table = RankTable.init(allocator);
     errdefer table.deinit();
     table.free_token_bytes = copy_tokens;
+    table.borrowed_dense_bytes = if (copy_tokens) &[_]u8{} else payload;
     table.use_serialized_lookup = !copy_tokens and
         version >= binary_version_current and
         (flags & binary_flag_token_lookup) != 0 and
@@ -273,10 +354,18 @@ fn loadFromBinaryPayloadInternal(
             try table.by_token.ensureTotalCapacity(allocator, entry_count_u32);
         }
 
-        try table.by_rank_dense.ensureTotalCapacity(allocator, max_rank_plus_one);
-        var idx: usize = 0;
-        while (idx < max_rank_plus_one) : (idx += 1) {
-            table.by_rank_dense.appendAssumeCapacity(null);
+        if (copy_tokens) {
+            try table.by_rank_dense.ensureTotalCapacity(allocator, max_rank_plus_one);
+            var idx: usize = 0;
+            while (idx < max_rank_plus_one) : (idx += 1) {
+                table.by_rank_dense.appendAssumeCapacity(null);
+            }
+        } else {
+            try table.by_rank_compact.ensureTotalCapacity(allocator, max_rank_plus_one);
+            var idx: usize = 0;
+            while (idx < max_rank_plus_one) : (idx += 1) {
+                table.by_rank_compact.appendAssumeCapacity(.{});
+            }
         }
     }
 
@@ -302,7 +391,11 @@ fn loadFromBinaryPayloadInternal(
             @memcpy(token_copy, token_src);
             break :blk token_copy[0..];
         } else token_src;
-        try table.addOwned(token, rank);
+        if (copy_tokens) {
+            try table.addOwned(token, rank);
+        } else {
+            try table.addBorrowed(payload, token, rank);
+        }
         parsed_entries += 1;
     }
 
@@ -604,4 +697,32 @@ test "loadFromBorrowedBytes supports serialized token lookup for native binary p
     try std.testing.expectEqual(@as(?u32, 0), table.get("a"));
     try std.testing.expectEqual(@as(?u32, 2), table.get("b"));
     try std.testing.expectEqual(@as(?u32, null), table.get("ab"));
+}
+
+test "borrowed binary rank tables use compact dense token refs" {
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(DenseTokenRef));
+
+    const allocator = std.testing.allocator;
+    const payload =
+        binary_magic ++
+        "\x01\x00\x00\x00" ++ // version
+        "\x00\x00\x00\x00" ++ // flags
+        "\x10\x00\x00\x00\x00\x00\x00\x00" ++ // source size
+        "\x00\x00\x00\x00\x00\x00\x00\x00" ++ // source mtime
+        "\x02\x00\x00\x00" ++ // entry count
+        "\x03\x00\x00\x00" ++ // max rank plus one
+        "\x01\x00\x00\x00" ++ "a" ++
+        "\xff\xff\xff\xff" ++
+        "\x01\x00\x00\x00" ++ "b";
+
+    const borrowed = try allocator.dupe(u8, payload);
+    defer allocator.free(borrowed);
+
+    var table = try loadFromBorrowedBytes(allocator, borrowed);
+    defer table.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), table.by_rank_compact.items.len);
+    try std.testing.expectEqual(@as(usize, 0), table.by_rank_dense.items.len);
+    try std.testing.expectEqualStrings("a", table.tokenForRank(0).?);
+    try std.testing.expectEqualStrings("b", table.tokenForRank(2).?);
 }

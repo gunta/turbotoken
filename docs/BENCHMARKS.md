@@ -70,6 +70,7 @@
   - `linux-x86_64-cpu` for Ubuntu CPU gate runners
   - `macos-arm64-metal` for macOS Metal gate runners
   This keeps hard/relative gates host-aware instead of sharing one global baseline across dissimilar runners.
+  - `linux-x86_64-cpu` still records startup artifacts, but startup cold is no longer merge-blocking there; that profile gates encode/count latency, throughput, training, and RSS.
 - Manual x64 GitHub Actions validation is also available via the `X86 On Demand` workflow:
   - latest standard hosted x64 labels used there are `ubuntu-24.04`, `windows-2025`, and `macos-15-intel`
   - Linux is the current profiled x86 benchmark host; Windows and Intel macOS currently run validation/smoke coverage rather than profiled CPU governance

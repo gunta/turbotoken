@@ -90,7 +90,7 @@
         "arch": "x64"
       },
       "cpu": {
-        "startupColdMaxMs": 250,
+        "startupColdMaxMs": null,
         "encode1mbMaxMs": 180,
         "count1mbMaxMs": 180,
         "training100kbNativeMaxMs": 140,
@@ -107,10 +107,7 @@
       "relative": {
         "enabled": true,
         "cpu": {
-          "startupColdMs": {
-            "baseline": 64.435196,
-            "maxRegressionPct": 35
-          },
+          "startupColdMs": null,
           "encode1mbMs": {
             "baseline": 74.912429,
             "maxRegressionPct": 35

@@ -102,8 +102,9 @@ pub const PairCache = struct {
     }
 
     pub fn populateFromRankTable(self: *PairCache, table: *const rank_loader.RankTable) void {
-        for (table.by_rank_dense.items, 0..) |maybe_token, rank_idx| {
-            const token = maybe_token orelse continue;
+        const rank_limit = table.maxRankPlusOne();
+        for (0..rank_limit) |rank_idx| {
+            const token = table.tokenForRank(@intCast(rank_idx)) orelse continue;
             if (token.len < 2) {
                 continue;
             }

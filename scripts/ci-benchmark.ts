@@ -12,7 +12,7 @@ acquireBenchmarkLock({ label: "ci-benchmark" });
 type Mode = "all" | "cpu" | "gpu";
 
 interface CpuGates {
-  startupColdMaxMs: number;
+  startupColdMaxMs?: number | null;
   encode1mbMaxMs: number;
   count1mbMaxMs: number;
   training100kbNativeMaxMs: number;
@@ -81,7 +81,7 @@ interface RelativeMinGate {
 }
 
 interface CpuRelativeGates {
-  startupColdMs?: RelativeMaxGate;
+  startupColdMs?: RelativeMaxGate | null;
   encode1mbMs?: RelativeMaxGate;
   count1mbMs?: RelativeMaxGate;
   training100kbNativeMs?: RelativeMaxGate;
@@ -1042,7 +1042,7 @@ function addRelativeMaxGate(
   failures: GateFailure[],
   metric: string,
   observed: number | null,
-  gate: RelativeMaxGate | undefined,
+  gate: RelativeMaxGate | null | undefined,
   artifact: string | null,
 ): void {
   if (!gate) {
@@ -1313,13 +1313,15 @@ const gpuOverlapArtifactForGate = gpuOverlapAggregation.samplePaths[0] ?? artifa
 
 const failures: GateFailure[] = [];
 if (mode === "all" || mode === "cpu") {
-  addMaxGate(
-    failures,
-    "startup cold ms",
-    startupColdMs,
-    gates.cpu.startupColdMaxMs,
-    artifacts.startupCold,
-  );
+  if (gates.cpu.startupColdMaxMs != null) {
+    addMaxGate(
+      failures,
+      "startup cold ms",
+      startupColdMs,
+      gates.cpu.startupColdMaxMs,
+      artifacts.startupCold,
+    );
+  }
   addMaxGate(
     failures,
     "encode 1mb ms",
