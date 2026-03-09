@@ -75,6 +75,7 @@
   - latest standard hosted x64 labels used there are `ubuntu-24.04`, `windows-2025`, and `macos-15-intel`
   - Linux is the current profiled x86 benchmark host; Windows and Intel macOS currently run validation/smoke coverage rather than profiled CPU governance
   - local dispatch helper: `bun run gha:x86 -- --target=linux --benchmark-speed=fast --push`
+  - when `--wait` is used, the local helper now watches the run for the dispatched commit SHA instead of just the latest run on the branch
 - Workflow runner/toolchain policy for benchmark CI:
   - CPU gates: `ubuntu-24.04`
   - Metal gates: `macos-14` (Apple Silicon)

@@ -17,6 +17,16 @@ interface Options {
   dryRun: boolean;
 }
 
+interface WorkflowRunSummary {
+  databaseId: number;
+  status: string;
+  workflowName: string;
+  headBranch: string;
+  headSha: string;
+  url: string;
+  createdAt: string;
+}
+
 function parseBooleanFlag(raw: string, flag: string): boolean {
   const lowered = raw.trim().toLowerCase();
   if (["1", "true", "yes", "on"].includes(lowered)) {
@@ -71,6 +81,14 @@ function resolveRef(options: Options): string {
     return options.ref;
   }
   return currentBranchName();
+}
+
+function resolveHeadSha(ref: string): string {
+  const sha = runCommand("git", ["rev-parse", ref], { cwd: repoRoot }).stdout.trim();
+  if (sha.length === 0) {
+    throw new Error(`unable to resolve head sha for ref ${JSON.stringify(ref)}`);
+  }
+  return sha;
 }
 
 function branchFilterForRunList(ref: string): string | null {
@@ -138,6 +156,43 @@ function workflowDispatchArgs(options: Options, ref: string): string[] {
   ];
 }
 
+async function findDispatchedRun(
+  options: Options,
+  branchFilter: string,
+  expectedHeadSha: string,
+): Promise<WorkflowRunSummary> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const runList = runCommand(
+      "gh",
+      [
+        "run",
+        "list",
+        "--workflow",
+        options.workflow,
+        "--branch",
+        branchFilter,
+        "--limit",
+        "10",
+        "--json",
+        "databaseId,status,workflowName,headBranch,headSha,url,createdAt",
+      ],
+      { cwd: repoRoot },
+    );
+
+    const parsed = JSON.parse(runList.stdout) as WorkflowRunSummary[];
+    const match = parsed.find((run) => run.headSha === expectedHeadSha);
+    if (match) {
+      return match;
+    }
+
+    await Bun.sleep(2000);
+  }
+
+  throw new Error(
+    `workflow dispatched for ${expectedHeadSha}, but no matching run was returned by \`gh run list\` after waiting`,
+  );
+}
+
 function printUsage(): void {
   console.log(`Usage: bun run scripts/trigger-x86-ondemand.ts [options]
 
@@ -174,6 +229,7 @@ const options: Options = {
 };
 
 const ref = resolveRef(options);
+const expectedHeadSha = resolveHeadSha(ref);
 const dispatchArgs = workflowDispatchArgs(options, ref);
 
 section("X86 on-demand trigger");
@@ -182,6 +238,7 @@ console.log(
     {
       workflow: options.workflow,
       ref,
+      expectedHeadSha,
       target: options.target,
       benchmarkSpeed: options.benchmarkSpeed,
       runCpuGates: options.runCpuGates,
@@ -202,7 +259,7 @@ if (options.dryRun) {
   }
   console.log(`DRY RUN dispatch: gh ${dispatchArgs.join(" ")}`);
   if (options.wait) {
-    console.log("DRY RUN watch: gh run watch --workflow x86-ondemand.yml");
+    console.log(`DRY RUN watch: match workflow run with headSha ${expectedHeadSha} and then gh run watch <databaseId>`);
   }
   process.exit(0);
 }
@@ -218,41 +275,14 @@ if (!options.wait) {
   process.exit(0);
 }
 
-section("Watch latest matching run");
+section("Watch matching run");
 const branchFilter = branchFilterForRunList(ref);
 if (!branchFilter) {
   console.log(`Workflow dispatched for ref ${ref}. Automatic watch is only supported for branch refs.`);
   process.exit(0);
 }
 
-const runList = runCommand(
-  "gh",
-  [
-    "run",
-    "list",
-    "--workflow",
-    options.workflow,
-    "--branch",
-    branchFilter,
-    "--limit",
-    "1",
-    "--json",
-    "databaseId,status,workflowName,headBranch,url",
-  ],
-  { cwd: repoRoot },
-);
-
-const parsed = JSON.parse(runList.stdout) as Array<{
-  databaseId: number;
-  status: string;
-  workflowName: string;
-  headBranch: string;
-  url: string;
-}>;
-const latest = parsed[0];
-if (!latest) {
-  throw new Error("workflow dispatched, but no matching run was returned by `gh run list`");
-}
+const latest = await findDispatchedRun(options, branchFilter, expectedHeadSha);
 
 console.log(`Watching ${latest.workflowName} run ${latest.databaseId}: ${latest.url}`);
 runCommand("gh", ["run", "watch", String(latest.databaseId)], { cwd: repoRoot });
