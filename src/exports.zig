@@ -1873,27 +1873,19 @@ const AsciiO200kEncodeCacheEntry = struct {
     tokens: AsciiEncodeCacheTokens,
 };
 
-const AsciiO200kDirectCountCacheEntry = struct {
-    hash: u64 = 0,
-    piece: []const u8 = "",
-    count: usize = 0,
-    valid: bool = false,
+const AsciiO200kSmallCountCacheEntry = struct {
+    piece: []const u8,
+    count: usize,
 };
 
-const AsciiO200kDirectEncodeCacheEntry = struct {
-    hash: u64 = 0,
-    piece: []const u8 = "",
-    tokens: AsciiEncodeCacheTokens = .{ .single = 0 },
-    valid: bool = false,
+const AsciiO200kSmallEncodeCacheEntry = struct {
+    piece: []const u8,
+    tokens: AsciiEncodeCacheTokens,
 };
 
-const ascii_o200k_direct_cache_cap: usize = 4096;
-const ascii_o200k_direct_cache_mask: usize = ascii_o200k_direct_cache_cap - 1;
+const ascii_o200k_small_cache_cap: usize = 64;
+const ascii_o200k_piece_cache_cap: usize = 65_536;
 const ascii_letter_space_piece_cache_cap: usize = 65_536;
-
-fn asciiPieceHash(piece: []const u8) u64 {
-    return std.hash.Wyhash.hash(0, piece);
-}
 
 fn countBpeAsciiO200kFromTable(
     allocator: std.mem.Allocator,
@@ -1908,28 +1900,53 @@ fn countBpeAsciiO200kFromTable(
     var scratch = std.ArrayListUnmanaged(u8){};
     defer scratch.deinit(allocator);
 
-    var direct_cache = [_]AsciiO200kDirectCountCacheEntry{.{}} ** ascii_o200k_direct_cache_cap;
+    var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallCountCacheEntry = undefined;
+    var small_cache_len: usize = 0;
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kCountCacheEntry) = .{};
+    defer piece_cache.deinit(allocator);
 
     var idx: usize = 0;
     var total_count: usize = 0;
     while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
         const piece = in_slice[range.start..range.end];
-        const piece_hash = asciiPieceHash(piece);
-        const cache_idx = @as(usize, @truncate(piece_hash)) & ascii_o200k_direct_cache_mask;
-        const cached = direct_cache[cache_idx];
-        if (cached.valid and cached.hash == piece_hash and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
-            total_count += cached.count;
+        var handled = false;
+        var small_idx: usize = 0;
+        while (small_idx < small_cache_len) : (small_idx += 1) {
+            const cached = small_cache[small_idx];
+            if (cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+                total_count += cached.count;
+                handled = true;
+                break;
+            }
+        }
+        if (handled) {
             continue;
+        }
+
+        if (small_cache_len >= ascii_o200k_small_cache_cap) {
+            if (piece_cache.get(piece)) |cached| {
+                total_count += cached.count;
+                continue;
+            }
         }
 
         const piece_count = try backend.encoder.countWithRanksReusable(allocator, piece, table, reusable_cache, &scratch);
         total_count += piece_count;
-        direct_cache[cache_idx] = .{
-            .hash = piece_hash,
-            .piece = piece,
-            .count = piece_count,
-            .valid = true,
-        };
+
+        if (small_cache_len < ascii_o200k_small_cache_cap) {
+            small_cache[small_cache_len] = .{
+                .piece = piece,
+                .count = piece_count,
+            };
+            small_cache_len += 1;
+            continue;
+        }
+
+        if (piece_cache.count() >= ascii_o200k_piece_cache_cap) {
+            continue;
+        }
+
+        try piece_cache.put(allocator, piece, .{ .count = piece_count });
     }
 
     return total_count;
@@ -1950,30 +1967,57 @@ fn encodeBpeAsciiO200kFromTable(
     var scratch = std.ArrayListUnmanaged(u8){};
     defer scratch.deinit(allocator);
 
-    var direct_cache = [_]AsciiO200kDirectEncodeCacheEntry{.{}} ** ascii_o200k_direct_cache_cap;
+    var small_cache: [ascii_o200k_small_cache_cap]AsciiO200kSmallEncodeCacheEntry = undefined;
+    var small_cache_len: usize = 0;
     defer {
-        for (direct_cache[0..]) |entry| {
-            if (entry.valid) {
-                entry.tokens.deinit(allocator);
-            }
+        for (small_cache[0..small_cache_len]) |entry| {
+            entry.tokens.deinit(allocator);
         }
+    }
+
+    var piece_cache: std.StringHashMapUnmanaged(AsciiO200kEncodeCacheEntry) = .{};
+    defer {
+        var it = piece_cache.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.tokens.deinit(allocator);
+        }
+        piece_cache.deinit(allocator);
     }
 
     var idx: usize = 0;
     var total_tokens: usize = 0;
     while (try pretokenizer.nextAsciiO200kRange(in_slice, &idx)) |range| {
         const piece = in_slice[range.start..range.end];
-        const piece_hash = asciiPieceHash(piece);
-        const cache_idx = @as(usize, @truncate(piece_hash)) & ascii_o200k_direct_cache_mask;
-        const cached = direct_cache[cache_idx];
-        if (cached.valid and cached.hash == piece_hash and cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
-            const cached_len = cached.tokens.tokenLen();
-            if (cached_len > out_cap -| total_tokens) {
-                return error.OutOfMemory;
+
+        var handled = false;
+        var small_idx: usize = 0;
+        while (small_idx < small_cache_len) : (small_idx += 1) {
+            const cached = small_cache[small_idx];
+            if (cached.piece.len == piece.len and std.mem.eql(u8, cached.piece, piece)) {
+                const cached_len = cached.tokens.tokenLen();
+                if (cached_len > out_cap -| total_tokens) {
+                    return error.OutOfMemory;
+                }
+                cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
+                total_tokens += cached_len;
+                handled = true;
+                break;
             }
-            cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
-            total_tokens += cached_len;
+        }
+        if (handled) {
             continue;
+        }
+
+        if (small_cache_len >= ascii_o200k_small_cache_cap) {
+            if (piece_cache.get(piece)) |cached| {
+                const cached_len = cached.tokens.tokenLen();
+                if (cached_len > out_cap -| total_tokens) {
+                    return error.OutOfMemory;
+                }
+                cached.tokens.copyInto(out_tokens[total_tokens .. total_tokens + cached_len]);
+                total_tokens += cached_len;
+                continue;
+            }
         }
 
         const token_slice = out_tokens[total_tokens..out_cap];
@@ -1996,15 +2040,21 @@ fn encodeBpeAsciiO200kFromTable(
             break :blk AsciiEncodeCacheTokens{ .heap = token_copy };
         };
 
-        if (direct_cache[cache_idx].valid) {
-            direct_cache[cache_idx].tokens.deinit(allocator);
+        if (small_cache_len < ascii_o200k_small_cache_cap) {
+            small_cache[small_cache_len] = .{
+                .piece = piece,
+                .tokens = cached_tokens,
+            };
+            small_cache_len += 1;
+            continue;
         }
-        direct_cache[cache_idx] = .{
-            .hash = piece_hash,
-            .piece = piece,
-            .tokens = cached_tokens,
-            .valid = true,
-        };
+
+        if (piece_cache.count() < ascii_o200k_piece_cache_cap) {
+            try piece_cache.put(allocator, piece, .{ .tokens = cached_tokens });
+            continue;
+        }
+
+        cached_tokens.deinit(allocator);
     }
 
     if (total_tokens > @as(usize, @intCast(std.math.maxInt(isize)))) {
